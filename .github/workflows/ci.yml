@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # --frozen, not a plain sync: this asserts the committed uv.lock is
+      # self-sufficient in a checkout that has no sibling ../beheaxi. That is
+      # the exact breakage a public clone would hit, and the reason
+      # [tool.uv.sources] was dropped — so CI has to fail if it comes back.
+      - name: Sync dependencies from the committed lockfile
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Test (pytest)
+        run: uv run pytest -q
+
+      # Exits non-zero if any AXI check fails, failing this step.
+      - name: Conformance (dogfood the harness standard)
+        run: uv run beheaxi conformance "beherouter" --json

@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+# NOTE: uv.lock is intentionally TRACKED — beherouter is a deployed application,
+# not a library, and the container build needs a reproducible resolution
+# (AGENTS.md: "Python via uv (pyproject.toml + uv.lock)").
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# secrets / local env
+.env
+*.local
+
+# beherouter runtime state
+data/
+registry.toml
+
+# superpowers SDD scratch (ledger, briefs, review packages)
+.superpowers/
+
+# Internal working artifacts — not published.
+# plans/ are execution checklists with no value to a public reader, and they
+# carry 87 of the repo's internal-identifier hits. specs/ ARE published (they
+# are the design record) and are scrubbed instead — rewriting a plan to remove
+# a hostname would falsify a historical record.
+docs/superpowers/plans/
+docs/handoffs/
+local-infra/
+
+# CLAUDE.md is a thin untracked pointer to the manual (AGENTS.md is tracked)
+CLAUDE.md
+
+# Agent skill layouts — internal harness infra, not published (sync.sh
+# replicates the handoff skill across these)
+.claude/
+.opencode/

@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "beherouter"
+version = "0.2.0"
+description = "Multi-service MCP gateway: per-service surfaces + embeddings-free BM25 tool search + per-user header passthrough"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12"
+authors = [{ name = "Behemotion" }]
+keywords = ["mcp", "gateway", "fastmcp", "tool-search", "bm25"]
+
+dependencies = [
+    # FastMCP 3.x: the plan targeted >=2.0.0, but 3.x changed `mount()` to
+    # `mount(server, namespace=)` and rejects `**kwargs` tool functions, so the
+    # surface builder is written against 3.x only. See docs/FASTMCP-NOTES.md.
+    "fastmcp>=3.0.0",
+    # v0.1.1 is the FLOOR, not a preference: v0.1.0 catches only one of the two
+    # importable ClickException classes, and this venv has both (FastMCP pulls
+    # standalone click in alongside Typer's vendored copy), so under v0.1.0 usage
+    # errors exit 1 instead of 2 and `beheaxi conformance "beherouter"` fails.
+    # v0.1.2 is the first release that also carries LICENSE and NOTICE, which
+    # Apache 2.0 §4(d) requires to reach downstream consumers.
+    "beheaxi @ git+https://github.com/behemotion/beheaxi@v0.1.2",
+    "rank-bm25>=0.2.2",
+    # Fuzzy tier for tool search. Lexical edit distance, NOT embeddings — the
+    # no-embeddings constraint in AGENTS.md is unaffected.
+    "rapidfuzz>=3.9.0",
+    "jsonschema>=4.0.0",
+    "httpx>=0.27.0",
+    "uvicorn>=0.30.0",
+]
+
+[project.scripts]
+beherouter = "beherouter.cli.app:main"
+
+# The pinned `beheaxi @ git+...` dependency above is a PEP 508 direct reference;
+# hatchling refuses those unless explicitly allowed.
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

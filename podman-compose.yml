@@ -1,0 +1,15 @@
+services:
+  beherouter:
+    build: .
+    image: localhost/beherouter:latest
+    # Bind to localhost only — Caddy is the TLS edge and the gateway is the
+    # harness's single authenticated network surface (CONVENTIONS §6).
+    ports:
+      - "127.0.0.1:47100:47100"
+    environment:
+      # Required. The gateway refuses to start without it.
+      - BEHEROUTER_GATEWAY_TOKEN=${BEHEROUTER_GATEWAY_TOKEN}
+      - BEHEROUTER_REGISTRY=/data/registry.toml
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

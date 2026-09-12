@@ -1,0 +1,113 @@
+{
+  "encoding": "cl100k_base",
+  "generated_by": "scripts/calibrate_tokens.py",
+  "surfaces": {
+    "faketool": {
+      "chars": 1987,
+      "tokens": 435,
+      "tools": 5,
+      "chars_per_token": 4.568
+    },
+    "gcal": {
+      "chars": 4686,
+      "tokens": 1067,
+      "tools": 10,
+      "chars_per_token": 4.392
+    }
+  },
+  "samples": [
+    {
+      "surface": "faketool",
+      "name": "faketool_search",
+      "chars": 210,
+      "tokens": 48
+    },
+    {
+      "surface": "faketool",
+      "name": "search_tools",
+      "chars": 553,
+      "tokens": 122
+    },
+    {
+      "surface": "faketool",
+      "name": "describe_tool",
+      "chars": 307,
+      "tokens": 66
+    },
+    {
+      "surface": "faketool",
+      "name": "run_tool",
+      "chars": 405,
+      "tokens": 91
+    },
+    {
+      "surface": "faketool",
+      "name": "context_cost",
+      "chars": 512,
+      "tokens": 108
+    },
+    {
+      "surface": "gcal",
+      "name": "list_calendars",
+      "chars": 206,
+      "tokens": 47
+    },
+    {
+      "surface": "gcal",
+      "name": "list_events",
+      "chars": 466,
+      "tokens": 105
+    },
+    {
+      "surface": "gcal",
+      "name": "get_freebusy",
+      "chars": 435,
+      "tokens": 101
+    },
+    {
+      "surface": "gcal",
+      "name": "create_event",
+      "chars": 605,
+      "tokens": 145
+    },
+    {
+      "surface": "gcal",
+      "name": "update_event",
+      "chars": 810,
+      "tokens": 198
+    },
+    {
+      "surface": "gcal",
+      "name": "delete_event",
+      "chars": 387,
+      "tokens": 84
+    },
+    {
+      "surface": "gcal",
+      "name": "search_tools",
+      "chars": 553,
+      "tokens": 122
+    },
+    {
+      "surface": "gcal",
+      "name": "describe_tool",
+      "chars": 307,
+      "tokens": 66
+    },
+    {
+      "surface": "gcal",
+      "name": "run_tool",
+      "chars": 405,
+      "tokens": 91
+    },
+    {
+      "surface": "gcal",
+      "name": "context_cost",
+      "chars": 512,
+      "tokens": 108
+    }
+  ],
+  "total_chars": 4896,
+  "total_tokens": 1115,
+  "chars_per_token": 4.391
+}
