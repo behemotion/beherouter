@@ -1,0 +1,17 @@
+{{- if .Values.preDeployLint.enabled -}}
+{{/* Hook-owned copy of the registry. Pre-install hooks run before release
+       resources exist, so the lint Job cannot mount the release ConfigMap. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "beherouter.fullname" . }}-registry-lint
+  labels:
+    {{- include "beherouter.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-weight: "-2"
+    helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+data:
+  registry.toml: |
+{{- .Values.registry | default "" | nindent 4 }}
+{{- end }}

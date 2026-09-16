@@ -1,0 +1,201 @@
+# beherouter chart values.
+#
+# The gateway is stateless (docs/DEPLOYMENT.md): the registry is the only
+# config and every secret is an environment variable expanded at attach time.
+# Two values are REQUIRED for a working install:
+#   image.repository          -- the gateway image (build it from the repo root Containerfile)
+#   secret.gatewayToken       -- $BEHEROUTER_GATEWAY_TOKEN; the gateway refuses to boot without it
+#                                (or set secret.create=false + existingSecret.name to bring your own)
+
+replicaCount: 1
+# >1 replica works (each pod attaches its own backends, stdio children included),
+# but MCP sessions are in-process: every replica needs client affinity (see
+# service.sessionAffinity) and each one re-attaches, so a stdio backend means N
+# subprocesses. Keep 1 unless you need the availability.
+
+image:
+  repository: ""            # REQUIRED, e.g. registry.internal/beherouter
+  tag: ""                   # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent  # set Always if you deploy floating tags
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  # The gateway never talks to the Kubernetes API; pods set
+  # automountServiceAccountToken: false regardless of this name.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# --- credentials -------------------------------------------------------------
+#
+# One Secret carries the shared gateway token plus every backend credential the
+# registry references as ${VAR}. Nothing is ever written into registry.toml.
+
+secret:
+  # true: chart renders the Secret from gatewayToken + env below.
+  # false: chart references an existing Secret instead (external-secrets,
+  # sealed-secrets, anything that materialises keys before the release runs --
+  # remember the ordering rule: an entry may not ship before its secret exists).
+  create: true
+  # $BEHEROUTER_GATEWAY_TOKEN. REQUIRED when create=true. Never commit a real
+  # value; pass it with --set-secret / -f / your CD tool.
+  gatewayToken: ""
+  # Backend credentials keyed by the exact ${VAR} name the registry uses, e.g.:
+  #   BEHEROUTER_PLANE_TOKEN: "plane-pat"
+  env: {}
+
+# Used only when secret.create=false: an existing Secret holding the gateway
+# token under gatewayTokenKey. Backend ${VAR}s then arrive via extraEnv below.
+existingSecret:
+  name: ""
+  gatewayTokenKey: BEHEROUTER_GATEWAY_TOKEN
+
+# --- registry ----------------------------------------------------------------
+#
+# registry.toml verbatim. Attached surfaces and their overrides live here;
+# `beherouter plugin-config <surface> <plugin>` emits the block. An EMPTY
+# registry is valid -- a parked gateway still answers /healthz.
+registry: ""
+# Example:
+#   registry: |
+#     [office]
+#     plugin = "office-mcp"
+#
+#     [plane]
+#     plugin = "plane"
+#       [plane.config]
+#       workspace_slug = "acme"
+#       [plane.env]
+#       api_key = "${BEHEROUTER_PLANE_TOKEN}"
+
+# BEHEROUTER_PUBLIC_URL -- the published origin `client-config` emits. Empty
+# auto-derives https://<first ingress host> when ingress is enabled (http when
+# no TLS block is set). Set it explicitly when clients see a different origin
+# than the Ingress (e.g. behind an external proxy).
+publicURL: ""
+
+# Extra env appended verbatim to the gateway container AND the registry-lint
+# hook Job: {name, value} or {name, valueFrom}. This is the escape hatch for
+# credentials from ExternalSecrets/Reloader and for anything BEHE_<LAYER>_.
+extraEnv: []
+
+# --- pre-deploy gate ---------------------------------------------------------
+#
+# The docs' rule is "run registry-lint inside the image that is about to serve,
+# against the real environment". The chart does exactly that: a
+# pre-install/pre-upgrade hook Job running the SAME image with the SAME env
+# against the SAME registry text. Lint failure fails the release before any pod
+# is touched.
+preDeployLint:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  # MCP sessions live in the pod (FastMCP session managers), so requests from
+  # one client must keep hitting one pod. ClientIP affinity makes replicaCount>1
+  # safe; it is harmless at replicaCount=1.
+  sessionAffinity: ClientIP
+
+ingress:
+  enabled: false
+  className: ""   # e.g. nginx; omit to accept the cluster default
+  annotations: {}
+    # NOTE: a plain Ingress routes but does NOT authenticate. On the podman
+    # deployment Caddy is the per-CLIENT token boundary (per-surface allow
+    # clauses); in Kubernetes that boundary is whatever you put in front --
+    # forward-auth/oauth2-proxy via annotations, or a Gateway with auth filters.
+    # The gateway's own shared token is always enforced in-app either way.
+  hosts:
+    - host: beherouter.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# The podman posture (loopback bind + default-deny proxy) translates to a
+# NetworkPolicy: no ingress except the sources you list. Disabled by default
+# because the right selectors are cluster-specific; flip it on once they match.
+networkPolicy:
+  enabled: false
+  # `from` blocks of an ingress rule (podSelector/namespaceSelector/ipBlock).
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+
+# --- workload shape ----------------------------------------------------------
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Probes hit GET /healthz -- deliberately unauthenticated, and deliberately NOT
+# a backend fan-out (a slow backend must not become a gateway alarm). startup
+# gets minutes, not seconds: attach spawns stdio children and lists catalogues.
+startupProbe:
+  enabled: true
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 36 # 3 min
+livenessProbe:
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  # The gateway writes nothing; /tmp is an emptyDir for stdio children that
+  # need scratch space (Python skips bytecode it cannot write).
+  readOnlyRootFilesystem: true
+
+terminationGracePeriodSeconds: 30
+revisionHistoryLimit: 3
+
+# Horizontal scaling is supported but rarely what you want here: replicas add
+# stdio subprocesses and depend on ClientIP affinity. Off by default.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1
+  # maxUnavailable: 0
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

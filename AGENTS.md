@@ -336,6 +336,13 @@ LibreChat wiring stays per-consumer: an `mcpServers` entry + the surface host in
 — `office` via per-user `customUserVars` (each user pastes it), `plane` as a
 **deploy-time literal** rendered from the vault. See § Next steps 2.
 
+**Kubernetes (the dev-VM path):** dev VMs in this harness are Kubernetes-only, and the repo ships a
+Helm chart for exactly that — [`charts/beherouter`](charts/beherouter), with the pre-deploy
+`registry-lint` gate wired up as a pre-install/pre-upgrade hook Job and the deployment's failure
+modes translated (`maxUnavailable: 0` keeps the previous revision serving). The service-VM
+deployment above stays ansible-driven from the homelab repo; the chart is the Kubernetes path.
+See `docs/DEPLOYMENT.md` § Deploying on Kubernetes and the chart README.
+
 ## Credentials
 
 No plaintext secrets live in this repo, and nothing current is supplied to it via environment

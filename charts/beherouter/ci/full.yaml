@@ -1,0 +1,55 @@
+# Lint/render scenario: every optional template enabled -- existing Secret,
+# TLS Ingress, NetworkPolicy, HPA, PDB, extraEnv.
+image:
+  repository: registry.example.com/beherouter
+  tag: "0.2.0"
+
+secret:
+  create: false
+
+existingSecret:
+  name: beherouter-credentials
+  gatewayTokenKey: gateway-token
+
+registry: |
+  [office]
+  plugin = "office-mcp"
+
+extraEnv:
+  - name: BEHEROUTER_PLANE_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: beherouter-credentials
+        key: plane-token
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/oauth2/auth"
+  hosts:
+    - host: beherouter.ci.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: beherouter-tls
+      hosts:
+        - beherouter.ci.example.com
+
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

@@ -138,6 +138,41 @@ podman logs --tail 200 beherouter        # what actually failed
 systemctl --user restart beherouter-compose.service
 ```
 
+## Deploying on Kubernetes (Helm)
+
+The chart lives at [`charts/beherouter`](../charts/beherouter) — one Deployment,
+no state; every rule on this page has a direct translation there, and the chart
+README carries the values reference. Dev VMs in this harness are Kubernetes-only,
+which is why this path exists.
+
+```bash
+podman build -t <registry>/beherouter:<version> .
+podman push  <registry>/beherouter:<version>
+helm install beherouter charts/beherouter -f prod-values.yaml
+```
+
+`prod-values.yaml` carries the two required values — `image.repository` and
+`secret.gatewayToken` (plus one `secret.env` key per `${VAR}` the registry
+names); render fails loudly without them, so an install cannot half-happen.
+
+How the chart holds this page's rules:
+
+| Rule on this page | What the chart does |
+|---|---|
+| Pre-deploy gate **inside the image that is about to serve** | a pre-install/pre-upgrade **hook Job**: same image, same env, same registry text; lint failure fails the release before anything is created |
+| Entry and secret ship together | `required` at render time — no token, no release; an unset `${VAR}` fails the hook, not a live surface |
+| The proxy is the **per-client** token boundary | the Ingress routes only; per-client auth is whatever fronts it (forward-auth, Gateway filters). The shared in-app token cannot make that distinction here either |
+| `/healthz` is the only unauthenticated path | startup/liveness/readiness probes all hit it; `helm test` asserts its payload |
+| Loopback bind, only the edge reaches in | optional NetworkPolicy: default-deny ingress except the sources you list |
+| An attach failure crash-loops the gateway | `maxUnavailable: 0` rolling update — the failing NEW pod stalls the rollout while the **previous revision keeps serving**; `helm rollback` back, no state to migrate |
+
+Upgrade is `helm upgrade` (the lint hook re-runs first); rollback is `helm
+rollback`. Deep verification stays the same command, run against the Deployment:
+
+```bash
+kubectl exec deploy/beherouter -- beherouter health --deep --json   # exit 6 == bad credential
+```
+
 ---
 
 ## Appendix — a reference deployment

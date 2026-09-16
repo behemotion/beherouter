@@ -30,3 +30,36 @@ jobs:
       # Exits non-zero if any AXI check fails, failing this step.
       - name: Conformance (dogfood the harness standard)
         run: uv run beheaxi conformance "beherouter" --json
+
+  # The chart is the Kubernetes deployment surface; lint + schema-validate it
+  # with the same scenarios used locally (charts/beherouter/ci/*.yaml).
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+
+      - name: Lint chart (all ci/ scenarios)
+        run: |
+          for f in charts/beherouter/ci/*.yaml; do
+            helm lint charts/beherouter -f "$f"
+          done
+
+      - name: Render and schema-validate
+        run: |
+          for f in charts/beherouter/ci/*.yaml; do
+            helm template beherouter charts/beherouter -f "$f" | kubeconform -strict -summary
+          done
+
+      - name: Defaults must refuse to render (no token, no image)
+        run: |
+          if helm template charts/beherouter >/dev/null 2>&1; then
+            echo "default values rendered without image.repository/secret.gatewayToken"
+            exit 1
+          fi
+          echo "OK: defaults refused with a required-values error"

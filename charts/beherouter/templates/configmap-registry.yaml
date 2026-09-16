@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "beherouter.fullname" . }}-registry
+  labels:
+    {{- include "beherouter.labels" . | nindent 4 }}
+data:
+  # The whole registry, verbatim. An empty file is a VALID parked gateway --
+  # do not gate this on non-empty content.
+  registry.toml: |
+{{- .Values.registry | default "" | nindent 4 }}

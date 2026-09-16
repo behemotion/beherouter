@@ -1,0 +1,61 @@
+{{- if .Values.preDeployLint.enabled -}}
+{{/* The pre-deploy gate from docs/DEPLOYMENT.md, made mechanical: lint the
+       registry inside the image that is about to serve, with the environment
+       it will serve with, BEFORE anything is created or replaced. A lint
+       failure fails the release; the previous revision (if any) is untouched. */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "beherouter.fullname" . }}-registry-lint
+  labels:
+    {{- include "beherouter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry-lint
+  annotations:
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-weight: "-1"
+    # Successful hooks are cleaned up; a FAILED Job is kept (up to the TTL
+    # below) so `kubectl logs job/...` shows what the registry got wrong --
+    # the same instinct as "read podman logs after any registry change".
+    helm.sh/hook-delete-policy: "before-hook-creation,hook-succeeded"
+spec:
+  # Lint is deterministic and offline; retries only delay a failed release.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "beherouter.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: registry-lint
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: registry-lint
+          image: "{{ required "image.repository is required (build it from the repo root Containerfile)" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["beherouter", "registry-lint", "--path", "/data/registry.toml"]
+          env:
+            {{- include "beherouter.env" (dict "root" . "secretName" (include "beherouter.lintSecretName" .) "tokenKey" (include "beherouter.tokenKey" .)) | nindent 12 }}
+          resources:
+            {{- toYaml .Values.preDeployLint.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: registry
+              mountPath: /data
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: registry
+          configMap:
+            name: {{ include "beherouter.fullname" . }}-registry-lint
+        - name: tmp
+          emptyDir: {}
+{{- end }}

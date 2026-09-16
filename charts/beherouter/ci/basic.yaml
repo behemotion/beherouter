@@ -1,0 +1,33 @@
+# Lint/render scenario: the common path -- chart-created Secret, one
+# credential-free surface and one credentialed surface, Ingress on.
+# Chart-testing also uses every file here as an install scenario; values are
+# dummies on purpose.
+image:
+  repository: localhost/beherouter
+  tag: "0.2.0"
+
+secret:
+  create: true
+  gatewayToken: "ci-dummy-gateway-token"
+  env:
+    BEHEROUTER_PLANE_TOKEN: "ci-dummy-plane-pat"
+
+registry: |
+  [office]
+  plugin = "office-mcp"
+
+  [plane]
+  plugin = "plane"
+    [plane.config]
+    workspace_slug = "ci"
+    [plane.env]
+    api_key = "${BEHEROUTER_PLANE_TOKEN}"
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: beherouter.ci.example.com
+      paths:
+        - path: /
+          pathType: Prefix

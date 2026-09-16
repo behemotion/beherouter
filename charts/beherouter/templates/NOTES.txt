@@ -1,0 +1,45 @@
+beherouter {{ .Chart.AppVersion }} has been deployed as {{ include "beherouter.fullname" . }}.
+
+{{- if .Values.preDeployLint }}
+
+The pre-deploy gate ran before anything was created: a registry-lint Job
+validated the registry inside this exact image, with this exact environment.
+{{- else }}
+
+WARNING: preDeployLint is DISABLED -- the registry was not validated before
+deploy. Re-enable it unless you have a reason not to.
+{{- end }}
+
+Watch the rollout (an empty "surfaces":[] in /healthz is valid -- a parked
+gateway is not an outage):
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Check the transport:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "beherouter.fullname" . }} 47100:{{ .Values.service.port }}
+  curl -sS http://127.0.0.1:47100/healthz
+
+Prove the backend credentials (a real tools/call per surface; exit 6 means a
+credential is bad):
+
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "beherouter.fullname" . }} -- beherouter health --deep --json
+
+Run the chart's own smoke test:
+
+  helm test{{ if ne .Release.Namespace "default" }} -n {{ .Release.Namespace }}{{ end }} {{ .Release.Name }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress routes {{ (index .Values.ingress.hosts 0).host }} to the gateway, but a
+plain Ingress does NOT authenticate. The per-CLIENT token boundary (per-surface
+allow clauses in the podman deployment) must be whatever you put in front:
+forward-auth / oauth2-proxy annotations, or a Gateway with auth filters. The
+gateway's own shared token is enforced in-app regardless.
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+
+NOTE: networkPolicy is disabled. The podman posture (loopback bind, only the
+edge can reach the gateway) is not enforced here -- enable it once your
+ingress-controller selectors are known.
+{{- end }}

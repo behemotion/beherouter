@@ -1,0 +1,6 @@
+# Patterns to ignore when packaging this chart.
+.git
+*.orig
+*.swp
+.DS_Store
+ci/

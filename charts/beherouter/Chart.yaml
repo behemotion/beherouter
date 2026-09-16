@@ -1,0 +1,15 @@
+apiVersion: v2
+name: beherouter
+description: >-
+  Multi-service MCP gateway: per-service surfaces, embeddings-free BM25 tool
+  search, per-user header passthrough. One Deployment, no state, no database --
+  the registry is a ConfigMap and every credential arrives as an environment
+  variable expanded at attach time.
+type: application
+# Chart version: bump on any template/values change (semver, no leading v).
+version: 0.1.0
+# The gateway version this chart was written against; also the default image tag.
+appVersion: "0.2.0"
+# Floor is set by the APIs used, not taste: networking.k8s.io/v1 Ingress (1.19),
+# policy/v1 PDB (1.21), startupProbe (1.20) -- 1.25 keeps all of them old news.
+kubeVersion: ">=1.25.0-0"
