@@ -352,6 +352,14 @@ Release. The workflow must already be on main when the tag is cut — it runs
 from the tagged commit. The chart defaults to the published image, so a
 client's only required value is `secret.gatewayToken`.
 
+**Versioning — patch by default, minor only when asked.** A routine release
+bumps the **third** register (`0.2.0 → 0.2.1`); the **second** register moves
+`0.2.x → 0.3.0` **only on an explicit user ask** (same for the first). The
+bump is synchronized edits to `pyproject.toml` `version` **and** the chart's
+`appVersion` (release.yml refuses a tag disagreeing with either); the chart's
+own packaging `version` follows the same rule. Stated at each edit point too
+(`pyproject.toml`, `charts/beherouter/Chart.yaml`).
+
 ## Credentials
 
 No plaintext secrets live in this repo, and nothing current is supplied to it via environment

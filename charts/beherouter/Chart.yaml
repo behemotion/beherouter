@@ -6,11 +6,13 @@ description: >-
   the registry is a ConfigMap and every credential arrives as an environment
   variable expanded at attach time.
 type: application
-# Chart version: bump on any template/values change (semver, no leading v).
+# Chart version (packaging): bump on any template/values change -- patch
+# register by default, MINOR only on an explicit ask.
 version: 0.1.1
 # The gateway release this chart defaults to; also the default image tag
-# (ghcr.io/behemotion/beherouter:<appVersion>). Must equal the pyproject
-# version of that release -- release.yml refuses a mismatched vX.Y.Z tag.
+# (ghcr.io/behemotion/beherouter:<appVersion>). Moves with the pyproject
+# version (patch by default, minor on explicit ask) -- release.yml refuses a
+# vX.Y.Z tag that disagrees with either.
 appVersion: "0.2.0"
 # Floor is set by the APIs used, not taste: networking.k8s.io/v1 Ingress (1.19),
 # policy/v1 PDB (1.21), startupProbe (1.20) -- 1.25 keeps all of them old news.
