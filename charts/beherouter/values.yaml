@@ -2,8 +2,7 @@
 #
 # The gateway is stateless (docs/DEPLOYMENT.md): the registry is the only
 # config and every secret is an environment variable expanded at attach time.
-# Two values are REQUIRED for a working install:
-#   image.repository          -- the gateway image (build it from the repo root Containerfile)
+# ONE value is REQUIRED for a working install:
 #   secret.gatewayToken       -- $BEHEROUTER_GATEWAY_TOKEN; the gateway refuses to boot without it
 #                                (or set secret.create=false + existingSecret.name to bring your own)
 
@@ -14,10 +13,13 @@ replicaCount: 1
 # subprocesses. Keep 1 unless you need the availability.
 
 image:
-  repository: ""            # REQUIRED, e.g. registry.internal/beherouter
+  # The published image; every release tag exists there (git tag vX.Y.Z ->
+  # image tag X.Y.Z, which is also this chart's default image tag). Override
+  # only for a registry mirror or a self-built image (e.g. to add a stdio
+  # backend's binary -- see the chart README's caveats).
+  repository: ghcr.io/behemotion/beherouter
   tag: ""                   # defaults to the chart's appVersion
   pullPolicy: IfNotPresent  # set Always if you deploy floating tags
-
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

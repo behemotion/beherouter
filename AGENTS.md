@@ -343,6 +343,15 @@ modes translated (`maxUnavailable: 0` keeps the previous revision serving). The 
 deployment above stays ansible-driven from the homelab repo; the chart is the Kubernetes path.
 See `docs/DEPLOYMENT.md` § Deploying on Kubernetes and the chart README.
 
+**Releases are tag-driven and published:** pushing a `vX.Y.Z` tag runs
+`.github/workflows/release.yml` — full test suite on the tagged revision, a
+tag==pyproject-version==chart-appVersion consistency gate, then the multi-arch
+image to **`ghcr.io/behemotion/beherouter`** (image tag = the version, no
+leading `v`; that tag is also the chart's default image) and the GitHub
+Release. The workflow must already be on main when the tag is cut — it runs
+from the tagged commit. The chart defaults to the published image, so a
+client's only required value is `secret.gatewayToken`.
+
 ## Credentials
 
 No plaintext secrets live in this repo, and nothing current is supplied to it via environment

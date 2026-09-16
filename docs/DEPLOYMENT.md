@@ -13,6 +13,27 @@ One container, one port, no database.
 
 Having no state is what makes rollback cheap, and it is worth preserving.
 
+## The image
+
+Published at **`ghcr.io/behemotion/beherouter`** — multi-arch (`linux/amd64`,
+`linux/arm64`), one tag per release: git tag `v0.2.0` → image tag `0.2.0`
+(semver, no leading `v`). `latest` follows the newest release.
+
+```bash
+docker pull ghcr.io/behemotion/beherouter:0.2.0
+```
+
+The release workflow builds the image from the repo-root
+[`Containerfile`](../Containerfile) on every `v*` tag, after the full test
+suite passes on the tagged revision, and refuses a tag that disagrees with the
+`pyproject.toml` version or the chart's `appVersion` — the tag, the image and
+the chart default cannot drift apart.
+
+Build it yourself only if you need to: a registry mirror, or an extended image
+(a stdio backend's binary must be **inside** the image — see the chart's
+caveats). The Containerfile builds from a plain checkout of that tag.
+
+
 ## Configuration
 
 | Variable | Required | Meaning |
@@ -119,11 +140,12 @@ authorize that old token against whatever surface later claims the same path.
 
 ## Upgrading
 
-1. Bump the version the image is built from.
-2. Rebuild the image.
-3. Run the pre-deploy gate **inside the new image**.
-4. Restart.
-5. Verify `/healthz` **and** `health --deep`.
+1. Get the new image: published releases already exist
+   (`ghcr.io/behemotion/beherouter:<version>`); a self-built image is the only
+   case where this step means "rebuild".
+2. Run the pre-deploy gate **inside the new image**.
+3. Restart.
+4. Verify `/healthz` **and** `health --deep`.
 
 Ordering matters: build **before** switching config or restarting. A build that fails after
 the container has already been restarted against a new registry leaves the gateway
@@ -146,14 +168,17 @@ README carries the values reference. Dev VMs in this harness are Kubernetes-only
 which is why this path exists.
 
 ```bash
-podman build -t <registry>/beherouter:<version> .
-podman push  <registry>/beherouter:<version>
-helm install beherouter charts/beherouter -f prod-values.yaml
+helm install beherouter charts/beherouter \
+  --namespace beherouter --create-namespace \
+  --set-string secret.gatewayToken="$(openssl rand -hex 32)"
 ```
 
-`prod-values.yaml` carries the two required values — `image.repository` and
-`secret.gatewayToken` (plus one `secret.env` key per `${VAR}` the registry
-names); render fails loudly without them, so an install cannot half-happen.
+That is the whole install: the image defaults to the published release
+(`ghcr.io/behemotion/beherouter:<chart appVersion>`) and an empty registry is a
+valid parked gateway. `prod-values.yaml` then carries the one required value —
+`secret.gatewayToken` — plus `registry:` and one `secret.env` key per `${VAR}`
+it names; render fails loudly without the token, so an install cannot
+half-happen.
 
 How the chart holds this page's rules:
 

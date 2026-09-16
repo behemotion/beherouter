@@ -50,7 +50,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: beherouter
-          image: "{{ required "image.repository is required (build it from the repo root Containerfile)" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ required "image.repository is required (default: the published ghcr.io image; override only for a mirror or a self-built image)" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             {{- include "beherouter.env" (dict "root" . "secretName" (include "beherouter.secretName" .) "tokenKey" (include "beherouter.tokenKey" .)) | nindent 12 }}

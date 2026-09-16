@@ -56,10 +56,37 @@ jobs:
             helm template beherouter charts/beherouter -f "$f" | kubeconform -strict -summary
           done
 
-      - name: Defaults must refuse to render (no token, no image)
+      # ci/minimal.yaml is the one-value install (token only). It must render
+      # against the PUBLISHED image default, in both the Deployment and the
+      # registry-lint hook -- that default is what makes the chart usable
+      # without building anything.
+      - name: Minimal install uses the published image
+        run: |
+          imgs=$(helm template beherouter charts/beherouter -f charts/beherouter/ci/minimal.yaml \
+            | grep -c 'ghcr.io/behemotion/beherouter:')
+          [ "$imgs" -ge 2 ] || { echo "expected Deployment + lint hook on the default image, got $imgs"; exit 1; }
+
+      - name: Defaults must refuse to render (no gateway token)
         run: |
           if helm template charts/beherouter >/dev/null 2>&1; then
-            echo "default values rendered without image.repository/secret.gatewayToken"
+            echo "default values rendered without secret.gatewayToken"
             exit 1
           fi
           echo "OK: defaults refused with a required-values error"
+
+  # The root Containerfile is a shipped artifact (release.yml builds the
+  # published image from it); build it on every PR and main push so it cannot
+  # rot between releases. Native amd64, no push.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha

@@ -1,0 +1,7 @@
+# Lint/render scenario: the minimal install -- ONE value, the gateway token.
+# The image stays at its default (the published ghcr.io release) and there is
+# no registry and no Ingress: this is exactly what a fresh consumer of the
+# chart types first, and it must render and validate as-is.
+secret:
+  create: true
+  gatewayToken: "ci-dummy-gateway-token"

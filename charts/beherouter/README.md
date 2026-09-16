@@ -8,24 +8,22 @@ unauthenticated path.
 
 ## Install
 
-```bash
-# 1. Build and push the image the chart runs (repo root Containerfile).
-podman build -t registry.example.com/beherouter:0.2.0 .
-podman push registry.example.com/beherouter:0.2.0
+The chart runs the **published image** — `ghcr.io/behemotion/beherouter`,
+multi-arch, one tag per release (`v0.2.0` git tag → `0.2.0` image tag, which is
+also the chart's default). **The only required value is the gateway token.**
 
-# 2. Install. Two values are required; everything else has a sane default.
+```bash
 helm install beherouter charts/beherouter \
   --namespace beherouter --create-namespace \
-  --set image.repository=registry.example.com/beherouter \
-  --set-string secret.gatewayToken="$(...)"        # your secret manager's turn
+  --set-string secret.gatewayToken="$(openssl rand -hex 32)"
 ```
 
-A `values.yaml` beats `--set` for anything multi-line; `registry:` is a
-verbatim `registry.toml` string.
+That installs a *parked* gateway (empty registry, `/healthz` answering) — a
+valid state. Attach surfaces by adding `registry:` and one `secret.env` key per
+`${VAR}` it names. A `values.yaml` beats `--set` for anything multi-line;
+`registry:` is a verbatim `registry.toml` string.
 
 ```yaml
-image:
-  repository: registry.example.com/beherouter
 secret:
   gatewayToken: ""            # REQUIRED -- pass via CD, not the file
   env:
@@ -33,6 +31,18 @@ secret:
 registry: |
   [office]
   plugin = "office-mcp"
+```
+
+### Running your own image instead
+
+Only if you need a registry mirror, or the stdio caveat below (the published
+image carries the gateway alone):
+
+```bash
+podman build -t registry.example.com/beherouter:0.2.0 .
+podman push registry.example.com/beherouter:0.2.0
+helm install beherouter charts/beherouter \
+  --set image.repository=registry.example.com/beherouter
 ```
 
 ## How the podman deployment maps
@@ -71,7 +81,7 @@ to migrate.
 
 | Key | Default | Notes |
 |---|---|---|
-| `image.repository` / `image.tag` | required / chart `appVersion` | Build from the repo root Containerfile |
+| `image.repository` / `image.tag` | `ghcr.io/behemotion/beherouter` / chart `appVersion` | Published image; override only for a mirror or a self-built image |
 | `secret.create` / `secret.gatewayToken` / `secret.env` | `true` / required / `{}` | Chart-rendered Secret; keys of `env` must match the registry's `${VAR}` names |
 | `existingSecret.name` / `existingSecret.gatewayTokenKey` | – | Bring your own Secret (external-secrets, sealed-secrets); backend `${VAR}`s then arrive via `extraEnv` |
 | `registry` | `""` | Verbatim `registry.toml`. Empty is a valid parked gateway |
