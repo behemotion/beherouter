@@ -128,8 +128,12 @@ Writing one: **[`docs/PLUGINS.md`](docs/PLUGINS.md)**.
 One container, one port (47100), config-file-only state (`registry.toml`), no database. The
 gateway binds loopback and expects a reverse proxy to enforce per-client tokens.
 
-Kubernetes packaging ships in-tree: **[`charts/beherouter`](charts/beherouter)** (Helm; the
-`registry-lint` pre-deploy gate runs as a pre-install/pre-upgrade hook Job).
+The artifacts ship in-tree:
+
+- Image: [`Containerfile`](Containerfile) at the repo root, with
+  [`podman-compose.yml`](podman-compose.yml) for a single-host run
+- Kubernetes: **[`charts/beherouter`](charts/beherouter)** (Helm; the `registry-lint`
+  pre-deploy gate runs as a pre-install/pre-upgrade hook Job)
 
 Full guide, including the pre-deploy `registry-lint` gate and the failure modes worth
 knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
