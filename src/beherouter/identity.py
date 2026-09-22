@@ -134,11 +134,14 @@ class IdentityPolicy:
         )
         return replace(ident, **{slot: material})
 
-    def authorise(self, req: RequestIdentity) -> CallIdentity | None:
-        """Gate the caller, then materialise if this surface forwards anything.
+    def gate(self, req: RequestIdentity) -> None:
+        """Refuse a caller this surface would not serve. NO materialisation.
 
-        Returns None for an authz-only surface — which the dispatch in
-        `surface.py` already handles as "no identity to apply".
+        The refusal half of `authorise`, usable on its own because the
+        READ-ONLY meta-tools need exactly that and nothing more: they read the
+        catalogue with the deployment credential by design (the catalogue is a
+        deployment property), so materialising a caller's credential there
+        would turn a missing identity map into a refusal to *enumerate*.
         """
         if req.shared or not req.subject:
             raise AuthError(
@@ -147,6 +150,14 @@ class IdentityPolicy:
             )
         if self.require_roles:
             self._check_roles(req)
+
+    def authorise(self, req: RequestIdentity) -> CallIdentity | None:
+        """Gate the caller, then materialise if this surface forwards anything.
+
+        Returns None for an authz-only surface — which the dispatch in
+        `surface.py` already handles as "no identity to apply".
+        """
+        self.gate(req)
         return self.materialise(req) if self.mode else None
 
     def resolve(self) -> CallIdentity | None:
@@ -154,6 +165,15 @@ class IdentityPolicy:
         if not self.enabled:
             return None
         return self.authorise(request_identity(self.wanted_headers))
+
+    def guard(self) -> None:
+        """Gate the live request, forwarding nothing. `resolve`'s other half.
+
+        Reads no client headers: `wanted_headers` exists to build material, and
+        this path builds none.
+        """
+        if self.enabled:
+            self.gate(request_identity())
 
     def _check_roles(self, req: RequestIdentity) -> None:
         """Every role in `require_roles` must be held. ALL, not any.

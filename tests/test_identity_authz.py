@@ -182,3 +182,40 @@ def test_policy_from_entry_reads_the_claim_path_from_the_environment(monkeypatch
 def test_policy_from_entry_without_authz_has_no_roles():
     entry = RegistryEntry(name="s", plugin="demo-http", identity={"mode": "bearer"})
     assert policy_from_entry(entry, HTTP).require_roles == ()
+
+
+# --- the gate on its own, without materialising -----------------------------
+
+
+def test_the_gate_checks_roles_without_materialising():
+    """`gate` is the refusal half alone: no credential is ever resolved.
+
+    The read-only meta-tools need the gate WITHOUT the material — they call the
+    backend with the deployment credential by design — so a `lookup` surface
+    whose map is absent must still answer a search for a caller who holds the
+    role. Materialising here would turn a missing map into a refusal to
+    enumerate.
+    """
+    policy = IdentityPolicy(
+        surface="gcal",
+        mode="lookup",
+        target="credential",
+        map={"refresh_token": "refresh_token"},
+        path="/nonexistent/identity-map.toml",
+        require_roles=("ai-calendar-access",),
+        roles_claim="realm_access.roles",
+    )
+    claims = {"sub": "alice", "realm_access": {"roles": ["ai-calendar-access"]}}
+    assert policy.gate(_user(claims)) is None
+
+
+def test_the_gate_refuses_a_caller_without_the_role():
+    policy = _gate(["ai-plane-access"])
+    with pytest.raises(AuthError, match="do not have access"):
+        policy.gate(_user({"sub": "alice", "realm_access": {"roles": ["other"]}}))
+
+
+def test_the_gate_refuses_a_shared_token_caller():
+    policy = _gate(["ai-plane-access"])
+    with pytest.raises(AuthError, match="requires a verified user"):
+        policy.gate(RequestIdentity(shared=True, subject=None))

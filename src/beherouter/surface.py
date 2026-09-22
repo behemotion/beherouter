@@ -282,6 +282,24 @@ def build_surface(
             )
         return await backend.executor.run(verb, args, identity=identity)
 
+    def guard() -> None:
+        """`dispatch`'s refusal half, for the READ-ONLY meta-tools.
+
+        A surface that refuses a caller's calls must also refuse to enumerate
+        itself to them — "you do not have access to this surface" is a thin
+        answer if `search_tools` still lists every tool on it. Called BEFORE
+        `catalogue.ensure_fresh()` so a refused caller cannot drive a re-list
+        of a backend they may not use.
+
+        It gates without materialising: the catalogue is read with the
+        deployment credential by design, so a `lookup` surface with an
+        unreadable map must still answer a search for a caller who holds the
+        role. ⚠️ The FROZEN published `tools` array is captured at attach and
+        is NOT gated — a host sees it at connect time, before any of this runs.
+        """
+        if enabled:
+            policy.guard()
+
     # ⚠️ `search_tools`, `describe_tool`, `run_tool` and `context_cost` are
     # RESERVED published names on every surface. A backend that serves and pins
     # a tool of one of those names loses it: the meta-tool is registered after
@@ -324,6 +342,7 @@ def build_surface(
         )
     )
     async def search_tools(query: str, limit: int = 10) -> list[dict]:
+        guard()
         await catalogue.ensure_fresh()
         by_name = catalogue.by_name
         hits = []
@@ -342,6 +361,7 @@ def build_surface(
 
     @mcp.tool(description="Return the argument schema + summary for a tool name.")
     async def describe_tool(name: str) -> dict:
+        guard()
         await catalogue.ensure_fresh()
         d = catalogue.by_name.get(name)
         if d is None:
@@ -359,6 +379,7 @@ def build_surface(
 
     @mcp.tool(description="Invoke any tool on this surface by name with an args object.")
     async def run_tool(name: str, args: dict | None = None) -> dict:
+        guard()
         await catalogue.ensure_fresh()
         d = catalogue.by_name.get(name)
         if d is None:
@@ -380,6 +401,7 @@ def build_surface(
         from .costing import as_payload, surface_cost
         from .errors import AxiError, Unavailable
 
+        guard()
         await catalogue.ensure_fresh()
         # CLASSIFIED, not swallowed. CONVENTIONS asks that every error crossing
         # the gateway boundary be an AxiError; a measurement failure here is an

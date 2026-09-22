@@ -27,6 +27,10 @@ surface. Four surfaces can run four different modes on one gateway.
   `identity.probe_scope: "deployment-credential"` — so an operator reading the
   JSON does not have to have read this page. Only a real per-user call proves a
   per-user credential.
+- **A private tool list.** A surface's *calls* are gated, and so are its
+  read-only meta-tools (§6), but the **frozen published `tools` array** is
+  captured at attach and served to anyone the gateway authenticates. A caller
+  who may invoke nothing on a surface can still see what it publishes.
 - **Authorization.** A role gate (§6) exists, and it is ergonomics. The control
   is the backend's own verification.
 
@@ -207,6 +211,13 @@ surface, at the edge, before the call is made.
   closed.
 - A **list** and a **space-delimited string** are both accepted at the leaf.
 - **Every** listed role must be held, not any one of them.
+- It covers **`search_tools`, `describe_tool`, `run_tool` and `context_cost`**
+  as well as every published tool: a surface that refuses your calls also
+  refuses to enumerate itself to you, and refuses *before* re-listing the
+  backend, so a caller you excluded cannot drive traffic to it. The gate runs
+  without materialising anything, so a `lookup` surface whose map is unreadable
+  still answers a search for a caller who holds the role. ⚠️ The frozen
+  published `tools` array is the exception — see §1.
 - It is **separate from `identity`** on purpose: a surface may gate while
   forwarding nothing. That is also why a gate works on a `stdio` surface, which
   can never carry an identity.

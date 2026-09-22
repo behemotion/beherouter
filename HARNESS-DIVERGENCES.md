@@ -232,6 +232,13 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
 5. **Modes `client` and `lookup` have no external consumer asking for them.** The
    requesting team wants `bearer` only. They were chosen deliberately and are
    tested; they are nonetheless unexercised by any stated need.
+6. **A gated surface is still *listable*.** `search_tools`, `describe_tool`,
+   `run_tool` and `context_cost` now refuse a caller the surface would not serve
+   (and refuse before re-listing the backend), but the FROZEN published `tools`
+   array is captured at attach and served to every authenticated caller. Closing
+   that means a FastMCP `on_list_tools` middleware and a decision about what a
+   host should be shown when it may call nothing — unbuilt, and deliberately so:
+   the gate carries no security weight, the backend's own verification does.
 
 ## Open
 
