@@ -105,11 +105,44 @@ BEHEROUTER_GATEWAY_TOKEN
 - name: BEHEROUTER_PUBLIC_URL
   value: {{ $url | quote }}
 {{- end }}
+{{- $auth := .root.Values.auth | default dict }}
+{{- if ne ($auth.mode | default "shared") "oidc" }}
 - name: BEHEROUTER_GATEWAY_TOKEN
   valueFrom:
     secretKeyRef:
       name: {{ .secretName }}
       key: {{ .tokenKey }}
+{{- end }}
+{{- if and $auth.mode (ne $auth.mode "shared") }}
+- name: BEHEROUTER_AUTH_MODE
+  value: {{ $auth.mode | quote }}
+{{- with $auth.oidc }}
+{{- if .issuer }}
+- name: BEHEROUTER_OIDC_ISSUER
+  value: {{ .issuer | quote }}
+{{- end }}
+{{- if .audience }}
+- name: BEHEROUTER_OIDC_AUDIENCE
+  value: {{ .audience | quote }}
+{{- end }}
+{{- if .jwksUri }}
+- name: BEHEROUTER_OIDC_JWKS_URI
+  value: {{ .jwksUri | quote }}
+{{- end }}
+{{- if .requiredScopes }}
+- name: BEHEROUTER_OIDC_REQUIRED_SCOPES
+  value: {{ .requiredScopes | quote }}
+{{- end }}
+{{- if .rolesClaim }}
+- name: BEHEROUTER_OIDC_ROLES_CLAIM
+  value: {{ .rolesClaim | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .root.Values.identityMap.enabled }}
+- name: BEHEROUTER_IDENTITY_MAP
+  value: {{ .root.Values.identityMap.mountPath | quote }}
+{{- end }}
 {{- if .root.Values.secret.create }}
 {{- range $key, $_ := .root.Values.secret.env }}
 - name: {{ $key }}

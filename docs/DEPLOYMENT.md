@@ -38,13 +38,38 @@ caveats). The Containerfile builds from a plain checkout of that tag.
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `BEHEROUTER_GATEWAY_TOKEN` | **yes** | Shared bearer token the gateway itself checks |
+| `BEHEROUTER_GATEWAY_TOKEN` | **yes**, unless `AUTH_MODE=oidc` | Shared bearer token the gateway itself checks |
 | `BEHEROUTER_REGISTRY` | yes | Path to `registry.toml` |
 | `BEHEROUTER_PUBLIC_URL` | no | Published origin used by `client-config` output |
 | `BEHEROUTER_<SURFACE>_*` | per backend | Backend credentials, referenced from the registry as `${VAR}` |
 
 Secrets appear in `registry.toml` as `${VAR}` placeholders, expanded from the environment
 at attach time. **They are never written into the registry**, so it is safe to commit.
+
+### Per-user identity (optional)
+
+Unset, none of this applies and the gateway behaves exactly as it always has.
+The mechanism, the four modes and the operating notes are in
+[`IDENTITY.md`](IDENTITY.md); what a deployment needs to know:
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `BEHEROUTER_AUTH_MODE` | no (`shared`) | `shared` \| `oidc` \| `both`; `both` accepts a user JWT *beside* the shared token |
+| `BEHEROUTER_OIDC_ISSUER` | with `oidc`/`both` | Checked as `iss` |
+| `BEHEROUTER_OIDC_AUDIENCE` | with `oidc`/`both` | Checked as `aud` |
+| `BEHEROUTER_OIDC_JWKS_URI` | with `oidc`/`both` | Explicit; **never discovered from the issuer** |
+| `BEHEROUTER_OIDC_REQUIRED_SCOPES` | no | Comma-separated, gateway-wide |
+| `BEHEROUTER_OIDC_ROLES_CLAIM` | with `[surface.authz]` | Dotted path, e.g. `realm_access.roles`; no default |
+| `BEHEROUTER_IDENTITY_MAP` | with mode `lookup` | Default path to the mounted secret map |
+
+⚠️ **Two configurations refuse to boot**, which is a dead gateway and `/healthz`
+with it, so `registry-lint` checks both wherever these variables are visible: a
+surface requiring a verified user while `BEHEROUTER_AUTH_MODE` is `shared`, and
+a `require_roles` gate with no `BEHEROUTER_OIDC_ROLES_CLAIM`.
+
+Mount the identity map **read-only**, and note that it is read on the call path
+rather than at attach: a bad path degrades that one surface instead of killing
+the gateway. `health --deep --json` reports its state per surface.
 
 ## The registry
 

@@ -86,6 +86,10 @@ to migrate.
 | `existingSecret.name` / `existingSecret.gatewayTokenKey` | – | Bring your own Secret (external-secrets, sealed-secrets); backend `${VAR}`s then arrive via `extraEnv` |
 | `registry` | `""` | Verbatim `registry.toml`. Empty is a valid parked gateway |
 | `publicURL` | auto | `BEHEROUTER_PUBLIC_URL`; derived from the first Ingress host when empty |
+| `auth.mode` | `shared` | `shared` \| `oidc` \| `both`. Anything but `shared` needs the `auth.oidc` block; `oidc` drops `BEHEROUTER_GATEWAY_TOKEN` entirely |
+| `auth.oidc.issuer` / `.audience` / `.jwksUri` | – | Required together by `oidc`/`both`. The JWKS URI is explicit — never discovered from the issuer |
+| `auth.oidc.rolesClaim` | `""` | Dotted path to the roles claim (`realm_access.roles`, `roles`, `groups`). Required by any surface using `[surface.authz]` |
+| `identityMap.enabled` / `.secretName` / `.mountPath` | `false` / – / `/etc/beherouter/identity-map.toml` | For identity mode `lookup`. The Secret's **key must be the basename** of `mountPath`; a `subPath` mount does not hot-reload, so rotation needs a pod restart |
 | `preDeployLint.enabled` | `true` | The hook gate described above |
 | `service.sessionAffinity` | `ClientIP` | MCP sessions are in-process; do not remove if `replicaCount > 1` |
 | `networkPolicy.enabled` | `false` | Default-deny ingress except `ingressFrom` sources |
@@ -94,10 +98,18 @@ to migrate.
 
 ## Caveats carried over from the VM deployment
 
-- **The per-client token boundary is not the gateway's.** The shared
-  `BEHEROUTER_GATEWAY_TOKEN` is enforced in-app and cannot tell clients apart;
-  per-surface, per-client enforcement is an edge concern (annotations on the
-  Ingress, or a Gateway with auth filters). Plain Ingress = routing only.
+- **The per-client token boundary is not the gateway's — in the default mode.**
+  The shared `BEHEROUTER_GATEWAY_TOKEN` is enforced in-app and cannot tell
+  clients apart; per-surface, per-client enforcement is an edge concern
+  (annotations on the Ingress, or a Gateway with auth filters). Plain Ingress =
+  routing only.
+- **With `auth.mode: oidc` or `both`, the gateway *can* tell callers apart.** It
+  verifies an OIDC JWT against your realm's JWKS, and a surface can then forward
+  that caller's own identity to its backend or gate on their roles (see
+  `docs/IDENTITY.md`). What that does **not** change: the catalogue and
+  `health --deep` still use the deployment credential, so a green probe proves
+  the deployment credential and nothing about any user's. `both` keeps the
+  shared token working alongside, for clients that cannot mint a JWT.
 - **Entry and secret ship together, still.** An unset `${VAR}` still kills the
   pod at boot (by design); here that surfaces as a failed hook or a stuck
   rollout, not a silent broken surface.

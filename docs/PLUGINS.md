@@ -253,9 +253,29 @@ fails a surface whose pin list names a tool the backend no longer serves (`catal
 "pinned_missing"`), so the *existence* half is mechanical — proving a served tool still
 **works** is what `probe` is for.
 
-⚠️ **One backend credential means one identity.** Every write through a surface is
-attributed to the single account whose token or consent it carries. Making a surface
-available to every user did not make it per-user.
+⚠️ **One backend credential means one identity — unless the surface declares
+otherwise.** Every write through a surface with no `[surface.identity]` table is
+attributed to the single account whose token or consent it carries, and making that
+surface available to every user did not make it per-user.
+
+A plugin can opt into per-user calls by declaring `IdentitySupport` on its spec:
+which of the four modes it can carry, which slot they land in, and which target
+names it accepts.
+
+| `target` | For backing | The entry's map keys are | `accepts` |
+|---|---|---|---|
+| `header` | `http` | HTTP header names | optional (the backend's vocabulary is open) |
+| `env` | `cli` | environment variable names | optional |
+| `credential` | `native` | the plugin's **own** declared `env` names | **required** |
+| — | `stdio` | — | cannot: a subprocess environment is fixed at spawn |
+
+The default is **no modes**, and that is the fail-closed half: a plugin nobody has
+audited for per-user use cannot be configured for it, and `registry-lint` says so
+offline rather than a deploy saying it at 3am. A `native` plugin additionally needs
+a provider factory — one construction path serving both the deployment provider and
+every per-user one, so the two cannot drift.
+
+Full mechanism, modes and operating notes: [`IDENTITY.md`](IDENTITY.md).
 
 ## Out-of-tree plugins
 

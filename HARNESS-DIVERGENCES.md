@@ -194,6 +194,45 @@ correctness or availability one.
 **Re-measure when:** either backend is upgraded, `plane`'s catalogue grows
 substantially, or a third `mcp` surface is attached.
 
+## Per-user identity — the gateway can carry one, no live surface uses one yet
+
+Resolved 2026-09-22 by `docs/superpowers/specs/2026-09-21-per-user-identity-design.md`,
+prompted by an external feature request from a team running the published chart
+in front of Plane CE with ~2100 directory accounts behind LibreChat.
+
+**What was divergent.** The gateway had exactly one identity. `SharedTokenVerifier`
+was hardcoded at boot, so every caller was the same caller; every backend call used
+the deployment credential; and `build_transport` accepted a `headers` argument that
+**nothing populated** and that its `stdio` branch **never read** — so a per-user
+configuration, had one been expressible, would have attached green and forwarded
+nothing.
+
+**What now exists.** `BEHEROUTER_AUTH_MODE=oidc|both` accepts a JWKS-verified JWT
+beside the shared token; a surface opts into forwarding with `[surface.identity]` in
+one of four modes (`bearer`, `claims`, `client`, `lookup`); `http`, `cli` and
+`native` apply it and `stdio` refuses it in three places. `[surface.authz]`
+`require_roles` gates a surface on the caller's roles, separately, so a surface may
+gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTITY.md).
+
+**What is still open, and is the honest residual:**
+
+1. **No live surface uses any of it.** `office` and `plane` are attached with no
+   `[identity]` table, so every write through them is still attributed to one
+   identity. The mechanism is tested, not exercised in production.
+2. **`plane` cannot use it as it stands.** It is a `stdio` backing, and stdio can
+   never carry a per-request identity. Per-user Plane needs an `http` backing for
+   that plugin, which this cut deliberately excluded.
+3. **No end-to-end verification against a real IdP has been performed.** Every
+   rule is held by a test with a locally-minted key pair; no JWT from a real
+   Keycloak or Entra realm has traversed the deployed gateway.
+4. **The catalogue and the probe stay deployment-scoped by design.** A green
+   `health --deep` proves the deployment credential and says nothing about any
+   user's. The record now says so in its own output (`probe_scope`), which makes
+   the limitation legible rather than removing it.
+5. **Modes `client` and `lookup` have no external consumer asking for them.** The
+   requesting team wants `bearer` only. They were chosen deliberately and are
+   tested; they are nonetheless unexercised by any stated need.
+
 ## Open
 
 1. ~~**No surfaces are attached at all.**~~ Resolved — see the section directly above.

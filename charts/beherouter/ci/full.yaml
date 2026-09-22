@@ -16,7 +16,7 @@ registry: |
   plugin = "office-mcp"
 
 extraEnv:
-  - name: BEHEROUTER_PLANE_TOKEN
+  - name: BEHEROUTER_PLANE_API_KEY
     valueFrom:
       secretKeyRef:
         name: beherouter-credentials

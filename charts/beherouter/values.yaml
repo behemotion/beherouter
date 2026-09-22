@@ -74,13 +74,57 @@ registry: ""
 #       [plane.config]
 #       workspace_slug = "acme"
 #       [plane.env]
-#       api_key = "${BEHEROUTER_PLANE_TOKEN}"
+#       api_key = "${BEHEROUTER_PLANE_API_KEY}"
+#
+# ⚠️ BEHEROUTER_PLANE_API_KEY, not BEHEROUTER_PLANE_TOKEN. The first is the
+# BACKEND credential (`beherouter plugin-config` emits exactly this name); the
+# second is what `beherouter client-config` builds for a CLIENT's gateway
+# bearer. Using one name for both collides two unrelated secrets, and the
+# symptom is a 401 with nothing to point at.
 
 # BEHEROUTER_PUBLIC_URL -- the published origin `client-config` emits. Empty
 # auto-derives https://<first ingress host> when ingress is enabled (http when
 # no TLS block is set). Set it explicitly when clients see a different origin
 # than the Ingress (e.g. behind an external proxy).
 publicURL: ""
+
+# --- auth --------------------------------------------------------------------
+#
+# mode: "shared" (default), "oidc", or "both". "both" keeps the shared token
+# working for clients that cannot mint a JWT while accepting user JWTs from
+# those that can. oidc/both require issuer, audience and jwksUri -- the JWKS URI
+# is never discovered from the issuer (a boot-time fetch would take /healthz
+# down with the IdP).
+#
+# rolesClaim is the dotted path to the claim your IdP puts roles in
+# (realm_access.roles on Keycloak, roles on Entra, groups elsewhere). It has no
+# default, and a surface with [surface.authz] require_roles refuses to boot
+# without it.
+auth:
+  mode: "shared"
+  oidc:
+    issuer: ""
+    audience: ""
+    jwksUri: ""
+    requiredScopes: ""
+    rolesClaim: ""
+
+# --- identity map ------------------------------------------------------------
+#
+# Only for surfaces using identity mode "lookup". Mount an existing Secret
+# read-only; the gateway re-reads it when it changes, so rotating a user's
+# credential needs no restart. Never rendered into the chart.
+#
+# ⚠️ The Secret's KEY must be the basename of mountPath (identity-map.toml by
+# default): the file is mounted with subPath, so the key is the filename.
+#
+# ⚠️ A subPath mount does NOT hot-reload when the Secret changes -- kubelet
+# updates the projected directory, not a subPath'd file -- so on Kubernetes
+# rotating a credential needs a pod restart. See docs/IDENTITY.md.
+identityMap:
+  enabled: false
+  secretName: ""
+  mountPath: "/etc/beherouter/identity-map.toml"
 
 # Extra env appended verbatim to the gateway container AND the registry-lint
 # hook Job: {name, value} or {name, valueFrom}. This is the escape hatch for

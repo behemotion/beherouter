@@ -1,0 +1,32 @@
+# Lint/render scenario: per-user identity -- OIDC beside the shared token, a
+# role-gated surface, and a mounted identity map.
+#
+# The map is mounted into BOTH the Deployment and the registry-lint hook Job:
+# lint reads a `lookup` surface's map, so a gate that could not see it would
+# refuse a registry the gateway would have served.
+image:
+  repository: registry.example.com/beherouter
+  tag: "0.2.0"
+
+secret:
+  gatewayToken: ci-token
+
+auth:
+  mode: both
+  oidc:
+    issuer: https://idp.ci.example.com/realms/main
+    audience: beherouter
+    jwksUri: https://idp.ci.example.com/realms/main/protocol/openid-connect/certs
+    rolesClaim: realm_access.roles
+
+identityMap:
+  enabled: true
+  secretName: beherouter-identity-map
+
+registry: |
+  [office]
+  plugin = "office-mcp"
+    [office.identity]
+    mode = "bearer"
+    [office.authz]
+    require_roles = ["ai-office-access"]

@@ -52,10 +52,27 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.identityMap.enabled }}
+            # subPath + items, never a bare directory mount: the map is a single
+            # file, and mounting a directory at its path would make that path a
+            # directory and every lookup Unavailable.
+            - name: identity-map
+              mountPath: {{ .Values.identityMap.mountPath }}
+              subPath: {{ base .Values.identityMap.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: registry
           configMap:
             name: {{ include "beherouter.fullname" . }}-registry-lint
         - name: tmp
           emptyDir: {}
+        {{- if .Values.identityMap.enabled }}
+        - name: identity-map
+          secret:
+            secretName: {{ required "identityMap.secretName is required when identityMap.enabled" .Values.identityMap.secretName }}
+            items:
+              - key: {{ base .Values.identityMap.mountPath }}
+                path: {{ base .Values.identityMap.mountPath }}
+        {{- end }}
 {{- end }}

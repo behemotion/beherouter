@@ -226,7 +226,11 @@ pin list names a tool the backend no longer serves (`catalogue:
 
 ⚠️ **Every write through `plane` is attributed to one Plane identity** (the PAT
 minted as `beherouter-mcp`). Making the connection universal did not make it
-per-user.
+per-user — and `plane` *cannot* be made per-user as attached: it is a `stdio`
+backing, which can never carry a per-request identity (an `http` backing for the
+plugin is the prerequisite). A surface **with** a `[surface.identity]` table does
+forward the caller's own credential; see **`docs/IDENTITY.md`**. Neither live
+surface has one.
 
 ⚠️ **An attach failure crash-loops the whole gateway**, taking every other surface
 and `/healthz` with it. `registry-lint` is the pre-deploy guard; `podman logs
@@ -264,8 +268,11 @@ Four traps, three of them held by tests rather than prose:
   instead of crash-looping the gateway. Held by
   `test_attach_performs_no_network_io`.
 - ⚠️ **Every write is attributed to one calendar identity** — the account that
-  consented. Making a surface available to every LibreChat user did not make it
-  per-user, exactly as with the Plane PAT.
+  consented — *unless* the surface declares `[surface.identity]`. Both plugins
+  support mode `lookup` against the identity map (`docs/IDENTITY.md`), which
+  gives each caller their own refresh token; with no such table, making a
+  surface available to every LibreChat user did not make it per-user, exactly as
+  with the Plane PAT.
 
 Timestamps crossing the boundary must be RFC 3339 **with an explicit offset**;
 naive input is a `UsageError` naming the rule. Both provider APIs accept a naive
