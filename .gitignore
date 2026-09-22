@@ -52,6 +52,9 @@ local-infra/
 CLAUDE.md
 
 # Agent skill layouts — internal harness infra, not published (sync.sh
-# replicates the handoff skill across these)
-.claude/
+# replicates the handoff skill across these) — except land-clean, which is
+# repo tooling and ships with the repo.
+.claude/*
+!.claude/skills/
+.claude/skills/handoff/
 .opencode/
