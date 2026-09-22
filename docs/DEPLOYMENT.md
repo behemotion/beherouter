@@ -193,14 +193,17 @@ README carries the values reference. Dev VMs in this harness are Kubernetes-only
 which is why this path exists.
 
 ```bash
-helm install beherouter charts/beherouter \
+helm install beherouter oci://ghcr.io/behemotion/charts/beherouter \
   --namespace beherouter --create-namespace \
   --set-string secret.gatewayToken="$(openssl rand -hex 32)"
 ```
 
-That is the whole install: the image defaults to the published release
-(`ghcr.io/behemotion/beherouter:<chart appVersion>`) and an empty registry is a
-valid parked gateway. `prod-values.yaml` then carries the one required value —
+That is the whole install: **chart and image are both published** — the chart as
+an OCI artifact pushed once per release and never overwritten, the image as its
+own `appVersion` default (`ghcr.io/behemotion/beherouter:<chart appVersion>`) —
+and an empty registry is a valid parked gateway. Installing from a checkout
+(`helm install beherouter charts/beherouter`) is equivalent and is what CI
+exercises. `prod-values.yaml` then carries the one required value —
 `secret.gatewayToken` — plus `registry:` and one `secret.env` key per `${VAR}`
 it names; render fails loudly without the token, so an install cannot
 half-happen.
@@ -222,6 +225,51 @@ rollback`. Deep verification stays the same command, run against the Deployment:
 ```bash
 kubectl exec deploy/beherouter -- beherouter health --deep --json   # exit 6 == bad credential
 ```
+
+### Materialising a `stdio` backend at pod start (a `cmd` override)
+
+The published image carries the **gateway only**. A `stdio` plugin whose server
+is not in the image — `plane`, whose default `cmd` points at a path the homelab
+image bakes in — can be materialised at start-up by overriding `cmd` in the
+registry entry:
+
+```toml
+[plane]
+plugin = "plane"
+  [plane.config]
+  workspace_slug = "acme"
+  cmd = "uv run --exclude-newer 2026-09-01 --with plane-mcp-server==0.3.2 plane-mcp-server stdio"
+```
+
+⚠️ **This trades a build-time dependency for a runtime one.** A PyPI outage or
+an egress change then presents as a **crash-looping gateway** rather than a
+failed build, because an attach failure takes `/healthz` and every other surface
+with it. Baking the server into a derived image is the sturdier choice; what
+follows is what the override needs when you take it anyway (all four verified in
+production by an operator running it under a hardened security context):
+
+| Requirement | Why |
+|---|---|
+| `HOME` and `UV_CACHE_DIR` pointed at a writable path — on the chart, `extraEnv` onto the `/tmp` emptyDir it already mounts | with `readOnlyRootFilesystem: true` and neither set, the gateway crash-loops with **no clear error** |
+| `--exclude-newer <date>` beside the `==` pin | `plane-mcp-server==0.3.2` pins only the top level; without a date pin its ~80 transitive dependencies re-resolve on **every pod start**, so two pods restarted weeks apart run different code |
+| Nothing else on stdout | `uv` writes progress to **stderr only**, which is why this works at all: the MCP stdio channel on stdout stays uncorrupted |
+| Accept two FastMCP versions in one pod | `uv run --with` builds an isolated environment, so the backend can hold a different FastMCP than the gateway (3.2.0 beside 3.4.5, observed) — a feature here, not a conflict |
+
+```yaml
+# values.yaml — the two variables, onto the emptyDir the chart already mounts
+extraEnv:
+  - name: HOME
+    value: /tmp
+  - name: UV_CACHE_DIR
+    value: /tmp/uv-cache
+```
+
+Under `runAsNonRoot` + UID 1000 + all capabilities dropped +
+`automountServiceAccountToken: false`, a full JSON-RPC `initialize` through such
+a backend succeeds.
+
+⚠️ A `stdio` backend can never carry a per-request identity, however it is
+materialised — see [`IDENTITY.md`](IDENTITY.md) §7.
 
 ---
 

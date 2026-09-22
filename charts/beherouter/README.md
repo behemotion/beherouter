@@ -13,10 +13,16 @@ multi-arch, one tag per release (`v0.2.0` git tag → `0.2.0` image tag, which i
 also the chart's default). **The only required value is the gateway token.**
 
 ```bash
-helm install beherouter charts/beherouter \
+helm install beherouter oci://ghcr.io/behemotion/charts/beherouter \
   --namespace beherouter --create-namespace \
   --set-string secret.gatewayToken="$(openssl rand -hex 32)"
 ```
+
+The chart is published as an **OCI artifact** beside the image, one push per
+release, and a published chart version is never overwritten (the release
+workflow refuses it) — so `--version 0.1.3` pins exactly what you tested, and
+there is no need to vendor this directory into your own repo. `helm install
+charts/beherouter` from a checkout still works and is what CI exercises.
 
 That installs a *parked* gateway (empty registry, `/healthz` answering) — a
 valid state. Attach surfaces by adding `registry:` and one `secret.env` key per
@@ -27,7 +33,7 @@ valid state. Attach surfaces by adding `registry:` and one `secret.env` key per
 secret:
   gatewayToken: ""            # REQUIRED -- pass via CD, not the file
   env:
-    BEHEROUTER_PLANE_TOKEN: ""   # every ${VAR} the registry references
+    BEHEROUTER_PLANE_API_KEY: ""   # every ${VAR} the registry references
 registry: |
   [office]
   plugin = "office-mcp"

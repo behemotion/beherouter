@@ -106,16 +106,24 @@ BEHEROUTER_GATEWAY_TOKEN
   value: {{ $url | quote }}
 {{- end }}
 {{- $auth := .root.Values.auth | default dict }}
-{{- if ne ($auth.mode | default "shared") "oidc" }}
+{{- $mode := $auth.mode | default "shared" }}
+{{- if ne $mode "oidc" }}
 - name: BEHEROUTER_GATEWAY_TOKEN
   valueFrom:
     secretKeyRef:
       name: {{ .secretName }}
       key: {{ .tokenKey }}
 {{- end }}
-{{- if and $auth.mode (ne $auth.mode "shared") }}
+{{/* ⚠️ ALWAYS rendered, "shared" included. registry-lint SKIPS its auth-mode
+       rules when this variable is absent -- deliberately, because lint also runs
+       on a workstation where the gateway's env does not exist. Omitting it here
+       would therefore let the pre-deploy hook pass a registry the gateway then
+       refuses at boot: a surface with [authz] require_roles or [identity] under
+       the default mode. Rendering it makes the hook the authority it claims to
+       be. */}}
 - name: BEHEROUTER_AUTH_MODE
-  value: {{ $auth.mode | quote }}
+  value: {{ $mode | quote }}
+{{- if ne $mode "shared" }}
 {{- with $auth.oidc }}
 {{- if .issuer }}
 - name: BEHEROUTER_OIDC_ISSUER

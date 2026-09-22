@@ -49,7 +49,7 @@ secret:
   # value; pass it with --set-secret / -f / your CD tool.
   gatewayToken: ""
   # Backend credentials keyed by the exact ${VAR} name the registry uses, e.g.:
-  #   BEHEROUTER_PLANE_TOKEN: "plane-pat"
+  #   BEHEROUTER_PLANE_API_KEY: "plane-pat"
   env: {}
 
 # Used only when secret.create=false: an existing Secret holding the gateway

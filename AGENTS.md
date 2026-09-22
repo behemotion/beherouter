@@ -393,9 +393,15 @@ See `docs/DEPLOYMENT.md` § Deploying on Kubernetes and the chart README.
 tag==pyproject-version==chart-appVersion consistency gate, then the multi-arch
 image to **`ghcr.io/behemotion/beherouter`** (image tag = the version, no
 leading `v`; that tag is also the chart's default image) and the GitHub
-Release. The workflow must already be on main when the tag is cut — it runs
-from the tagged commit. The chart defaults to the published image, so a
-client's only required value is `secret.gatewayToken`.
+Release, and finally the **chart** as an OCI artifact to
+`ghcr.io/behemotion/charts/beherouter` (a published chart version is never
+overwritten — the job refuses a `Chart.yaml` `version` that already exists, so
+any template or values change bumps it). The workflow must already be on main
+when the tag is cut — it runs from the tagged commit. The chart defaults to the
+published image, so a client's only required value is `secret.gatewayToken`,
+and a Kubernetes user installs with
+`helm install beherouter oci://ghcr.io/behemotion/charts/beherouter` instead of
+vendoring the chart directory.
 
 **Versioning — patch by default, minor only when asked.** A routine release
 bumps the **third** register (`0.2.0 → 0.2.1`); the **second** register moves

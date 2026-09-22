@@ -10,7 +10,7 @@ secret:
   create: true
   gatewayToken: "ci-dummy-gateway-token"
   env:
-    BEHEROUTER_PLANE_TOKEN: "ci-dummy-plane-pat"
+    BEHEROUTER_PLANE_API_KEY: "ci-dummy-plane-pat"
 
 registry: |
   [office]
@@ -21,7 +21,7 @@ registry: |
     [plane.config]
     workspace_slug = "ci"
     [plane.env]
-    api_key = "${BEHEROUTER_PLANE_TOKEN}"
+    api_key = "${BEHEROUTER_PLANE_API_KEY}"
 
 ingress:
   enabled: true

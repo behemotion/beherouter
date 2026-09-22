@@ -66,6 +66,21 @@ jobs:
             | grep -c 'ghcr.io/behemotion/beherouter:')
           [ "$imgs" -ge 2 ] || { echo "expected Deployment + lint hook on the default image, got $imgs"; exit 1; }
 
+      # The pre-deploy hook is only an authority if it sees the auth mode:
+      # registry-lint SKIPS its auth-mode rules when BEHEROUTER_AUTH_MODE is
+      # absent, so a hook Job rendered without it passes a registry the gateway
+      # then refuses at boot ([authz] require_roles or [identity] under the
+      # default "shared"). It must be rendered for every mode, "shared"
+      # included.
+      - name: Lint hook carries the auth mode in every scenario
+        run: |
+          for f in charts/beherouter/ci/*.yaml; do
+            helm template beherouter charts/beherouter -f "$f" \
+              -s templates/registry-lint-job.yaml \
+              | grep -q "BEHEROUTER_AUTH_MODE" \
+              || { echo "::error::$f renders a lint hook with no BEHEROUTER_AUTH_MODE"; exit 1; }
+          done
+
       - name: Defaults must refuse to render (no gateway token)
         run: |
           if helm template charts/beherouter >/dev/null 2>&1; then

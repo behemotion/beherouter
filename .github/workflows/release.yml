@@ -92,3 +92,47 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+
+  # The chart is a shipped artifact too, and until it was published a
+  # Kubernetes user had to vendor the directory out of git to install it --
+  # which is a fork of the deployment surface, kept in step by hand. Pushing it
+  # as an OCI artifact to the registry that already holds the image makes
+  # `helm install oci://...` the whole install.
+  #
+  # AFTER the image job: the chart's default image tag is its own appVersion,
+  # so publishing a chart whose image does not exist yet would hand a user a
+  # release that cannot pull.
+  chart:
+    runs-on: ubuntu-latest
+    needs: image
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # A published chart version is immutable by convention here: overwriting
+      # one would change what an existing pin resolves to. Chart.yaml's own
+      # rule is "bump on any template/values change" -- this is what enforces it.
+      - name: Chart version must not already be published
+        run: |
+          chartver="$(sed -n 's/^version: \(.*\)$/\1/p' charts/beherouter/Chart.yaml)"
+          echo "chart version ${chartver}"
+          if helm show chart "oci://ghcr.io/${{ github.repository_owner }}/charts/beherouter" \
+               --version "$chartver" >/dev/null 2>&1; then
+            echo "::error::chart ${chartver} is already published; bump version in charts/beherouter/Chart.yaml"
+            exit 1
+          fi
+
+      - name: Package and push
+        run: |
+          chartver="$(sed -n 's/^version: \(.*\)$/\1/p' charts/beherouter/Chart.yaml)"
+          helm package charts/beherouter --destination dist
+          helm push "dist/beherouter-${chartver}.tgz" \
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"
