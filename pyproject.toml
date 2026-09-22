@@ -7,7 +7,7 @@ name = "beherouter"
 # Versioning: bump the PATCH register by default; MINOR moves only on an
 # explicit ask. A release additionally needs chart appVersion + the v-tag
 # (release.yml enforces all three agree). See AGENTS.md "Releases".
-version = "0.2.0"
+version = "0.2.1"
 description = "Multi-service MCP gateway: per-service surfaces + embeddings-free BM25 tool search + per-user header passthrough"
 readme = "README.md"
 license = "Apache-2.0"

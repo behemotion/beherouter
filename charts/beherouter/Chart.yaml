@@ -8,12 +8,12 @@ description: >-
 type: application
 # Chart version (packaging): bump on any template/values change -- patch
 # register by default, MINOR only on an explicit ask.
-version: 0.1.1
+version: 0.1.2
 # The gateway release this chart defaults to; also the default image tag
 # (ghcr.io/behemotion/beherouter:<appVersion>). Moves with the pyproject
 # version (patch by default, minor on explicit ask) -- release.yml refuses a
 # vX.Y.Z tag that disagrees with either.
-appVersion: "0.2.0"
+appVersion: "0.2.1"
 # Floor is set by the APIs used, not taste: networking.k8s.io/v1 Ingress (1.19),
 # policy/v1 PDB (1.21), startupProbe (1.20) -- 1.25 keeps all of them old news.
 kubeVersion: ">=1.25.0-0"
