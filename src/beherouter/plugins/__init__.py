@@ -87,6 +87,8 @@ from . import (  # noqa: F401  (imported for their registration side effect)
     m365,
     office_mcp,
     plane,
+    plane_http,
+    plane_http_apikey,
 )
 
 # The `cli` backing ships with no production plugin. Its one caller is a test

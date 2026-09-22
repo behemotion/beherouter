@@ -33,7 +33,11 @@ before pinning; re-probe the whole list after an upgrade or an edition change.
 
 ⚠️ EVERY WRITE IS ATTRIBUTED TO ONE PLANE IDENTITY — the PAT minted as
 "beherouter-mcp". One shared identity per surface, exactly like any other
-backend credential here.
+backend credential here. THIS IS A PROPERTY OF THE STDIO ATTACHMENT, not of
+Plane: a stdio subprocess environment is fixed at spawn and `keep_alive=True`
+reuses it across callers, so no per-request credential can reach it. Attach the
+same surface with the `plane-http` plugin and a `[surface.identity]` table to
+make each caller act as themselves.
 """
 
 from urllib.parse import urlparse
@@ -44,29 +48,38 @@ from ..errors import UsageError
 from . import register
 from .spec import ConfigField, EnvVar, PluginContext, PluginSpec
 
+# THE VOCABULARY, shared with `plane-http` rather than copied into it. The two
+# plugins are one surface attached two ways; an agent's tool list must not
+# depend on which attachment an operator chose, and a pin list maintained twice
+# would drift on the first upgrade.
+PINNED = (
+    "workitem",
+    "workitem_comment",
+    "workitem_attachment",
+    "project",
+    "state",
+    "member",
+    "label",
+    "cycle",
+    "module",
+    "workitem_link",
+    "intake",
+)
+
+# member/me authenticates against Plane with the real credential and takes no
+# other argument, so `health --deep` proves the CREDENTIAL rather than the
+# catalogue. This is the check gitea-home lacked: a revoked token lists and
+# searches perfectly and fails only on a real call.
+PROBE = "member"
+PROBE_ARGS = {"action": "me"}
+
 SPEC = PluginSpec(
     name="plane",
     summary="Plane work tracking: work items, cycles, modules, comments and attachments.",
     backing="stdio",
-    pinned=(
-        "workitem",
-        "workitem_comment",
-        "workitem_attachment",
-        "project",
-        "state",
-        "member",
-        "label",
-        "cycle",
-        "module",
-        "workitem_link",
-        "intake",
-    ),
-    # member/me authenticates against Plane with the real PAT and takes no other
-    # argument, so `health --deep` proves the CREDENTIAL rather than the
-    # catalogue. This is the check gitea-home lacked: a revoked token lists and
-    # searches perfectly and fails only on a real call.
-    probe="member",
-    probe_args={"action": "me"},
+    pinned=PINNED,
+    probe=PROBE,
+    probe_args=PROBE_ARGS,
     config=(
         ConfigField(
             name="base_url",

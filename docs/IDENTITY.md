@@ -223,6 +223,41 @@ surface, at the edge, before the call is made.
   can never carry an identity.
 - A shared-token caller is refused by a gate, exactly as by an identity mode.
 
+## 6b. Worked example — per-user Plane
+
+Verified end to end against real `plane-mcp-server` 0.3.2 in
+[`tests/e2e/`](../tests/e2e/README.md): two callers, two Plane identities, one
+gateway.
+
+```toml
+[plane]
+plugin = "plane-http-apikey"          # NOT `plane`: stdio can never be per-user
+  [plane.config]
+  base_url = "http://plane-mcp:8211/http/api-key/mcp"
+  workspace_slug = "acme"
+  [plane.env]
+  api_key = "${BEHEROUTER_PLANE_API_KEY}"   # attach + probe only
+  [plane.identity]
+  mode = "client"
+    [plane.identity.map]
+    authorization = "x-plane-pat"     # each caller sends their own PAT here
+  [plane.authz]
+  require_roles = ["ai-plane-access"]
+```
+
+The caller sends the whole header value — `x-plane-pat: Bearer pat-…` — which is
+what a LibreChat `customUserVars` entry can carry unchanged. The gateway stores
+nothing.
+
+⚠️ **Which mount, and why it is not the obvious one.** plane-mcp-server serves
+`/http` (bearer) and `/http/api-key`. The bearer mount is an **OAuth proxy**: it
+only accepts tokens it minted itself and 401s a forwarded one *before Plane is
+consulted*, so a forwarded IdP token cannot reach Plane through it. The api-key
+mount takes a per-request PAT and calls Plane with it. Use `plane-http` (mode
+`bearer`) only against a backend that accepts a forwarded token — a fork with
+its own JWT authentication, say. `registry-lint` refuses the wrong pairing
+offline, because each plugin declares only the mode its mount can honour.
+
 ## 7. The rules that will refuse you
 
 Offline, from `registry-lint` (and from `validate_entry`, so also at boot):

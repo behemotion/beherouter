@@ -219,9 +219,18 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
 1. **No live surface uses any of it.** `office` and `plane` are attached with no
    `[identity]` table, so every write through them is still attributed to one
    identity. The mechanism is tested, not exercised in production.
-2. **`plane` cannot use it as it stands.** It is a `stdio` backing, and stdio can
-   never carry a per-request identity. Per-user Plane needs an `http` backing for
-   that plugin, which this cut deliberately excluded.
+2. ~~**`plane` cannot use it as it stands.**~~ Resolved 2026-09-22: `plane-http`
+   and `plane-http-apikey` attach the same pin list over HTTP, and per-user Plane
+   is proven end to end in `tests/e2e/` — two callers, two Plane identities,
+   through real plane-mcp-server 0.3.2. The live surface is still the stdio
+   `plane`, so nothing in production is per-user yet.
+
+   ⚠️ **The residual is which mount.** `/http` is an OAuth proxy that accepts
+   only tokens it minted itself and 401s a forwarded one before Plane is
+   consulted; `/http/api-key` takes a per-request PAT and works today. So
+   per-user Plane against the published server means **a PAT per caller**
+   (mode `client`, nothing stored by the gateway), not an IdP token. Mode
+   `bearer` against Plane needs a backend that accepts a forwarded token.
 3. **No end-to-end verification against a real IdP has been performed.** Every
    rule is held by a test with a locally-minted key pair; no JWT from a real
    Keycloak or Entra realm has traversed the deployed gateway.

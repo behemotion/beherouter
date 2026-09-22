@@ -206,6 +206,24 @@ included. Entry and secret ship in the same playbook run, or not at all.
 | _`m365`_ | `m365` | `native` | 6 / 6 | **yes** — Microsoft OAuth refresh token |
 | _`gitea-home`_ | — | — | — | removed 2026-07-30; needs a freshly minted PAT |
 
+**Plane has three plugins, one vocabulary.** `plane` (stdio) is what the live
+surface uses; `plane-http-apikey` and `plane-http` attach the same 11 pins over
+HTTP so the surface can be **per-user**, which stdio can never be. They share
+`PINNED`/`PROBE` from `plugins/plane.py` rather than copying them.
+
+⚠️ **The two HTTP mounts are not interchangeable, and the difference is the
+whole reason there are two plugins** (measured against plane-mcp-server 0.3.2,
+2026-09-22, in `tests/e2e/`):
+
+| Mount | Plugin | What it accepts | Verdict |
+|---|---|---|---|
+| `/http/api-key/mcp` | `plane-http-apikey` | a per-request **Plane PAT** + `x-workspace-slug` | **works today**: `pat-alice` → Plane resolves alice |
+| `/http/mcp` | `plane-http` | only a token **its own OAuth proxy minted** (a FastMCP JWT with a `jti` in its store) | a forwarded IdP token is **401'd before Plane is consulted** — needs a backend with its own JWT auth |
+
+So per-user Plane against the published server is the PAT path (mode `client`,
+each caller's own PAT, nothing stored by the gateway); the bearer path is for a
+backend that accepts a forwarded token.
+
 **`office` is a pass-through, and that is deliberate.** office-mcp already does its
 own pinned-few + lexical-search split internally (`discover`/`invoke` over a 34-tool
 catalogue), so all four of its tools are pinned rather than re-indexed. The benefit
