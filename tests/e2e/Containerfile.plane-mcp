@@ -1,0 +1,7 @@
+# plane-mcp-server in HTTP mode: the bearer mount is what makes a per-request
+# caller identity reach Plane at all. Pinned exactly as the requesting team
+# runs it, with --exclude-newer so the ~80 transitive deps cannot drift.
+FROM python:3.12-slim
+RUN pip install --no-cache-dir plane-mcp-server==0.3.2
+EXPOSE 8211
+CMD ["plane-mcp-server", "http"]

@@ -55,3 +55,7 @@ CLAUDE.md
 # replicates the handoff skill across these)
 .claude/
 .opencode/
+
+# e2e run artifacts: signed tokens and a generated registry, never committed
+tests/e2e/material.json
+tests/e2e/registry.toml

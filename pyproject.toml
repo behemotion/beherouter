@@ -56,6 +56,14 @@ dev = [
 line-length = 100
 target-version = "py312"
 
+# tests/e2e/ is a deployment DRIVER, not library code. It makes blocking HTTP
+# and `podman exec` calls from one async main on purpose — it scripts a stack
+# and asserts on it, and concurrency there would only hide ordering — and it
+# catches broad exceptions because what it asserts is the message a caller
+# would see, whatever type carried it.
+[tool.ruff.lint.per-file-ignores]
+"tests/e2e/*" = ["ASYNC210", "ASYNC221", "BLE001"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

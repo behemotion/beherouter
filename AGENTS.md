@@ -34,7 +34,9 @@
 > surface and `/healthz` with it. Read `podman logs beherouter` after any
 > registry change.
 >
-> 577 tests pass; `beheaxi conformance "beherouter"` is 6/6; both backend kinds
+> 622 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
+> per-user identity against a REAL `plane-mcp-server`: 14/14, two callers acting
+> as themselves in Plane. `beheaxi conformance "beherouter"` is 6/6; both backend kinds
 > attach for real, and **`cli` backends now execute** (they were listable but
 > not callable before 2026-08-04).
 > Design background: **`docs/DESIGN.md`**; the plugin seam:
