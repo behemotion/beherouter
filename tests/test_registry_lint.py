@@ -72,3 +72,11 @@ def test_the_live_registry_shape_lints_clean(tmp_path, monkeypatch):
         '  api_key = "${BEHEROUTER_PLANE_TOKEN}"\n'
     )
     registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_an_identity_mode_on_a_shared_only_gateway(tmp_path, monkeypatch):
+    """Checked only where the variable is visible — boot is the authority."""
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    body = '[office]\nplugin = "office-mcp"\n  [office.identity]\n  mode = "bearer"\n'
+    with pytest.raises(UsageError):
+        registry_lint(path=_write(tmp_path, body))

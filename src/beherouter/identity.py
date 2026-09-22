@@ -296,3 +296,125 @@ def secret_map(path: str | Path) -> SecretMap:
     if key not in _MAPS:
         _MAPS[key] = SecretMap(Path(path))
     return _MAPS[key]
+
+
+_IDENTITY_KEYS = ("mode", "header", "prefix", "key", "path", "map")
+
+
+def validate_identity(surface: str, spec, raw: dict | None) -> None:
+    """Validate a `[surface.identity]` table offline. No I/O, no attach.
+
+    ⚠️ Deliberately does NOT check the gateway's auth mode. This runs at boot AND
+    from `registry-lint`, and lint runs on a workstation or in an init container
+    where `$BEHEROUTER_AUTH_MODE` may be absent — a default-driven refusal there
+    would fail a perfectly good registry. `gateway.build_gateway_app` owns that
+    check, and `registry_lint` repeats it only when the variable is set.
+    """
+    if not raw:
+        return
+    if not isinstance(raw, dict):
+        raise UsageError(
+            f"'{surface}': [identity] must be a table, got {type(raw).__name__}"
+        )
+    unknown = sorted(set(raw) - set(_IDENTITY_KEYS))
+    if unknown:
+        raise UsageError(
+            f"'{surface}': unknown identity key(s) {unknown}; "
+            f"allowed: {sorted(_IDENTITY_KEYS)}"
+        )
+    mode = raw.get("mode")
+    if mode in (None, "", "none"):
+        others = sorted(set(raw) - {"mode"})
+        if others:
+            raise UsageError(
+                f"'{surface}': [identity] names no mode, so {others} would be "
+                f"silently ignored"
+            )
+        return
+    if mode not in MODES:
+        raise UsageError(f"'{surface}': unknown identity mode {mode!r}; known: {MODES}")
+
+    support = spec.identity
+    if not support.modes:
+        raise UsageError(
+            f"'{surface}': plugin '{spec.name}' declares no identity support, so "
+            f"it cannot be configured with mode {mode!r}. A plugin must declare "
+            f"IdentitySupport before a surface can be per-user."
+        )
+    if spec.backing == "stdio":
+        raise UsageError(
+            f"'{surface}': a stdio backing cannot carry a per-request identity "
+            f"— the subprocess environment is fixed at spawn and is reused "
+            f"across callers (keep_alive=True). Attach it over http instead."
+        )
+    if support.target not in TARGETS:
+        raise UsageError(
+            f"plugin '{spec.name}': IdentitySupport.target must be one of "
+            f"{TARGETS}, got {support.target!r}"
+        )
+    if support.target == "credential" and not support.accepts:
+        raise UsageError(
+            f"plugin '{spec.name}': target 'credential' requires 'accepts' — a "
+            f"native plugin's credentials are a closed set it already declares"
+        )
+    if mode not in support.modes:
+        raise UsageError(
+            f"'{surface}': plugin '{spec.name}' supports identity mode(s) "
+            f"{list(support.modes)}, not {mode!r}"
+        )
+
+    if mode == "bearer":
+        if "map" in raw:
+            raise UsageError(
+                f"'{surface}': mode 'bearer' takes 'header' and 'prefix', not a map"
+            )
+        for name in ("header", "prefix"):
+            if name in raw and not isinstance(raw[name], str):
+                raise UsageError(f"'{surface}': identity '{name}' must be a string")
+    else:
+        mapping = raw.get("map")
+        if not isinstance(mapping, dict) or not mapping:
+            raise UsageError(
+                f"'{surface}': mode {mode!r} requires a non-empty "
+                f"[{surface}.identity.map] table of target key -> source name"
+            )
+        for key, source in mapping.items():
+            if not isinstance(source, str) or not source:
+                raise UsageError(
+                    f"'{surface}': identity map '{key}' must name a non-empty source"
+                )
+            if support.accepts and key not in support.accepts:
+                raise UsageError(
+                    f"'{surface}': {key!r} is not an identity target of plugin "
+                    f"'{spec.name}'; accepted: {sorted(support.accepts)}"
+                )
+
+    if mode == "lookup":
+        key_claim = raw.get("key", "sub")
+        if not isinstance(key_claim, str) or not key_claim:
+            raise UsageError(f"'{surface}': identity 'key' must name a claim")
+        if not (raw.get("path") or os.environ.get(DEFAULT_MAP_VAR)):
+            raise UsageError(
+                f"'{surface}': mode 'lookup' needs 'path' in [{surface}.identity] "
+                f"or ${DEFAULT_MAP_VAR} in the gateway's environment"
+            )
+
+
+def policy_from_entry(entry, spec) -> IdentityPolicy:
+    """The inert policy for one registry entry. Validate first."""
+    raw = dict(entry.identity or {})
+    mode = raw.get("mode") or ""
+    if mode == "none":
+        mode = ""
+    if not mode:
+        return IdentityPolicy(surface=entry.name)
+    return IdentityPolicy(
+        surface=entry.name,
+        mode=mode,
+        target=spec.identity.target,
+        map=dict(raw.get("map") or {}),
+        header=raw.get("header", "authorization"),
+        prefix=raw.get("prefix", "Bearer "),
+        key=raw.get("key", "sub"),
+        path=raw.get("path"),
+    )

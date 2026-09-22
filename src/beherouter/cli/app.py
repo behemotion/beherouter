@@ -103,7 +103,10 @@ def registry_lint(path: str = "") -> None:
     This runs the whole validation path — plugin lookup, config schema, the
     plugin's own validators, and ${VAR} resolution — against inert data.
     """
+    from .. import auth
     from ..envexpand import expand
+    from ..errors import UsageError
+    from ..identity import DEFAULT_MAP_VAR, SecretMap
 
     target = Path(path) if path else _registry_path()
     reg = load_registry(target)
@@ -115,6 +118,32 @@ def registry_lint(path: str = "") -> None:
             # exist. The ordering rule — entry and secret ship in the same
             # playbook run — is the real guard; lint is the backstop.
             expand(entry.name, entry.env)
+        identity = entry.identity or {}
+        mode = identity.get("mode")
+        if mode and mode != "none":
+            # Boot is the authority for this one: lint may run where the
+            # gateway's own environment is absent, and defaulting to 'shared'
+            # there would fail a valid registry.
+            if os.environ.get(auth.AUTH_MODE_VAR) and auth.auth_mode() == "shared":
+                raise UsageError(
+                    f"'{entry.name}' requires a per-user identity but "
+                    f"{auth.AUTH_MODE_VAR} is 'shared'; set it to 'oidc' or 'both'"
+                )
+            if mode == "lookup":
+                path_ = identity.get("path") or os.environ.get(DEFAULT_MAP_VAR)
+                # Checked only where the mount exists, exactly like ${VAR}
+                # expansion above: lint is the backstop, not the guard.
+                if path_ and Path(path_).exists():
+                    status = SecretMap(path_).status()
+                    if status["state"] != "ok":
+                        raise UsageError(
+                            f"'{entry.name}': identity map '{path_}' is "
+                            f"{status['state']}"
+                        )
+                elif path_:
+                    raise UsageError(
+                        f"'{entry.name}': identity map '{path_}' does not exist"
+                    )
     app.emit({"ok": True, "path": str(target), "surfaces": sorted(reg)})
 
 

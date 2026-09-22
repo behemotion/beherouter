@@ -36,6 +36,29 @@ class EnvVar:
 
 
 @dataclass(frozen=True)
+class IdentitySupport:
+    """Whether a plugin can carry a PER-REQUEST identity, and where it lands.
+
+    The default is NO MODES, which is the fail-closed half: a plugin nobody has
+    audited for per-user use cannot be configured for it, and `registry-lint`
+    says so offline rather than a deploy saying it at 3am.
+
+    `target` follows the backing — `header` for http, `env` for cli,
+    `credential` for native, and stdio cannot (a subprocess environment is
+    fixed at spawn and `keep_alive=True` reuses it across callers).
+
+    `accepts` closes the target namespace. Empty means "any name" for `header`
+    and `env`, where the backend's vocabulary is open. For `credential` it is
+    REQUIRED and must be a subset of this plugin's own `env` names.
+    """
+
+    modes: tuple[str, ...] = ()
+    target: str = ""
+    accepts: tuple[str, ...] = ()
+    doc: str = ""
+
+
+@dataclass(frozen=True)
 class PluginSpec:
     name: str
     summary: str
@@ -49,6 +72,8 @@ class PluginSpec:
     # default the operator overrides per entry, exactly like `pinned` and
     # `probe`. 0 disables refresh.
     catalogue_ttl_ms: int = 300_000
+    # Whether this plugin may carry a per-request identity; see identity.py.
+    identity: IdentitySupport = IdentitySupport()
 
 
 @dataclass(frozen=True)
