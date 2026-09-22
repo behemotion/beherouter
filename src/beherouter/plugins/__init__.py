@@ -1,14 +1,19 @@
 """The plugin registry.
 
-In-tree today: plugins import themselves at the bottom of this module. The
-protocol is designed so that out-of-tree discovery is a change of LOOKUP only —
+Two sources, one table. In-tree plugins import themselves at the bottom of this
+module; out-of-tree ones are discovered through the `beherouter.plugins` entry
+point group, which was the LOOKUP-only extension this protocol was designed for
+— `PluginSpec` and `build()` are identical either way, so a third-party backend
+no longer needs a fork of the gateway to attach.
 
-    for ep in entry_points(group="beherouter.plugins"):
-        ep.load()
-
-— with no change to PluginSpec or build().
+⚠️ A third-party package that fails to import is LOGGED AND SKIPPED, not fatal:
+one broken dependency must not cost the gateway every other plugin, and an entry
+naming the missing plugin still fails loudly and early ("unknown plugin", from
+`registry-lint`, before a deploy). Nothing is ever served by a plugin that did
+not load.
 """
 
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -19,6 +24,7 @@ from .spec import BACKINGS, ConfigField, EnvVar, PluginContext, PluginSpec
 
 __all__ = [
     "BACKINGS",
+    "ENTRY_POINT_GROUP",
     "PLUGINS",
     "ConfigField",
     "EnvVar",
@@ -26,9 +32,22 @@ __all__ = [
     "PluginContext",
     "PluginSpec",
     "get",
+    "load_entry_point_plugins",
     "register",
     "resolve_pinned",
 ]
+
+logger = logging.getLogger(__name__)
+
+# The group an out-of-tree distribution advertises, e.g. in its pyproject.toml:
+#
+#     [project.entry-points."beherouter.plugins"]
+#     acme-crm = "acme_beherouter.crm"
+#
+# The value names a MODULE that calls `register()` when imported — the same
+# contract every in-tree plugin already follows, so a plugin can move in or out
+# of the tree without changing a line.
+ENTRY_POINT_GROUP = "beherouter.plugins"
 
 
 class BuildFn(Protocol):
@@ -54,6 +73,46 @@ def register(spec: PluginSpec, build: BuildFn, validate=None) -> None:
     if spec.name in PLUGINS:
         raise UsageError(f"plugin '{spec.name}' is already registered")
     PLUGINS[spec.name] = Plugin(spec=spec, build=build, validate=validate)
+
+
+def load_entry_point_plugins(eps=None) -> list[str]:
+    """Import every distribution advertising `beherouter.plugins`.
+
+    Returns the names that actually ADDED a plugin — an entry point whose module
+    registers nothing, or whose name collides with one already registered, is
+    not reported as loaded, because reporting it would tell an operator a plugin
+    is available that `get()` cannot find.
+
+    `eps` is injectable so the contract is testable without installing a package.
+    """
+    if eps is None:
+        from importlib.metadata import entry_points
+
+        eps = entry_points(group=ENTRY_POINT_GROUP)
+    loaded: list[str] = []
+    for ep in eps:
+        before = set(PLUGINS)
+        try:
+            ep.load()
+        except Exception:
+            # Bare name and value only: a third-party traceback belongs in the
+            # log, not in the message an operator reads first.
+            logger.warning(
+                "plugin entry point %r (%s) failed to load; it will not be "
+                "available to the registry",
+                getattr(ep, "name", "?"),
+                getattr(ep, "value", "?"),
+                exc_info=True,
+            )
+            continue
+        added = sorted(set(PLUGINS) - before)
+        if not added:
+            logger.warning(
+                "plugin entry point %r (%s) registered nothing", ep.name, ep.value
+            )
+            continue
+        loaded.extend(added)
+    return loaded
 
 
 def get(name: str) -> Plugin:
@@ -90,6 +149,10 @@ from . import (  # noqa: F401  (imported for their registration side effect)
     plane_http,
     plane_http_apikey,
 )
+
+# Out-of-tree plugins, AFTER the in-tree ones: `register` refuses a duplicate
+# name, so an external package cannot shadow a plugin that ships here.
+load_entry_point_plugins()
 
 # The `cli` backing ships with no production plugin. Its one caller is a test
 # fixture, kept out of `beherouter plugins` so no agent pays context for it.

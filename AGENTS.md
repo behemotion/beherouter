@@ -165,6 +165,14 @@ it makes "attach performs no network I/O" mechanically enforceable — a plugin
 **Four backings:** `http` and `stdio` (an MCP server, over HTTP or as a
 subprocess), `cli` (a beheaxi CLI), `native` (in-process Python; Phase 2).
 
+**A plugin no longer has to live in this tree.** A distribution advertising the
+`beherouter.plugins` entry-point group is imported at startup and registers the
+same way — so a team with a backend of their own extends the gateway instead of
+forking it. An entry point that fails to import is logged and skipped (one
+third-party package must not cost every other plugin); a registry naming it then
+fails loudly at `registry-lint`, and an external plugin can never shadow an
+in-tree name. See `docs/PLUGINS.md` § Out-of-tree plugins.
+
 **A backend's searchable catalogue refreshes on a TTL** (`catalogue_ttl_ms`, a
 registry-entry override of a `PluginSpec` default; 300 000 ms for both live
 surfaces) — `search_tools`/`describe_tool`/`run_tool`/`context_cost` see a

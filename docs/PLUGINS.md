@@ -279,13 +279,44 @@ Full mechanism, modes and operating notes: [`IDENTITY.md`](IDENTITY.md).
 
 ## Out-of-tree plugins
 
-Not supported yet. In-tree plugins import themselves at the bottom of
-`plugins/__init__.py`. The protocol is designed so that out-of-tree discovery is a change of
-**lookup only** —
+**Supported.** A distribution advertises the `beherouter.plugins` entry-point
+group; the gateway imports each one at startup, after the in-tree plugins, and
+the module registers exactly as an in-tree one does:
 
-```python
-for ep in entry_points(group="beherouter.plugins"):
-    ep.load()
+```toml
+# your package's pyproject.toml
+[project.entry-points."beherouter.plugins"]
+acme-crm = "acme_beherouter.crm"      # a MODULE that calls register() on import
 ```
 
-— with no change to `PluginSpec` or `build()`.
+```python
+# acme_beherouter/crm.py
+from beherouter.plugins import register
+from beherouter.plugins.spec import ConfigField, PluginSpec
+
+SPEC = PluginSpec(name="acme-crm", summary="...", backing="http", pinned=(...))
+
+async def build(ctx):
+    ...
+
+register(SPEC, build)
+```
+
+Nothing else changes: `PluginSpec` and `build()` are identical either way, so a
+plugin can move into this tree or out of it without an edit. `beherouter
+plugins`, `plugin-config` and `registry-lint` see it like any other.
+
+Three rules worth knowing:
+
+- ⚠️ **An entry point that fails to import is logged and skipped**, not fatal.
+  One broken third-party dependency must not cost the gateway every other
+  plugin. Nothing is served by a plugin that did not load: a registry naming it
+  fails with `unknown plugin`, from `registry-lint`, before a deploy.
+- ⚠️ **An external plugin cannot shadow an in-tree one.** Discovery runs after
+  the in-tree imports and `register()` refuses a duplicate name, so the in-tree
+  plugin survives the attempt.
+- **A module that registers nothing is not reported as loaded** — saying
+  otherwise would advertise a plugin `get()` cannot find.
+
+Install the distribution into the same environment as the gateway (for the
+published image, a derived image that `pip install`s it).
