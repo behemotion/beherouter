@@ -120,13 +120,26 @@ def registry_lint(path: str = "") -> None:
             expand(entry.name, entry.env)
         identity = entry.identity or {}
         mode = identity.get("mode")
-        if mode and mode != "none":
+        gate = (entry.authz or {}).get("require_roles")
+        # Same asymmetry as the auth-mode check below: checked only where the
+        # gateway's own environment is visible. Boot is the authority.
+        if (
+            gate
+            and os.environ.get(auth.AUTH_MODE_VAR)
+            and not os.environ.get(auth.OIDC_ROLES_CLAIM_VAR)
+        ):
+            raise UsageError(
+                f"'{entry.name}' gates on roles but "
+                f"{auth.OIDC_ROLES_CLAIM_VAR} is unset; set it to the "
+                f"dotted path of the claim your IdP puts roles in"
+            )
+        if (mode and mode != "none") or gate:
             # Boot is the authority for this one: lint may run where the
             # gateway's own environment is absent, and defaulting to 'shared'
             # there would fail a valid registry.
             if os.environ.get(auth.AUTH_MODE_VAR) and auth.auth_mode() == "shared":
                 raise UsageError(
-                    f"'{entry.name}' requires a per-user identity but "
+                    f"'{entry.name}' requires a verified user but "
                     f"{auth.AUTH_MODE_VAR} is 'shared'; set it to 'oidc' or 'both'"
                 )
             if mode == "lookup":

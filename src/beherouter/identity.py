@@ -93,10 +93,20 @@ class IdentityPolicy:
     prefix: str = "Bearer "  # bearer only
     key: str = "sub"  # lookup only: the claim identifying the caller
     path: str | None = None  # lookup only: the identity map
+    # Role gating, from [surface.authz]. Deliberately NOT part of a mode: a
+    # surface may gate without forwarding anything, and gating needs no
+    # IdentitySupport from the plugin — which is why it works on stdio.
+    require_roles: tuple[str, ...] = ()
+    roles_claim: str = ""  # dotted path; from $BEHEROUTER_OIDC_ROLES_CLAIM
 
     @property
     def enabled(self) -> bool:
-        return bool(self.mode)
+        """Whether this surface needs a verified caller at all.
+
+        A role gate alone is enough: an authz-only surface still refuses a
+        shared-token caller, it simply forwards nothing afterwards.
+        """
+        return bool(self.mode) or bool(self.require_roles)
 
     @property
     def wanted_headers(self) -> tuple[str, ...]:
@@ -124,11 +134,67 @@ class IdentityPolicy:
         )
         return replace(ident, **{slot: material})
 
+    def authorise(self, req: RequestIdentity) -> CallIdentity | None:
+        """Gate the caller, then materialise if this surface forwards anything.
+
+        Returns None for an authz-only surface — which the dispatch in
+        `surface.py` already handles as "no identity to apply".
+        """
+        if req.shared or not req.subject:
+            raise AuthError(
+                f"surface '{self.surface}' requires a verified user; this "
+                f"caller presented the shared gateway token or none at all"
+            )
+        if self.require_roles:
+            self._check_roles(req)
+        return self.materialise(req) if self.mode else None
+
     def resolve(self) -> CallIdentity | None:
-        """Materialise from the live request. The ONLY reader of FastMCP context."""
+        """Authorise the live request. The ONLY reader of FastMCP context."""
         if not self.enabled:
             return None
-        return self.materialise(request_identity(self.wanted_headers))
+        return self.authorise(request_identity(self.wanted_headers))
+
+    def _check_roles(self, req: RequestIdentity) -> None:
+        """Every role in `require_roles` must be held. ALL, not any.
+
+        ⚠️ Carries no security weight: the backend's own verification is the
+        control. This exists so a caller without access gets a sentence naming
+        the surface instead of an opaque backend 401.
+        """
+        if not self.roles_claim:
+            raise UsageError(
+                f"surface '{self.surface}' requires role(s) "
+                f"{list(self.require_roles)} but no roles claim is configured; "
+                f"set $BEHEROUTER_OIDC_ROLES_CLAIM to the dotted path of the "
+                f"claim your IdP puts them in (e.g. 'realm_access.roles')"
+            )
+        raw = claim_at(req.claims, self.roles_claim)
+        if raw is None:
+            raise AuthError(
+                f"surface '{self.surface}': the caller's token carries no "
+                f"{self.roles_claim!r} claim, which this surface gates on"
+            )
+        # A space-delimited string is what Entra and several proxies emit; a
+        # list is what Keycloak emits. Anything else is a misconfigured path.
+        if isinstance(raw, str):
+            held = set(raw.split())
+        elif isinstance(raw, (list, tuple)):
+            held = {str(v) for v in raw}
+        else:
+            raise AuthError(
+                f"surface '{self.surface}': claim {self.roles_claim!r} is "
+                f"{type(raw).__name__}, not a list or a space-delimited string"
+            )
+        missing = [role for role in self.require_roles if role not in held]
+        if missing:
+            # The MISSING role names, never the held ones: what a caller needs
+            # to be granted is actionable, what they already have is not, and
+            # echoing a token's full role list into an error is gratuitous.
+            raise AuthError(
+                f"you do not have access to surface '{self.surface}': it "
+                f"requires role(s) {missing}"
+            )
 
     # --- modes ------------------------------------------------------------
 
@@ -187,6 +253,24 @@ class IdentityPolicy:
                 f"(set 'path' in [{self.surface}.identity] or ${DEFAULT_MAP_VAR})"
             )
         return path
+
+
+def claim_at(claims: Mapping[str, Any], path: str):
+    """Read a dotted claim path out of a JWT payload, or None if absent.
+
+    Roles are not scopes: they arrive in a provider-specific claim rather than
+    in `scope`, so the path is configuration rather than a constant. A
+    non-mapping half way down is treated as absent, not as an error — a
+    misconfigured path should refuse the caller, not crash the surface.
+    """
+    node: Any = claims
+    for part in path.split("."):
+        if not isinstance(node, Mapping):
+            return None
+        node = node.get(part)
+        if node is None:
+            return None
+    return node
 
 
 def request_identity(wanted: tuple[str, ...] = ()) -> RequestIdentity:
@@ -400,14 +484,60 @@ def validate_identity(surface: str, spec, raw: dict | None) -> None:
             )
 
 
+_AUTHZ_KEYS = ("require_roles",)
+
+
+def validate_authz(surface: str, raw: dict | None) -> None:
+    """Validate a `[surface.authz]` table offline. No I/O, no attach.
+
+    Like `validate_identity`, this does NOT check the gateway's auth mode or
+    whether a roles claim is configured: lint runs where the gateway's own
+    environment is absent. `gateway.build_gateway_app` owns both checks and
+    `registry_lint` repeats them where the variables are visible.
+    """
+    if not raw:
+        return
+    if not isinstance(raw, dict):
+        raise UsageError(
+            f"'{surface}': [authz] must be a table, got {type(raw).__name__}"
+        )
+    unknown = sorted(set(raw) - set(_AUTHZ_KEYS))
+    if unknown:
+        raise UsageError(
+            f"'{surface}': unknown authz key(s) {unknown}; "
+            f"allowed: {sorted(_AUTHZ_KEYS)}"
+        )
+    roles = raw.get("require_roles")
+    if roles is None:
+        return
+    if (
+        isinstance(roles, str)
+        or not isinstance(roles, (list, tuple))
+        or not roles
+        or not all(isinstance(r, str) and r for r in roles)
+    ):
+        raise UsageError(
+            f"'{surface}': authz require_roles must be a non-empty array of "
+            f"role names, got {roles!r}"
+        )
+
+
 def policy_from_entry(entry, spec) -> IdentityPolicy:
     """The inert policy for one registry entry. Validate first."""
+    from .auth import roles_claim
+
     raw = dict(entry.identity or {})
     mode = raw.get("mode") or ""
     if mode == "none":
         mode = ""
+    gate = tuple((entry.authz or {}).get("require_roles") or ())
+    # Read once, at attach: os.environ is not I/O, and an inert policy is what
+    # lets health and lint describe a surface without a request in hand.
+    claim = roles_claim()
     if not mode:
-        return IdentityPolicy(surface=entry.name)
+        return IdentityPolicy(
+            surface=entry.name, require_roles=gate, roles_claim=claim
+        )
     return IdentityPolicy(
         surface=entry.name,
         mode=mode,
@@ -417,6 +547,8 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
         prefix=raw.get("prefix", "Bearer "),
         key=raw.get("key", "sub"),
         path=raw.get("path"),
+        require_roles=gate,
+        roles_claim=claim,
     )
 
 
@@ -430,10 +562,15 @@ def identity_report(policy: IdentityPolicy) -> dict:
     """
     if not policy.enabled:
         return {"mode": "none"}
+    if not policy.mode:
+        # An authz-only surface: gated, but forwarding nothing.
+        return {"mode": "none", "require_roles": list(policy.require_roles)}
     # `probe_scope` is the machine-readable half of the warning above: an
     # operator reading `health --deep --json` sees what the green probe covers
     # without having to have read the docs.
     report = {"mode": policy.mode, "probe_scope": "deployment-credential"}
+    if policy.require_roles:
+        report["require_roles"] = list(policy.require_roles)
     if policy.mode == "lookup":
         try:
             report["map"] = secret_map(policy._map_path()).status()

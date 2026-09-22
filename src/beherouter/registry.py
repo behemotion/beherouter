@@ -25,6 +25,10 @@ class RegistryEntry:
     probe_args: dict | None = None
     catalogue_ttl_ms: int | None = None  # override the plugin's tested default
     identity: dict | None = None  # per-request identity; see identity.py
+    # Per-surface role gating. Separate from `identity` on purpose: a
+    # surface may gate without forwarding anything, and gating needs no
+    # IdentitySupport from the plugin.
+    authz: dict | None = None
 
 
 def validate_entry(e: RegistryEntry) -> None:
@@ -43,9 +47,10 @@ def validate_entry(e: RegistryEntry) -> None:
     config = validate_config(e.name, plugin.spec, e.config)
     if plugin.validate is not None:
         plugin.validate(config)
-    from .identity import validate_identity
+    from .identity import validate_authz, validate_identity
 
     validate_identity(e.name, plugin.spec, e.identity)
+    validate_authz(e.name, e.authz)
     ttl = e.catalogue_ttl_ms
     if ttl is not None and (not isinstance(ttl, int) or isinstance(ttl, bool) or ttl < 0):
         raise UsageError(

@@ -6,7 +6,13 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from .auth import AUTH_MODE_VAR, auth_mode, build_verifier
+from .auth import (
+    AUTH_MODE_VAR,
+    OIDC_ROLES_CLAIM_VAR,
+    auth_mode,
+    build_verifier,
+    roles_claim,
+)
 from .envexpand import expand
 from .errors import UsageError
 from .registry import RegistryEntry, load_registry, validate_entry
@@ -139,17 +145,31 @@ async def build_gateway_app(
     # A gateway that cannot verify a user cannot require one. Refused BEFORE
     # any attach: an entry-level mistake should fail on the configuration, not
     # after a backend has been connected.
+    gated = sorted(
+        name
+        for name, entry in registry.items()
+        if (entry.authz or {}).get("require_roles")
+    )
     if auth_mode() == "shared":
         per_user = sorted(
             name
             for name, entry in registry.items()
             if (entry.identity or {}).get("mode") not in (None, "", "none")
         )
-        if per_user:
+        if per_user or gated:
             raise UsageError(
-                f"{AUTH_MODE_VAR} is 'shared' but surface(s) {per_user} require "
-                f"a per-user identity; set it to 'oidc' or 'both'"
+                f"{AUTH_MODE_VAR} is 'shared' but surface(s) "
+                f"{sorted(set(per_user) | set(gated))} require a verified user; "
+                f"set it to 'oidc' or 'both'"
             )
+    # A role gate with nowhere to read roles from can only fail closed on every
+    # call, so it fails at boot instead — where an operator is looking.
+    if gated and not roles_claim():
+        raise UsageError(
+            f"surface(s) {gated} gate on roles but {OIDC_ROLES_CLAIM_VAR} is "
+            f"unset; set it to the dotted path of the claim your IdP puts roles "
+            f"in (e.g. 'realm_access.roles')"
+        )
 
     auth = build_verifier(strict=strict_auth)
     surfaces = await build_surfaces(registry, auth=auth)

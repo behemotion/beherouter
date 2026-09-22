@@ -125,3 +125,38 @@ def test_lint_accepts_a_lookup_map_that_is_present(tmp_path, monkeypatch):
         '    refresh_token = "refresh_token"\n'
     )
     registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_a_role_gate_on_a_shared_only_gateway(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    monkeypatch.setenv("BEHEROUTER_OIDC_ROLES_CLAIM", "realm_access.roles")
+    body = '[office]\nplugin = "office-mcp"\n  [office.authz]\n  require_roles = ["a"]\n'
+    with pytest.raises(UsageError, match="requires a verified user"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_a_role_gate_with_no_claim_path_configured(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    monkeypatch.delenv("BEHEROUTER_OIDC_ROLES_CLAIM", raising=False)
+    body = '[office]\nplugin = "office-mcp"\n  [office.authz]\n  require_roles = ["a"]\n'
+    with pytest.raises(UsageError, match="BEHEROUTER_OIDC_ROLES_CLAIM"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_accepts_a_role_gate_on_a_stdio_surface(tmp_path, monkeypatch):
+    """stdio cannot carry an identity, but it can be gated — nothing is forwarded."""
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    monkeypatch.setenv("BEHEROUTER_OIDC_ROLES_CLAIM", "realm_access.roles")
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        "  [plane.config]\n  workspace_slug = \"homelab\"\n"
+        "  [plane.env]\n  api_key = \"pat\"\n"
+        '  [plane.authz]\n  require_roles = ["ai-plane-access"]\n'
+    )
+    registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_a_malformed_authz_table(tmp_path):
+    body = '[office]\nplugin = "office-mcp"\n  [office.authz]\n  require_roles = "a"\n'
+    with pytest.raises(UsageError, match="require_roles"):
+        registry_lint(path=_write(tmp_path, body))

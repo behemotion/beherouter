@@ -321,3 +321,40 @@ async def test_build_gateway_app_refuses_per_user_on_a_shared_gateway(monkeypatc
     }
     with pytest.raises(UsageError, match="BEHEROUTER_AUTH_MODE"):
         await build_gateway_app(registry)
+
+
+async def test_build_gateway_app_refuses_a_role_gate_on_a_shared_gateway(monkeypatch):
+    from beherouter.errors import UsageError
+    from beherouter.gateway import build_gateway_app
+    from beherouter.registry import RegistryEntry
+
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    registry = {
+        "office": RegistryEntry(
+            name="office", plugin="office-mcp", authz={"require_roles": ["a"]}
+        )
+    }
+    with pytest.raises(UsageError, match="require a verified user"):
+        await build_gateway_app(registry)
+
+
+async def test_build_gateway_app_refuses_a_role_gate_with_no_claim_path(monkeypatch):
+    """A gate with nowhere to read roles from can only fail every call."""
+    from beherouter.errors import UsageError
+    from beherouter.gateway import build_gateway_app
+    from beherouter.registry import RegistryEntry
+
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    monkeypatch.setenv("BEHEROUTER_OIDC_ISSUER", "https://idp.test")
+    monkeypatch.setenv("BEHEROUTER_OIDC_AUDIENCE", "beherouter")
+    monkeypatch.setenv("BEHEROUTER_OIDC_JWKS_URI", "https://idp.test/jwks")
+    monkeypatch.delenv("BEHEROUTER_OIDC_ROLES_CLAIM", raising=False)
+    registry = {
+        "office": RegistryEntry(
+            name="office", plugin="office-mcp", authz={"require_roles": ["a"]}
+        )
+    }
+    with pytest.raises(UsageError, match="BEHEROUTER_OIDC_ROLES_CLAIM"):
+        await build_gateway_app(registry)

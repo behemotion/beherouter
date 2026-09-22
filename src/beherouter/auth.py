@@ -34,6 +34,12 @@ OIDC_ISSUER_VAR = "BEHEROUTER_OIDC_ISSUER"
 OIDC_AUDIENCE_VAR = "BEHEROUTER_OIDC_AUDIENCE"
 OIDC_JWKS_VAR = "BEHEROUTER_OIDC_JWKS_URI"
 OIDC_SCOPES_VAR = "BEHEROUTER_OIDC_REQUIRED_SCOPES"
+# Dotted path to the claim carrying a caller's roles. Unset means roles are
+# unsupported on this gateway, which is what makes a role gate fail closed:
+# there is no default, because every IdP puts them somewhere else
+# (realm_access.roles on Keycloak, roles on Entra, groups elsewhere) and
+# guessing would special-case one vendor.
+OIDC_ROLES_CLAIM_VAR = "BEHEROUTER_OIDC_ROLES_CLAIM"
 
 AUTH_MODES = ("shared", "oidc", "both")
 
@@ -169,3 +175,8 @@ def build_verifier(strict: bool = True) -> TokenVerifier:
     return CompositeVerifier(
         [SharedTokenVerifier.from_env(strict=strict), oidc_verifier()]
     )
+
+
+def roles_claim() -> str:
+    """The configured dotted claim path for roles; empty when unset."""
+    return (os.environ.get(OIDC_ROLES_CLAIM_VAR) or "").strip()
