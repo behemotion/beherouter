@@ -1,7 +1,10 @@
 # Per-user identity — verified callers, per-plugin identity forwarding — design
 
 **Date:** 2026-09-21
-**Status:** design approved in chat; **nothing implemented.**
+**Status:** **implemented and released in `v0.2.1`** (chart `0.1.2`), across
+the ten tasks of `docs/superpowers/plans/2026-09-22-per-user-identity.md` plus
+the per-surface role gate. 577 tests pass. What this design deliberately left
+open is listed at the bottom and tracked in `HARNESS-DIVERGENCES.md`.
 **Prompted by:** an external feature request from a bank's AI platform team,
 running `v0.2.0` / chart `0.1.1` on Kubernetes with LibreChat in front of Plane
 CE and ~2100 directory accounts behind it. Their document is accurate against
@@ -391,19 +394,30 @@ TDD, against the existing 473-test suite. The invariants worth naming:
 
 ## Follow-ups this design deliberately leaves open
 
-1. **`plane` needs an `http` backing to be per-user at all** — `stdio` cannot
-   forward per request. Separate work; Plane is being reworked to accept JWTs, so
-   the mode that will bind it is `bearer`.
+1. ~~**`plane` needs an `http` backing to be per-user at all.**~~ Done
+   2026-09-22: two plugins, `plane-http` (mode `bearer`) and `plane-http-apikey`
+   (mode `client`), sharing `plane.py`'s pin list and probe. ⚠️ The assumption
+   in this line was wrong in one respect, and measurement is what caught it:
+   plane-mcp-server 0.3.2's `/http` mount is an OAuth **proxy** that accepts only
+   tokens it minted itself, so `bearer` cannot bind it until Plane's own JWT
+   rework ships behind a backend that honours a forwarded token. The mount that
+   works today is `/http/api-key`, with a per-caller PAT. Evidence: `tests/e2e/`.
 2. **RFC 8693 token exchange** as a fifth mode, for backends that need an
    audience-scoped token rather than ours.
 3. **Per-user OAuth for the calendar surfaces** — the mechanism lands here
    (target `credential`), the consent flows do not.
-4. **`BEHEROUTER_PLANE_TOKEN` collides with itself across two meanings** —
-   `pluginconfig.token_var` emits `BEHEROUTER_PLANE_API_KEY` for the backend PAT
-   (`pluginconfig.py:22-23`), the chart example uses `BEHEROUTER_PLANE_TOKEN` for
-   the same field (`charts/beherouter/values.yaml:77`), and `clientconfig._token_var`
-   builds `BEHEROUTER_PLANE_TOKEN` for the **client's gateway bearer**
-   (`clientconfig.py:57-58`). A one-line chart fix; unrelated to identity but found
-   by the same review.
-5. **Publish the chart as an OCI artifact** — `release.yml` publishes the image and
-   a GitHub Release only, so Kubernetes users vendor the chart to install it.
+4. ~~**`BEHEROUTER_PLANE_TOKEN` collides with itself across two meanings.**~~
+   Closed: every example in the repo now names the backend PAT
+   `BEHEROUTER_PLANE_API_KEY` (what `pluginconfig.token_var` emits), and
+   `registry-lint` *warns* — never refuses — when an entry points a backend
+   credential at `BEHEROUTER_<SURFACE>_TOKEN`, the name `clientconfig.token_var`
+   reserves for the CLIENT's gateway bearer. The live homelab registry still uses
+   the colliding name; rotating it is a homelab-repo change (`AGENTS.md` § Plugins).
+5. ~~**Publish the chart as an OCI artifact.**~~ Closed: `release.yml` pushes it to
+   `ghcr.io/behemotion/charts/beherouter` after the image, refusing a chart version
+   that is already published.
+6. **The published `tools` array is not gated.** The read-only meta-tools now
+   refuse a caller a surface would not serve, but the frozen array a host reads at
+   connect time is captured at attach and is served to anyone the gateway
+   authenticates. Gating it means a FastMCP `on_list_tools` middleware and a
+   decision about what a host should see when it may call nothing.
