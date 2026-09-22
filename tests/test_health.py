@@ -397,3 +397,38 @@ async def test_cli_pinned_verb_is_not_falsely_reported_missing(fake_cli_cmd):
     )
     record = await check_entry(entry)
     assert record["catalogue"] == CATALOGUE_OK
+
+
+async def test_health_reports_no_identity_for_a_shared_surface(mcp_loader):
+    record = await check_entry(
+        RegistryEntry(name="office", plugin="office-mcp"), load=mcp_loader
+    )
+    assert record["identity"] == {"mode": "none"}
+
+
+async def test_health_reports_the_mode_and_what_the_probe_actually_proves(mcp_loader):
+    record = await check_entry(
+        RegistryEntry(name="office", plugin="office-mcp", identity={"mode": "bearer"}),
+        load=mcp_loader,
+    )
+    assert record["identity"]["mode"] == "bearer"
+    # The caveat rides in the OUTPUT, not only in the docs: a green probe proves
+    # the deployment credential and says nothing about any user's.
+    assert record["identity"]["probe_scope"] == "deployment-credential"
+
+
+async def test_health_reports_a_missing_identity_map(mcp_loader, tmp_path):
+    record = await check_entry(
+        RegistryEntry(
+            name="gcal",
+            plugin="gcal",
+            identity={
+                "mode": "lookup",
+                "key": "email",
+                "path": str(tmp_path / "absent.toml"),
+                "map": {"refresh_token": "refresh_token"},
+            },
+        ),
+        load=mcp_loader,
+    )
+    assert record["identity"]["map"]["state"] == "missing"

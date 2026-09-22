@@ -68,6 +68,17 @@ async def check_entry(entry: RegistryEntry, load=load_backend) -> dict:
     from .surface import build_surface
 
     record = {"name": entry.name, "attach": ATTACH_OK}
+    # Reported, never failed on: an identity map is read on the call path, and a
+    # health sweep must describe the configuration rather than deny it. The
+    # verdict list (_FAILURES) is deliberately unchanged.
+    from .identity import identity_report, policy_from_entry
+
+    plugin_for_identity = PLUGINS.get(entry.plugin)
+    record["identity"] = (
+        identity_report(policy_from_entry(entry, plugin_for_identity.spec))
+        if plugin_for_identity
+        else {"mode": "none"}
+    )
     # Costing is not the credential probe below and must not be confused with
     # it: a schema edge case in `surface_cost` degrades this record to having
     # no cost fields (the same "report, don't take the whole sweep down"

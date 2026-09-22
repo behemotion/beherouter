@@ -165,6 +165,10 @@ def test_health_deep_reports_a_record_per_backend(tmp_path, fake_cli_cmd):
         "attach": "ok",
         "catalogue": "ok",
         "probe": "none",
+        # A surface with no [identity] table says so explicitly rather than
+        # omitting the field: an operator diffing two surfaces should not have
+        # to know that absence means "shared".
+        "identity": {"mode": "none"},
     }
 
 

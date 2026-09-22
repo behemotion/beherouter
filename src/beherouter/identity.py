@@ -418,3 +418,25 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
         key=raw.get("key", "sub"),
         path=raw.get("path"),
     )
+
+
+def identity_report(policy: IdentityPolicy) -> dict:
+    """What `health --deep` says about a surface's identity configuration.
+
+    ⚠️ Says nothing about whether any USER's credential works. The probe still
+    authenticates with the deployment credential, so a green probe proves the
+    bootstrap credential and nothing more. Only a real per-user call proves a
+    per-user credential.
+    """
+    if not policy.enabled:
+        return {"mode": "none"}
+    # `probe_scope` is the machine-readable half of the warning above: an
+    # operator reading `health --deep --json` sees what the green probe covers
+    # without having to have read the docs.
+    report = {"mode": policy.mode, "probe_scope": "deployment-credential"}
+    if policy.mode == "lookup":
+        try:
+            report["map"] = secret_map(policy._map_path()).status()
+        except Unavailable as e:
+            report["map"] = {"state": "missing", "error": str(e)}
+    return report
