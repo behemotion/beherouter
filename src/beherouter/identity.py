@@ -221,3 +221,78 @@ def request_identity(wanted: tuple[str, ...] = ()) -> RequestIdentity:
         raw_token=token.token,
         headers=headers,
     )
+
+
+class SecretMap:
+    """A mounted TOML file of identity key -> {logical credential: secret}.
+
+        ["alice@example.test"]     # the value of the surface's `key` claim
+        api_key = "…"              # logical names, as the entry's map cites them
+
+    ⚠️ READ ON THE CALL PATH, NEVER AT ATTACH. A typo'd path or a malformed file
+    must not crash-loop the gateway and take /healthz with it; it degrades to
+    this one surface's calls failing. `registry-lint` and `health --deep` are
+    where an operator finds out early.
+
+    Hot-reloaded by stat: one `os.stat` per resolve, and the parsed content is
+    cached against (mtime_ns, size). That is the difference between rotating a
+    user's credential and redeploying the gateway.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+        self._stamp: tuple[int, int] | None = None
+        self._data: dict = {}
+
+    def _load(self) -> dict:
+        try:
+            st = self._path.stat()
+        except OSError as e:
+            # type(e).__name__, never {e}: an OSError carries the path and this
+            # message reaches an agent.
+            raise Unavailable(
+                f"identity map '{self._path}' is unreadable: {type(e).__name__}"
+            ) from e
+        stamp = (st.st_mtime_ns, st.st_size)
+        if stamp != self._stamp:
+            try:
+                data = tomllib.loads(self._path.read_text())
+            except (OSError, tomllib.TOMLDecodeError) as e:
+                raise Unavailable(
+                    f"identity map '{self._path}' could not be parsed: "
+                    f"{type(e).__name__}"
+                ) from e
+            self._data, self._stamp = data, stamp
+        return self._data
+
+    def credentials_for(self, surface: str, key: str, key_claim: str) -> dict[str, str]:
+        entry = self._load().get(key)
+        if not isinstance(entry, dict) or not entry:
+            # The CLAIM NAME, not its value: this string reaches logs, and the
+            # value is the caller's own identifier.
+            raise AuthError(
+                f"surface '{surface}': the identity map has no entry for this "
+                f"caller (matched on the {key_claim!r} claim)"
+            )
+        return {name: str(value) for name, value in entry.items()}
+
+    def status(self) -> dict:
+        """A verdict for `health --deep`: never a key, never a value."""
+        try:
+            data = self._load()
+        except Unavailable as e:
+            state = "missing" if not self._path.exists() else "unparsable"
+            return {"state": state, "error": str(e)}
+        return {"state": "ok", "entries": len(data)}
+
+
+# One SecretMap per path, so the stat-cache is shared by every surface reading
+# the same mount rather than re-parsed per policy.
+_MAPS: dict[str, SecretMap] = {}
+
+
+def secret_map(path: str | Path) -> SecretMap:
+    key = str(path)
+    if key not in _MAPS:
+        _MAPS[key] = SecretMap(Path(path))
+    return _MAPS[key]
