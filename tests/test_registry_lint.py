@@ -160,3 +160,19 @@ def test_lint_refuses_a_malformed_authz_table(tmp_path):
     body = '[office]\nplugin = "office-mcp"\n  [office.authz]\n  require_roles = "a"\n'
     with pytest.raises(UsageError, match="require_roles"):
         registry_lint(path=_write(tmp_path, body))
+
+
+def test_a_shared_gateway_is_reported_before_the_missing_claim_path(
+    tmp_path, monkeypatch
+):
+    """Same order as boot: the mode is the cause, the claim path is a symptom.
+
+    `gateway.build_gateway_app` refuses a shared-mode gateway first and only
+    then complains about the roles claim. Lint reporting them the other way
+    round sends an operator to configure a claim path they do not need yet.
+    """
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    monkeypatch.delenv("BEHEROUTER_OIDC_ROLES_CLAIM", raising=False)
+    body = '[office]\nplugin = "office-mcp"\n  [office.authz]\n  require_roles = ["a"]\n'
+    with pytest.raises(UsageError, match="requires a verified user"):
+        registry_lint(path=_write(tmp_path, body))

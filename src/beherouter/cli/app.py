@@ -121,26 +121,33 @@ def registry_lint(path: str = "") -> None:
         identity = entry.identity or {}
         mode = identity.get("mode")
         gate = (entry.authz or {}).get("require_roles")
-        # Same asymmetry as the auth-mode check below: checked only where the
-        # gateway's own environment is visible. Boot is the authority.
-        if (
-            gate
-            and os.environ.get(auth.AUTH_MODE_VAR)
-            and not os.environ.get(auth.OIDC_ROLES_CLAIM_VAR)
-        ):
-            raise UsageError(
-                f"'{entry.name}' gates on roles but "
-                f"{auth.OIDC_ROLES_CLAIM_VAR} is unset; set it to the "
-                f"dotted path of the claim your IdP puts roles in"
-            )
         if (mode and mode != "none") or gate:
-            # Boot is the authority for this one: lint may run where the
-            # gateway's own environment is absent, and defaulting to 'shared'
-            # there would fail a valid registry.
+            # ⚠️ Both rules below are checked ONLY where the gateway's own
+            # environment is visible. Lint runs on a workstation and in an init
+            # container, and defaulting to 'shared' there would fail a valid
+            # registry — so boot is the authority and this is the early
+            # warning, the reverse of every other rule in this function. The
+            # chart renders BEHEROUTER_AUTH_MODE into the hook Job for exactly
+            # this reason: an omitted variable silently skips both.
+            #
+            # The mode comes FIRST, matching `gateway.build_gateway_app`: on a
+            # shared-mode gateway the mode is the cause and a missing claim
+            # path is a symptom, and reporting the symptom sends an operator to
+            # configure a claim they do not need yet.
             if os.environ.get(auth.AUTH_MODE_VAR) and auth.auth_mode() == "shared":
                 raise UsageError(
                     f"'{entry.name}' requires a verified user but "
                     f"{auth.AUTH_MODE_VAR} is 'shared'; set it to 'oidc' or 'both'"
+                )
+            if (
+                gate
+                and os.environ.get(auth.AUTH_MODE_VAR)
+                and not os.environ.get(auth.OIDC_ROLES_CLAIM_VAR)
+            ):
+                raise UsageError(
+                    f"'{entry.name}' gates on roles but "
+                    f"{auth.OIDC_ROLES_CLAIM_VAR} is unset; set it to the "
+                    f"dotted path of the claim your IdP puts roles in"
                 )
             if mode == "lookup":
                 path_ = identity.get("path") or os.environ.get(DEFAULT_MAP_VAR)
