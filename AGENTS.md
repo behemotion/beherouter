@@ -34,7 +34,7 @@
 > surface and `/healthz` with it. Read `podman logs beherouter` after any
 > registry change.
 >
-> 473 tests pass; `beheaxi conformance "beherouter"` is 6/6; both backend kinds
+> 577 tests pass; `beheaxi conformance "beherouter"` is 6/6; both backend kinds
 > attach for real, and **`cli` backends now execute** (they were listable but
 > not callable before 2026-08-04).
 > Design background: **`docs/DESIGN.md`**; the plugin seam:

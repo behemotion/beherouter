@@ -85,6 +85,24 @@ why `registry-lint` exists, and why `health --deep` makes a *real credentialed c
 per backend rather than just listing catalogues — a revoked token lists and searches
 perfectly and fails only on a real call.
 
+### Who is calling
+
+By default every caller proves the same shared token, so every write through a surface
+is attributed to one deployment credential. A surface can opt out of that with a
+`[surface.identity]` table: how the gateway learns *which user* is calling, and where
+that backend expects the per-user credential — a forwarded bearer, a claim mapped onto
+a header, named client headers, or a per-user secret looked up in a mounted map. Four
+surfaces can run four different modes on one gateway.
+
+`BEHEROUTER_AUTH_MODE` accepts a JWKS-checked OIDC JWT beside — or instead of — the
+shared token; mode `both` keeps the consumers that cannot mint a JWT working beside
+those that can. `[surface.authz]` gates a surface on the caller's roles. It is all
+validated offline by `registry-lint`, and `health --deep` reports each surface's
+identity mode.
+
+**Default behaviour is unchanged** — no auth mode and no identity table means exactly
+the pre-identity gateway. Full guide: **[`docs/IDENTITY.md`](docs/IDENTITY.md)**.
+
 ## Operator commands
 
 | Command | Does |
@@ -147,6 +165,7 @@ knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 |---|---|
 | [`docs/PLUGINS.md`](docs/PLUGINS.md) | Writing a plugin: the contract, the four backings, pins and probes, testing |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deploying, verifying, upgrading, rolling back |
+| [`docs/IDENTITY.md`](docs/IDENTITY.md) | Per-user identity: OIDC beside the shared token, per-surface identity modes, the role gate |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | Why build rather than adopt — the aggregator survey and the LiteLLM-MCP spike |
 | [`docs/FASTMCP-NOTES.md`](docs/FASTMCP-NOTES.md) | FastMCP 3.x API notes |
 | [`AGENTS.md`](AGENTS.md) | Working context for coding agents — the live operational detail |
