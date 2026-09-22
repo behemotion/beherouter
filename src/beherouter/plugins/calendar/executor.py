@@ -7,6 +7,8 @@ crash-loop the whole gateway. Every argument is checked against the same schema
 the surface advertises, so the error an agent gets names the tool it called.
 """
 
+from collections import OrderedDict
+
 from ...errors import AxiError, Unavailable, UsageError
 from .tools import SCHEMAS
 
@@ -24,11 +26,52 @@ _JSON_TYPES: dict[str, type] = {
 
 
 class CalendarExecutor:
-    """The `Executor` protocol from beherouter.models: async run(verb, args)."""
+    """The `Executor` protocol from beherouter.models: async run(verb, args).
 
-    def __init__(self, provider, *, max_results: int = 50) -> None:
+    `provider_factory` is what makes a native surface per-user: given one
+    caller's credentials it returns a provider for that caller, cached under
+    their identity's digest. The cache is BOUNDED because a provider holds a
+    refreshed access token — worth keeping between a user's calls, and not
+    worth keeping for every user who ever called.
+    """
+
+    def __init__(
+        self,
+        provider,
+        *,
+        max_results: int = 50,
+        provider_factory=None,
+        cache_size: int = 128,
+    ) -> None:
         self._provider = provider
         self._max_results = max_results
+        self._factory = provider_factory
+        self._cache_size = cache_size
+        self._providers: OrderedDict[str, object] = OrderedDict()
+
+    def _provider_for(self, identity):
+        if identity is None or not identity.credentials:
+            if self._provider is None:
+                raise UsageError(
+                    "this surface requires a per-user identity, and this call "
+                    "carries none"
+                )
+            return self._provider
+        if self._factory is None:
+            raise UsageError(
+                "this surface cannot apply a per-request identity: its plugin "
+                "supplied no provider factory"
+            )
+        key = identity.cache_key
+        cached = self._providers.get(key)
+        if cached is not None:
+            self._providers.move_to_end(key)
+            return cached
+        built = self._factory(dict(identity.credentials))
+        self._providers[key] = built
+        if len(self._providers) > self._cache_size:
+            self._providers.popitem(last=False)
+        return built
 
     def _validate(self, verb: str, args: dict) -> None:
         schema = SCHEMAS[verb]
@@ -57,26 +100,19 @@ class CalendarExecutor:
                 )
 
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
-        if identity is not None:
-            # Threaded through by the seam in Task 5; this backing does not
-            # apply it yet. Raising rather than ignoring keeps the "no silent
-            # shared fallback" rule whole.
-            raise UsageError(
-                f"backend call '{verb}': this backing cannot yet apply a "
-                f"per-request identity"
-            )
         if verb not in SCHEMAS:
             raise UsageError(
                 f"unknown verb '{verb}'; this surface exposes {sorted(SCHEMAS)}"
             )
         self._validate(verb, args)
+        provider = self._provider_for(identity)
         call = dict(args)
         # The surface drops unset optionals before they reach here, so an absent
         # max_results means "the operator's configured default", not "none".
         if verb == "list_events" and "max_results" not in call:
             call["max_results"] = self._max_results
         try:
-            return await getattr(self._provider, verb)(**call)
+            return await getattr(provider, verb)(**call)
         except AxiError:
             raise
         except Exception as e:

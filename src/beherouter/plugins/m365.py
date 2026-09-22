@@ -24,7 +24,7 @@ from . import register
 from .calendar import build_backend
 from .calendar.oauth import RefreshTokenAuth
 from .calendar.providers.microsoft import SCOPE, TOKEN_URL, MicrosoftCalendar
-from .spec import ConfigField, EnvVar, PluginContext, PluginSpec
+from .spec import ConfigField, EnvVar, IdentitySupport, PluginContext, PluginSpec
 
 SPEC = PluginSpec(
     name="m365",
@@ -66,22 +66,34 @@ SPEC = PluginSpec(
             doc="Long-lived refresh token from docs/CALENDAR-BOOTSTRAP.md.",
         ),
     ),
+    identity=IdentitySupport(
+        modes=("lookup",),
+        target="credential",
+        accepts=("client_id", "refresh_token"),
+        doc="A per-user Microsoft grant from the identity map.",
+    ),
 )
 
 
 async def build(ctx: PluginContext):
-    auth = RefreshTokenAuth(
-        # ⚠️ `consumers`, never `common` — see providers/microsoft.py.
-        token_url=TOKEN_URL,
-        client_id=ctx.env["client_id"],
-        refresh_token=ctx.env["refresh_token"],
-        scope=SCOPE,
-    )
+    def provider(credentials: dict):
+        """Build a provider from the deployment's credentials, overridden per user."""
+        merged = {**ctx.env, **credentials}
+        auth = RefreshTokenAuth(
+            # ⚠️ `consumers`, never `common` — see providers/microsoft.py.
+            token_url=TOKEN_URL,
+            client_id=merged["client_id"],
+            refresh_token=merged["refresh_token"],
+            scope=SCOPE,
+        )
+        return MicrosoftCalendar(auth=auth, calendar_id=ctx.config["calendar_id"])
+
     return build_backend(
         surface=ctx.surface,
-        provider=MicrosoftCalendar(auth=auth, calendar_id=ctx.config["calendar_id"]),
+        provider=provider({}),
         pinned=ctx.pinned,
         max_results=ctx.config["max_results"],
+        provider_factory=provider,
     )
 
 

@@ -180,3 +180,73 @@ async def test_an_axierror_passes_through_unwrapped():
         await CalendarExecutor(BrokenProvider()).run(
             "list_events", {"start": "2026-09-15T00:00:00Z", "end": "2026-09-16T00:00:00Z"}
         )
+
+
+class _FakeProvider:
+    def __init__(self, token):
+        self.token = token
+
+    async def list_calendars(self):
+        return {"token": self.token}
+
+
+def _counting_factory(built):
+    def factory(creds):
+        built.append(creds["refresh_token"])
+        return _FakeProvider(creds["refresh_token"])
+
+    return factory
+
+
+async def test_each_identity_gets_its_own_provider():
+    from beherouter.identity import CallIdentity
+    from beherouter.plugins.calendar.executor import CalendarExecutor
+
+    built = []
+    factory = _counting_factory(built)
+    ex = CalendarExecutor(
+        factory({"refresh_token": "deployment"}), provider_factory=factory
+    )
+    alice = CallIdentity(
+        subject="alice", credentials={"refresh_token": "rt-alice"}, cache_key="a"
+    )
+    bob = CallIdentity(
+        subject="bob", credentials={"refresh_token": "rt-bob"}, cache_key="b"
+    )
+    assert (await ex.run("list_calendars", {}, identity=alice))["token"] == "rt-alice"
+    assert (await ex.run("list_calendars", {}, identity=bob))["token"] == "rt-bob"
+    # alice again: served from the cache, not rebuilt
+    assert (await ex.run("list_calendars", {}, identity=alice))["token"] == "rt-alice"
+    assert built == ["deployment", "rt-alice", "rt-bob"]
+
+
+async def test_the_provider_cache_is_bounded():
+    from beherouter.identity import CallIdentity
+    from beherouter.plugins.calendar.executor import CalendarExecutor
+
+    built = []
+    factory = _counting_factory(built)
+    ex = CalendarExecutor(
+        factory({"refresh_token": "d"}), provider_factory=factory, cache_size=2
+    )
+    for name in ("a", "b", "c", "a"):
+        await ex.run(
+            "list_calendars",
+            {},
+            identity=CallIdentity(
+                subject=name, credentials={"refresh_token": name}, cache_key=name
+            ),
+        )
+    # 'a' was evicted by 'c' and rebuilt: 1 deployment + 3 + 1
+    assert built == ["d", "a", "b", "c", "a"]
+
+
+async def test_no_identity_uses_the_deployment_provider():
+    from beherouter.plugins.calendar.executor import CalendarExecutor
+
+    class DeploymentProvider:
+        async def list_calendars(self):
+            return {"who": "deployment"}
+
+    ex = CalendarExecutor(DeploymentProvider())
+    assert (await ex.run("list_calendars", {}))["who"] == "deployment"

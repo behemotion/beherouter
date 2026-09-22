@@ -23,7 +23,7 @@ from . import register
 from .calendar import build_backend
 from .calendar.oauth import RefreshTokenAuth
 from .calendar.providers.google import DEFAULT_CALENDAR, TOKEN_URL, GoogleCalendar
-from .spec import ConfigField, EnvVar, PluginContext, PluginSpec
+from .spec import ConfigField, EnvVar, IdentitySupport, PluginContext, PluginSpec
 
 SPEC = PluginSpec(
     name="gcal",
@@ -70,21 +70,37 @@ SPEC = PluginSpec(
             doc="Long-lived refresh token from docs/CALENDAR-BOOTSTRAP.md.",
         ),
     ),
+    identity=IdentitySupport(
+        modes=("lookup",),
+        target="credential",
+        accepts=("client_id", "client_secret", "refresh_token"),
+        doc=(
+            "A per-user Google grant from the identity map. Each user's own "
+            "refresh token replaces the deployment's; the OAuth client may be "
+            "shared, so mapping refresh_token alone is the common case."
+        ),
+    ),
 )
 
 
 async def build(ctx: PluginContext):
-    auth = RefreshTokenAuth(
-        token_url=TOKEN_URL,
-        client_id=ctx.env["client_id"],
-        client_secret=ctx.env["client_secret"],
-        refresh_token=ctx.env["refresh_token"],
-    )
+    def provider(credentials: dict):
+        """Build a provider from the deployment's credentials, overridden per user."""
+        merged = {**ctx.env, **credentials}
+        auth = RefreshTokenAuth(
+            token_url=TOKEN_URL,
+            client_id=merged["client_id"],
+            client_secret=merged["client_secret"],
+            refresh_token=merged["refresh_token"],
+        )
+        return GoogleCalendar(auth=auth, calendar_id=ctx.config["calendar_id"])
+
     return build_backend(
         surface=ctx.surface,
-        provider=GoogleCalendar(auth=auth, calendar_id=ctx.config["calendar_id"]),
+        provider=provider({}),
         pinned=ctx.pinned,
         max_results=ctx.config["max_results"],
+        provider_factory=provider,
     )
 
 

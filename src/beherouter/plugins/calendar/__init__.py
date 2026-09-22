@@ -24,11 +24,18 @@ __all__ = ["CalendarExecutor", "build_backend", "descriptors_for"]
 
 
 def build_backend(
-    *, surface: str, provider, pinned: list[str], max_results: int = 50
+    *,
+    surface: str,
+    provider,
+    pinned: list[str],
+    max_results: int = 50,
+    provider_factory=None,
 ) -> Backend:
     return Backend(
         name=surface,
         kind="native",
         descriptors=descriptors_for(pinned),
-        executor=CalendarExecutor(provider, max_results=max_results),
+        executor=CalendarExecutor(
+            provider, max_results=max_results, provider_factory=provider_factory
+        ),
     )

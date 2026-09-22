@@ -159,3 +159,27 @@ async def test_config_defaults_apply_when_the_entry_omits_them(creds):
     b = await load_backend(_entry())
     assert b.executor._max_results == 50
     assert b.executor._provider._default_calendar == "primary"
+
+
+def test_gcal_declares_credential_identity_within_its_own_env():
+    from beherouter.plugins import get
+
+    spec = get("gcal").spec
+    assert spec.identity.target == "credential"
+    assert spec.identity.modes == ("lookup",)
+    declared = {v.name for v in spec.env}
+    assert set(spec.identity.accepts) <= declared
+
+
+async def test_gcal_build_provides_a_provider_factory():
+    from beherouter.plugins import get
+    from beherouter.plugins.spec import PluginContext
+
+    ctx = PluginContext(
+        surface="gcal",
+        config={"calendar_id": "primary", "max_results": 50},
+        env={"client_id": "id", "client_secret": "secret", "refresh_token": "rt"},
+        pinned=list(get("gcal").spec.pinned),
+    )
+    backend = await get("gcal").build(ctx)
+    assert backend.executor._factory is not None

@@ -155,3 +155,27 @@ async def test_a_config_table_reaches_the_executor_and_the_provider(creds):
     b = await load_backend(_m365_entry(config={"calendar_id": "AAA", "max_results": 7}))
     assert b.executor._max_results == 7
     assert b.executor._provider._default_calendar == "AAA"
+
+
+def test_m365_declares_credential_identity_within_its_own_env():
+    from beherouter.plugins import get
+
+    spec = get("m365").spec
+    assert spec.identity.target == "credential"
+    assert spec.identity.modes == ("lookup",)
+    declared = {v.name for v in spec.env}
+    assert set(spec.identity.accepts) <= declared
+
+
+async def test_m365_build_provides_a_provider_factory():
+    from beherouter.plugins import get
+    from beherouter.plugins.spec import PluginContext
+
+    ctx = PluginContext(
+        surface="m365",
+        config={"calendar_id": "primary", "max_results": 50},
+        env={"client_id": "id", "refresh_token": "rt"},
+        pinned=list(get("m365").spec.pinned),
+    )
+    backend = await get("m365").build(ctx)
+    assert backend.executor._factory is not None

@@ -89,3 +89,39 @@ def test_lint_passes_the_same_entry_on_a_gateway_that_can_verify_a_user(
     monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
     body = '[office]\nplugin = "office-mcp"\n  [office.identity]\n  mode = "bearer"\n'
     registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_a_lookup_map_that_is_absent(tmp_path, monkeypatch):
+    """Deferred here from the identity-validation task: `gcal` is the only
+    plugin declaring mode `lookup`, so this rule cannot be exercised earlier.
+    """
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    body = (
+        '[gcal]\nplugin = "gcal"\n'
+        "  [gcal.env]\n"
+        '  client_id = "id"\n  client_secret = "s"\n  refresh_token = "rt"\n'
+        "  [gcal.identity]\n"
+        '  mode = "lookup"\n  key = "email"\n'
+        f'  path = "{tmp_path / "absent.toml"}"\n'
+        "    [gcal.identity.map]\n"
+        '    refresh_token = "refresh_token"\n'
+    )
+    with pytest.raises(UsageError, match="identity map"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_accepts_a_lookup_map_that_is_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    map_path = tmp_path / "identity-map.toml"
+    map_path.write_text('["alice@example.test"]\nrefresh_token = "rt-alice"\n')
+    body = (
+        '[gcal]\nplugin = "gcal"\n'
+        "  [gcal.env]\n"
+        '  client_id = "id"\n  client_secret = "s"\n  refresh_token = "rt"\n'
+        "  [gcal.identity]\n"
+        '  mode = "lookup"\n  key = "email"\n'
+        f'  path = "{map_path}"\n'
+        "    [gcal.identity.map]\n"
+        '    refresh_token = "refresh_token"\n'
+    )
+    registry_lint(path=_write(tmp_path, body))
