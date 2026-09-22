@@ -87,7 +87,15 @@ class MCPClientExecutor:
     def __init__(self, client: Client) -> None:
         self._client = client
 
-    async def run(self, verb: str, args: dict) -> dict:
+    async def run(self, verb: str, args: dict, *, identity=None) -> dict:
+        if identity is not None:
+            # Threaded through by the seam in Task 5; this backing does not
+            # apply it yet. Raising rather than ignoring keeps the "no silent
+            # shared fallback" rule whole.
+            raise UsageError(
+                f"backend call '{verb}': this backing cannot yet apply a "
+                f"per-request identity"
+            )
         try:
             res = await self._client.call_tool(verb, args)
         except ToolError as e:
@@ -120,7 +128,15 @@ class ReconnectingMCPExecutor:
     def __init__(self, transport: ClientTransport) -> None:
         self._transport = transport
 
-    async def run(self, verb: str, args: dict) -> dict:
+    async def run(self, verb: str, args: dict, *, identity=None) -> dict:
+        if identity is not None:
+            # Threaded through by the seam in Task 5; this backing does not
+            # apply it yet. Raising rather than ignoring keeps the "no silent
+            # shared fallback" rule whole.
+            raise UsageError(
+                f"backend call '{verb}': this backing cannot yet apply a "
+                f"per-request identity"
+            )
         try:
             async with Client(self._transport) as client:
                 res = await client.call_tool(verb, args)

@@ -102,7 +102,7 @@ async def test_zero_argument_mcp_tool_builds():
     from beherouter.models import Backend, ToolDescriptor
 
     class NullExecutor:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             return {"verb": verb, "args": args}
 
     d = ToolDescriptor(
@@ -134,7 +134,7 @@ async def test_flag_style_arg_names_become_valid_parameters():
     calls = {}
 
     class RecordingExecutor:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             calls["verb"], calls["args"] = verb, args
             return {"ok": True}
 
@@ -217,7 +217,7 @@ async def test_unset_optionals_with_defaults_are_not_forwarded():
     calls = {}
 
     class RecordingExecutor:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             calls["args"] = args
             return {"ok": True}
 
@@ -264,7 +264,7 @@ from beherouter.surface import republished_annotations, wrapped_output_schema
 
 
 class _Echo:
-    async def run(self, verb, args):
+    async def run(self, verb, args, *, identity=None):
         return {"result": {"entries": [verb, args]}}
 
 
@@ -453,7 +453,7 @@ async def test_run_tool_reaches_a_tool_that_appeared_after_attach():
         )
 
     class _VerbEcho:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             return {"result": verb}
 
     async def relist():

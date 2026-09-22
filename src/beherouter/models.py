@@ -6,7 +6,7 @@ Both backend kinds (`cli` and `mcp`) reduce to this one shape, which is what let
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 
 @dataclass
@@ -26,8 +26,14 @@ class ToolDescriptor:
     output_schema: dict | None = None
 
 
+if TYPE_CHECKING:  # identity.py imports nothing from here; keep it one-way
+    from .identity import CallIdentity
+
+
 class Executor(Protocol):
-    async def run(self, verb: str, args: dict) -> dict: ...
+    async def run(
+        self, verb: str, args: dict, *, identity: "CallIdentity | None" = None
+    ) -> dict: ...
 
 
 Relister = Callable[[], Awaitable[list[ToolDescriptor]]]

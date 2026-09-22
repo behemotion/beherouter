@@ -6,8 +6,9 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from .auth import SharedTokenVerifier
+from .auth import AUTH_MODE_VAR, auth_mode, build_verifier
 from .envexpand import expand
+from .errors import UsageError
 from .registry import RegistryEntry, load_registry, validate_entry
 from .surface import build_surface
 
@@ -79,11 +80,15 @@ async def build_surfaces(
     process down" instinct as `health.check_entry` and `gateway.healthz`.
     """
     from .costing import instructions_line, surface_cost
+    from .identity import policy_from_entry
+    from .plugins import PLUGINS
 
     surfaces: dict[str, FastMCP] = {}
     for name, entry in registry.items():
         backend = await load_backend(entry)
-        surface = build_surface(backend, auth=auth)
+        plugin = PLUGINS.get(entry.plugin)
+        policy = policy_from_entry(entry, plugin.spec) if plugin else None
+        surface = build_surface(backend, auth=auth, policy=policy)
         try:
             surface.instructions = instructions_line(
                 await surface_cost(surface, backend), name
@@ -131,7 +136,22 @@ async def build_gateway_app(
     if not isinstance(registry, dict):
         registry = load_registry(Path(registry))
 
-    auth = SharedTokenVerifier.from_env(strict=strict_auth)
+    # A gateway that cannot verify a user cannot require one. Refused BEFORE
+    # any attach: an entry-level mistake should fail on the configuration, not
+    # after a backend has been connected.
+    if auth_mode() == "shared":
+        per_user = sorted(
+            name
+            for name, entry in registry.items()
+            if (entry.identity or {}).get("mode") not in (None, "", "none")
+        )
+        if per_user:
+            raise UsageError(
+                f"{AUTH_MODE_VAR} is 'shared' but surface(s) {per_user} require "
+                f"a per-user identity; set it to 'oidc' or 'both'"
+            )
+
+    auth = build_verifier(strict=strict_auth)
     surfaces = await build_surfaces(registry, auth=auth)
 
     sub_apps = {name: s.http_app(path="/mcp") for name, s in surfaces.items()}

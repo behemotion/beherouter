@@ -220,7 +220,7 @@ async def test_a_failing_probe_is_still_probe_failed_after_the_error_split():
     from beherouter.registry import RegistryEntry
 
     class _Refusing:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             raise UsageError("invalid username, password or token")
 
     async def _load(entry):
@@ -305,7 +305,7 @@ async def test_a_pin_check_failure_degrades_the_record_not_the_probe():
     from beherouter.registry import RegistryEntry
 
     class _Ok:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             return {"result": "ok"}
 
     async def _load(entry):
@@ -344,7 +344,7 @@ async def test_a_vanished_pinned_tool_fails_health():
     from beherouter.registry import RegistryEntry
 
     class _Ok:
-        async def run(self, verb, args):
+        async def run(self, verb, args, *, identity=None):
             return {"result": "ok"}
 
     async def _load(entry):

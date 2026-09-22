@@ -8,6 +8,7 @@ reached through `search_tools` -> `describe_tool` -> `run_tool`.
 
 import inspect
 import keyword
+import logging
 import re
 from typing import Any
 
@@ -15,6 +16,8 @@ from fastmcp import FastMCP
 
 from .catalogue import Catalogue
 from .models import Backend, ToolDescriptor
+
+logger = logging.getLogger(__name__)
 
 # beheaxi manifest arg types (manifest_schema.json) -> Python annotations.
 _PY_TYPES: dict[str, Any] = {
@@ -100,7 +103,7 @@ def _normalize_args(schema: dict) -> list[tuple[str, str, Any, bool, Any]]:
     return out
 
 
-def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend):
+def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, dispatch):
     """Build a callable with a REAL signature derived from the descriptor.
 
     FastMCP 3.x rejects `**kwargs` functions as tools, because it derives each
@@ -143,7 +146,7 @@ def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend):
             for k, v in kwargs.items()
             if v is not None and not (k in schema_defaults and v == schema_defaults[k])
         }
-        return await backend.executor.run(descriptor.verb, args)
+        return await dispatch(descriptor.verb, args)
 
     params, annotations = [], {}
     for _wire, param_name, py_type, required, default in normalized:
@@ -220,30 +223,64 @@ def wrapped_output_schema(d: ToolDescriptor) -> dict | None:
     }
 
 
-def register_pinned(mcp: FastMCP, d: ToolDescriptor, backend: Backend) -> None:
+def register_pinned(
+    mcp: FastMCP, d: ToolDescriptor, backend: Backend, dispatch=None
+) -> None:
     """Publish one descriptor as a flat tool on `mcp`.
 
     The SINGLE place a descriptor becomes a published tool. `costing.py` builds
     a throwaway all-pinned surface through this same function, so the "what a
     direct connection would cost" figure is measured against the shape
     beherouter actually serves rather than a reimplementation of it.
+
+    `dispatch` is the identity-aware call path built by `build_surface`. It
+    defaults to the backend's own executor so `costing.py`'s throwaway
+    all-pinned surface — which measures definitions and never calls anything —
+    keeps working unchanged.
     """
+    runner = dispatch or (lambda verb, args: backend.executor.run(verb, args))
     mcp.tool(
         name=d.name,
         description=d.summary,
         annotations=republished_annotations(d),
         output_schema=wrapped_output_schema(d),
-    )(_make_pinned_tool(d, backend))
+    )(_make_pinned_tool(d, backend, runner))
 
 
-def build_surface(backend: Backend, auth: Any | None = None) -> FastMCP:
+def build_surface(
+    backend: Backend, auth: Any | None = None, policy: Any | None = None
+) -> FastMCP:
     """Build the MCP surface for one attached backend.
 
-    `auth` is a FastMCP auth provider (see `auth.SharedTokenVerifier`); when None
+    `auth` is a FastMCP auth provider (see `auth.build_verifier`); when None
     the surface is unauthenticated, which is only appropriate in tests and for
     in-process use.
+
+    `policy` is this surface's `identity.IdentityPolicy`. When it is None or
+    disabled every dispatch passes `identity=None` and the call path is
+    byte-identical to a gateway with no identity configuration at all — which is
+    what makes this change invisible to the four static-token consumers.
     """
     mcp = FastMCP(backend.name, auth=auth)
+    enabled = policy is not None and policy.enabled
+
+    async def dispatch(verb: str, args: dict) -> dict:
+        """The ONE call path. Identity is resolved here, per call, and nowhere
+        else: `policy.resolve()` reads FastMCP's request context, which exists
+        only here — not in `health.check_entry`, not in the CLI.
+        """
+        identity = policy.resolve() if enabled else None
+        if identity is not None:
+            # Names only. A value here would put a credential in the log.
+            logger.info(
+                "identity applied surface=%s verb=%s subject=%s mode=%s keys=%s",
+                backend.name,
+                verb,
+                identity.subject,
+                policy.mode,
+                sorted({**identity.headers, **identity.env, **identity.credentials}),
+            )
+        return await backend.executor.run(verb, args, identity=identity)
 
     # ⚠️ `search_tools`, `describe_tool`, `run_tool` and `context_cost` are
     # RESERVED published names on every surface. A backend that serves and pins
@@ -278,7 +315,7 @@ def build_surface(backend: Backend, auth: Any | None = None) -> FastMCP:
     published_names = {d.name for d in backend.pinned}
 
     for d in backend.pinned:
-        register_pinned(mcp, d, backend)
+        register_pinned(mcp, d, backend, dispatch)
 
     @mcp.tool(
         description=(
@@ -326,7 +363,7 @@ def build_surface(backend: Backend, auth: Any | None = None) -> FastMCP:
         d = catalogue.by_name.get(name)
         if d is None:
             return {"error": f"unknown tool '{name}'"}
-        return await backend.executor.run(d.verb, args or {})
+        return await dispatch(d.verb, args or {})
 
     @mcp.tool(
         description=(

@@ -24,7 +24,7 @@ FIXTURE = Path(__file__).parent / "fixtures/token_calibration.json"
 
 
 class _Echo:
-    async def run(self, verb, args):
+    async def run(self, verb, args, *, identity=None):
         return {"result": verb}
 
 

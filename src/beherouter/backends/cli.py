@@ -129,7 +129,15 @@ class CLIExecutor:
     ) -> None:
         self.tool, self.cmd, self.schemas, self.timeout = tool, cmd, schemas, timeout
 
-    async def run(self, verb: str, args: dict) -> dict:
+    async def run(self, verb: str, args: dict, *, identity=None) -> dict:
+        if identity is not None:
+            # Threaded through by the seam in Task 5; this backing does not
+            # apply it yet. Raising rather than ignoring keeps the "no silent
+            # shared fallback" rule whole.
+            raise UsageError(
+                f"backend call '{verb}': this backing cannot yet apply a "
+                f"per-request identity"
+            )
         schema = self.schemas.get(verb)
         if schema is None:
             raise UsageError(f"'{self.tool}': unknown verb '{verb}'")

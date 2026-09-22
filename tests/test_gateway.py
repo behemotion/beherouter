@@ -305,3 +305,19 @@ async def test_a_native_backend_has_no_relister_either(monkeypatch):
     )
     assert backend.kind == "native"
     assert backend.relist is None
+
+
+async def test_build_gateway_app_refuses_per_user_on_a_shared_gateway(monkeypatch):
+    from beherouter.errors import UsageError
+    from beherouter.gateway import build_gateway_app
+    from beherouter.registry import RegistryEntry
+
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    registry = {
+        "office": RegistryEntry(
+            name="office", plugin="office-mcp", identity={"mode": "bearer"}
+        )
+    }
+    with pytest.raises(UsageError, match="BEHEROUTER_AUTH_MODE"):
+        await build_gateway_app(registry)
