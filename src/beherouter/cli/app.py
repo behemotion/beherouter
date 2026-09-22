@@ -102,16 +102,35 @@ def registry_lint(path: str = "") -> None:
     only other way to find out whether a registry edit is valid is to deploy it.
     This runs the whole validation path — plugin lookup, config schema, the
     plugin's own validators, and ${VAR} resolution — against inert data.
+
+    Emits a `warnings` array beside the verdict for what is legal but a trap:
+    warnings never fail the lint, because a gate in front of a gateway that
+    would otherwise be dead on arrival must not refuse a registry the gateway
+    would happily serve.
     """
     from .. import auth
     from ..envexpand import expand
     from ..errors import UsageError
     from ..identity import DEFAULT_MAP_VAR, SecretMap
+    from ..pluginconfig import collision_warning
 
     target = Path(path) if path else _registry_path()
     reg = load_registry(target)
+    warnings: list[str] = []
     for entry in reg.values():
         validate_entry(entry)
+        # ⚠️ WARN, never refuse: deployments (this harness's own included)
+        # already use the colliding name, and lint is the gate in front of a
+        # gateway that would otherwise be dead on arrival. The rule itself lives
+        # in `pluginconfig` beside the naming it is about.
+        warnings.extend(
+            w
+            for w in (
+                collision_warning(entry.name, credential, value)
+                for credential, value in (entry.env or {}).items()
+            )
+            if w
+        )
         if entry.env:
             # Checked against the LOCAL environment, so this catches the
             # entry-before-secret ordering mistake only where the variables
@@ -164,7 +183,14 @@ def registry_lint(path: str = "") -> None:
                     raise UsageError(
                         f"'{entry.name}': identity map '{path_}' does not exist"
                     )
-    app.emit({"ok": True, "path": str(target), "surfaces": sorted(reg)})
+    app.emit(
+        {
+            "ok": True,
+            "path": str(target),
+            "surfaces": sorted(reg),
+            "warnings": warnings,
+        }
+    )
 
 
 @app.command(pinned=True, mutating=False)

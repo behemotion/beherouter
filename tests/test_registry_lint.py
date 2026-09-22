@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from beherouter.cli.app import registry_lint
@@ -176,3 +178,66 @@ def test_a_shared_gateway_is_reported_before_the_missing_claim_path(
     body = '[office]\nplugin = "office-mcp"\n  [office.authz]\n  require_roles = ["a"]\n'
     with pytest.raises(UsageError, match="requires a verified user"):
         registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_warns_when_a_backend_credential_uses_the_client_bearer_name(
+    tmp_path, monkeypatch, capsys
+):
+    """`BEHEROUTER_<SURFACE>_TOKEN` is the CLIENT's gateway bearer.
+
+    `clientconfig` builds that exact name for the token a client presents to
+    the gateway, so pointing a backend credential at it puts two unrelated
+    secrets under one name. Cross-wiring them yields a 401 with nothing to
+    point at — which is why this is worth a line of output rather than a
+    comment in a values file. It WARNS rather than refuses: the live homelab
+    registry uses the colliding name today, and a refusal would turn a naming
+    trap into a dead gateway.
+    """
+    monkeypatch.setenv("BEHEROUTER_PLANE_TOKEN", "pat")
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        '  [plane.config]\n  workspace_slug = "homelab"\n'
+        '  [plane.env]\n  api_key = "${BEHEROUTER_PLANE_TOKEN}"\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    assert any(
+        "BEHEROUTER_PLANE_TOKEN" in w and "BEHEROUTER_PLANE_API_KEY" in w
+        for w in out["warnings"]
+    )
+
+
+def test_lint_does_not_warn_about_a_distinct_credential_name(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("BEHEROUTER_PLANE_API_KEY", "pat")
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        '  [plane.config]\n  workspace_slug = "homelab"\n'
+        '  [plane.env]\n  api_key = "${BEHEROUTER_PLANE_API_KEY}"\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["warnings"] == []
+
+
+def test_the_collision_warning_never_suggests_the_colliding_name():
+    """A credential literally named `token` makes both rules produce the SAME
+    variable. Found by the local e2e stack, where the warning read "use ${X}
+    instead of ${X}" — advice that repeats the problem is worse than none.
+    """
+    from beherouter.pluginconfig import collision_warning
+
+    warning = collision_warning("echo", "token", "${BEHEROUTER_ECHO_TOKEN}")
+    assert "${BEHEROUTER_ECHO_TOKEN}, which is" in warning
+    assert "${BEHEROUTER_ECHO_BACKEND_TOKEN} instead" in warning
+
+
+def test_no_warning_for_an_unrelated_variable():
+    from beherouter.pluginconfig import collision_warning
+
+    assert collision_warning("plane", "api_key", "${BEHEROUTER_PLANE_API_KEY}") is None

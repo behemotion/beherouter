@@ -54,7 +54,16 @@ def resolve_public_url(explicit: str | None = None) -> str:
     return os.environ.get("BEHEROUTER_PUBLIC_URL") or DEFAULT_PUBLIC_URL
 
 
-def _token_var(surface: str) -> str:
+def token_var(surface: str) -> str:
+    """The env var a generated client config reads THIS surface's bearer from.
+
+    Public because it is a RESERVED name: `registry-lint` warns when a backend
+    credential in `registry.toml` is pointed at the same variable, since the
+    two secrets are unrelated and cross-wiring them yields a 401 with nothing
+    to point at. A backend credential's name comes from
+    `pluginconfig.token_var`, which appends the credential instead
+    (BEHEROUTER_PLANE_API_KEY).
+    """
     return f"BEHEROUTER_{surface.upper().replace('-', '_')}_TOKEN"
 
 
@@ -80,7 +89,7 @@ def _mcp_servers(surfaces: list[str], base_url: str) -> dict:
         s: {
             "type": "http",
             "url": _url(base_url, s),
-            "headers": _auth(f"${{{_token_var(s)}}}"),
+            "headers": _auth(f"${{{token_var(s)}}}"),
         }
         for s in surfaces
     }
@@ -101,7 +110,7 @@ def _opencode(surfaces: list[str], base_url: str) -> dict:
                 "type": "remote",
                 "url": _url(base_url, s),
                 "enabled": True,
-                "headers": _auth(f"{{env:{_token_var(s)}}}"),
+                "headers": _auth(f"{{env:{token_var(s)}}}"),
             }
             for s in surfaces
         },
@@ -138,7 +147,7 @@ def _hermes(surfaces: list[str], base_url: str) -> dict:
         "mcp_servers": {
             s: {
                 "url": _url(base_url, s),
-                "headers": _auth(f"${{{_token_var(s)}}}"),
+                "headers": _auth(f"${{{token_var(s)}}}"),
             }
             for s in surfaces
         }
@@ -171,9 +180,9 @@ def _librechat(surfaces: list[str], base_url: str, host: str) -> dict:
             "type": "streamable-http",
             "url": _url(base_url, s),
             "requiresOAuth": False,
-            "headers": _auth(f"{{{{{_token_var(s)}}}}}"),
+            "headers": _auth(f"{{{{{token_var(s)}}}}}"),
             "customUserVars": {
-                _token_var(s): {
+                token_var(s): {
                     "title": f"beherouter '{s}' surface token",
                     "description": (
                         f"Bearer token for {_url(base_url, s)}. Shared homelab "

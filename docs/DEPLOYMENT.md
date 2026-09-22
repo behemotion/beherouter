@@ -82,7 +82,7 @@ plugin = "plane"
   [plane.config]
   workspace_slug = "acme"
   [plane.env]
-  api_key = "${BEHEROUTER_PLANE_TOKEN}"
+  api_key = "${BEHEROUTER_PLANE_API_KEY}"
 ```
 
 Do not hand-write the surrounding plumbing. `beherouter plugin-config <surface> <plugin>`

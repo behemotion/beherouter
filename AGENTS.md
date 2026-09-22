@@ -145,6 +145,16 @@ plugin = "plane"
   api_key = "${BEHEROUTER_PLANE_TOKEN}"
 ```
 
+⚠️ **That live variable name is the colliding one, and it is deliberate here
+only because it is what the vault renders today.** `BEHEROUTER_<SURFACE>_TOKEN`
+is the name `beherouter client-config` gives the **client's gateway bearer**;
+the backend credential's name is `plugin-config`'s
+`BEHEROUTER_PLANE_API_KEY`. Two unrelated secrets under one name, and
+cross-wiring them yields a 401 with nothing to point at. `registry-lint` now
+says so in its `warnings` array rather than refusing — rotating the live name is
+a homelab-repo change (`beherouter-env.j2` + the vault key + this block, in one
+playbook run). Every example in this repo uses `BEHEROUTER_PLANE_API_KEY`.
+
 A plugin registers frozen, inert data (`PluginSpec`: pins, probe, config schema,
 credential names, backing) plus one `async build(ctx) -> Backend`. Keeping the
 declaration inert is load-bearing: it is what lets `plugin-config`,

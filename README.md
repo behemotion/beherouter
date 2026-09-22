@@ -68,7 +68,7 @@ plugin = "plane"
   [plane.config]
   workspace_slug = "acme"
   [plane.env]
-  api_key = "${PLANE_TOKEN}"
+  api_key = "${BEHEROUTER_PLANE_API_KEY}"
 ```
 
 Validate it **before** starting the gateway — offline, no network, no attach:

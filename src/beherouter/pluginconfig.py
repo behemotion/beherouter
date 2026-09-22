@@ -23,6 +23,38 @@ def token_var(surface: str, credential: str) -> str:
     return f"BEHEROUTER_{surface.upper().replace('-', '_')}_{credential.upper()}"
 
 
+def collision_warning(surface: str, credential: str, value: str) -> str | None:
+    """Warn when a BACKEND credential reads the CLIENT's gateway-bearer variable.
+
+    `BEHEROUTER_<SURFACE>_TOKEN` is the name `clientconfig` gives the token a
+    client presents to the gateway. Pointing a backend credential at it puts two
+    unrelated secrets under one name, and cross-wiring them yields a 401 with
+    nothing to point at.
+
+    ⚠️ A credential literally named `token` is the degenerate case: both rules
+    then produce the SAME variable, and the naive advice reads "use ${X} instead
+    of ${X}". Advice that repeats the problem is worse than none, so the
+    suggestion names the backend explicitly. (Found by the local e2e stack,
+    2026-09-22, where `plane-http` still called its credential `token` — which is
+    also why no plugin here does any more.)
+
+    Returns None when there is nothing to say.
+    """
+    from .clientconfig import token_var as client_token_var
+
+    reserved = client_token_var(surface)
+    if not isinstance(value, str) or value.strip() != f"${{{reserved}}}":
+        return None
+    suggestion = token_var(surface, credential)
+    if suggestion == reserved:
+        suggestion = token_var(surface, f"backend_{credential}")
+    return (
+        f"'{surface}': credential '{credential}' reads ${{{reserved}}}, which is "
+        f"the variable a client config uses for this surface's GATEWAY BEARER. "
+        f"Two secrets, one name. Use ${{{suggestion}}} instead."
+    )
+
+
 def render(surface: str, plugin_name: str) -> dict:
     """Return {'registry': str, 'caddy': str, 'env': str}."""
     if not _SURFACE.match(surface):
