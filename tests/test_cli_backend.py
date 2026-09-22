@@ -249,3 +249,38 @@ def test_cli_backend_has_no_relister(fake_cli_cmd):
     b = load_cli_backend(CliBacking(name="faketool", cmd=fake_cli_cmd))
     assert b.relist is None
     assert b.ttl_ms is None
+
+
+async def test_identity_env_reaches_the_subprocess(fake_cli_cmd):
+    """A cli backend learns who is calling through its environment."""
+    from beherouter.identity import CallIdentity
+
+    executor = CLIExecutor(tool="demo", cmd=fake_cli_cmd, schemas={"whoami": {}})
+    out = await executor.run(
+        "whoami",
+        {},
+        identity=CallIdentity(subject="alice", env={"REMOTE_USER": "alice"}),
+    )
+    assert out == {"user": "alice"}
+
+
+async def test_without_an_identity_the_variable_is_absent(fake_cli_cmd, monkeypatch):
+    monkeypatch.delenv("REMOTE_USER", raising=False)
+    executor = CLIExecutor(tool="demo", cmd=fake_cli_cmd, schemas={"whoami": {}})
+    assert await executor.run("whoami", {}) == {"user": None}
+
+
+async def test_identity_env_is_merged_on_top_of_the_gateways_own(
+    fake_cli_cmd, monkeypatch
+):
+    """Replacing the environment outright would take PATH with it."""
+    from beherouter.identity import CallIdentity
+
+    monkeypatch.setenv("REMOTE_USER", "deployment")
+    executor = CLIExecutor(tool="demo", cmd=fake_cli_cmd, schemas={"whoami": {}})
+    out = await executor.run(
+        "whoami",
+        {},
+        identity=CallIdentity(subject="alice", env={"REMOTE_USER": "alice"}),
+    )
+    assert out == {"user": "alice"}

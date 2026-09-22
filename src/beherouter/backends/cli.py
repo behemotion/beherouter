@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shlex
 import subprocess
 
@@ -130,14 +131,6 @@ class CLIExecutor:
         self.tool, self.cmd, self.schemas, self.timeout = tool, cmd, schemas, timeout
 
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
-        if identity is not None:
-            # Threaded through by the seam in Task 5; this backing does not
-            # apply it yet. Raising rather than ignoring keeps the "no silent
-            # shared fallback" rule whole.
-            raise UsageError(
-                f"backend call '{verb}': this backing cannot yet apply a "
-                f"per-request identity"
-            )
         schema = self.schemas.get(verb)
         if schema is None:
             raise UsageError(f"'{self.tool}': unknown verb '{verb}'")
@@ -151,11 +144,21 @@ class CLIExecutor:
         # arg does not get it twice.
         if "--json" not in argv:
             argv.append("--json")
+        # Identity arrives as environment, MERGED ON TOP of this process's own:
+        # replacing it outright would take PATH with it, and a beheaxi CLI that
+        # cannot find its helper binaries fails as Unavailable for a reason
+        # nothing in the message explains. None keeps the plain inheritance.
+        env = (
+            {**os.environ, **identity.env}
+            if identity is not None and identity.env
+            else None
+        )
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
         except (FileNotFoundError, OSError) as e:
             raise Unavailable(f"'{self.tool}': could not run {argv[0]!r}: {e}") from e

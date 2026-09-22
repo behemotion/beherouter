@@ -13,7 +13,7 @@ every agent's context on something no deployment should attach.
 from ..backends.backing import CliBacking
 from ..backends.cli import load_cli_backend
 from . import register
-from .spec import ConfigField, PluginContext, PluginSpec
+from .spec import ConfigField, IdentitySupport, PluginContext, PluginSpec
 
 SPEC = PluginSpec(
     name="_test-cli",
@@ -27,6 +27,7 @@ SPEC = PluginSpec(
             doc="console script implementing `describe --json`",
         ),
     ),
+    identity=IdentitySupport(modes=("claims",), target="env"),
 )
 
 

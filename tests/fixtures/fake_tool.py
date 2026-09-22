@@ -47,6 +47,11 @@ if __name__ == "__main__":
     if argv[:1] == ["shelf-create"]:
         print(json.dumps({"created": argv[1:]}))
         sys.exit(0)
+    if argv[:1] == ["whoami"]:
+        import os
+
+        print(json.dumps({"user": os.environ.get("REMOTE_USER")}))
+        sys.exit(0)
     if argv[:1] == ["slow"]:
         import time
 
