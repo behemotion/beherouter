@@ -29,6 +29,17 @@ def build_transport(
     per-session credentials forwarded from the caller, including backends that
     need two or more such headers.
     """
+    # ⚠️ A stdio child's environment is fixed at spawn and `keep_alive=True`
+    # reuses the subprocess across sessions, so per-request headers cannot reach
+    # it. This USED TO BE SILENTLY DISCARDED: the stdio branch simply never read
+    # `headers`, so a per-user configuration attached green and forwarded
+    # nothing — the "believed per-user, actually shared" state. Refuse instead.
+    if headers and backing.transport == "stdio":
+        raise UsageError(
+            f"'{backing.name}': a stdio backing cannot carry per-request "
+            f"headers; the subprocess environment is fixed at spawn and is "
+            f"reused across callers. Attach it over http instead."
+        )
     resolved = backing.env or None
     if backing.transport == "stdio":
         if not backing.cmd:
@@ -88,13 +99,14 @@ class MCPClientExecutor:
         self._client = client
 
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
-        if identity is not None:
-            # Threaded through by the seam in Task 5; this backing does not
-            # apply it yet. Raising rather than ignoring keeps the "no silent
-            # shared fallback" rule whole.
+        if identity is not None and identity.headers:
+            # This executor is the bound-client one that `load_mcp_backend`
+            # replaces; it holds an OPEN session whose headers were fixed at
+            # connect. Raising keeps the "no silent shared fallback" rule
+            # whole rather than relying on the swap having happened.
             raise UsageError(
-                f"backend call '{verb}': this backing cannot yet apply a "
-                f"per-request identity"
+                f"backend call '{verb}': a bound-client executor cannot apply "
+                f"a per-request identity"
             )
         try:
             res = await self._client.call_tool(verb, args)
@@ -123,22 +135,31 @@ class ReconnectingMCPExecutor:
     connection open for the process lifetime invites stale-socket and
     dead-subprocess failures. Reconnecting per call trades a little latency for
     robustness; `keep_alive=True` on stdio keeps the subprocess warm.
+
+    `backing` is kept so a per-request identity can be applied: its headers are
+    built into a FRESH transport for that one call, layered over the attach-time
+    `backing.env`. No transport cache — this executor already opens a session
+    per call, so a cache would add eviction concerns to save a constructor.
     """
 
-    def __init__(self, transport: ClientTransport) -> None:
+    def __init__(
+        self, transport: ClientTransport, backing: McpBacking | None = None
+    ) -> None:
         self._transport = transport
+        self._backing = backing
 
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
-        if identity is not None:
-            # Threaded through by the seam in Task 5; this backing does not
-            # apply it yet. Raising rather than ignoring keeps the "no silent
-            # shared fallback" rule whole.
-            raise UsageError(
-                f"backend call '{verb}': this backing cannot yet apply a "
-                f"per-request identity"
-            )
+        transport = self._transport
+        if identity is not None and identity.headers:
+            if self._backing is None:
+                raise UsageError(
+                    f"backend call '{verb}': this executor has no backing to "
+                    f"rebuild a transport from, so a per-request identity "
+                    f"cannot be applied"
+                )
+            transport = build_transport(self._backing, dict(identity.headers))
         try:
-            async with Client(self._transport) as client:
+            async with Client(transport) as client:
                 res = await client.call_tool(verb, args)
         except ToolError as e:
             raise UsageError(f"backend rejected '{verb}': {e}") from e
@@ -229,7 +250,7 @@ async def load_mcp_backend(
         raise Unavailable(f"could not attach mcp backend '{backing.name}': {e}") from e
     # Swap the bound-client executor for one that reconnects per call — the
     # session opened above is closed by the time the gateway serves traffic.
-    backend.executor = ReconnectingMCPExecutor(transport)
+    backend.executor = ReconnectingMCPExecutor(transport, backing=backing)
 
     async def _relist() -> list[ToolDescriptor]:
         """Re-fetch the catalogue over a fresh short-lived session.

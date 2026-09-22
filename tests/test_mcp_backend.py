@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import pytest
 from fastmcp import Client, FastMCP
 
@@ -341,3 +343,69 @@ async def test_a_tool_annotated_without_read_only_hint_is_mutating():
     d = {x.name: x for x in b.descriptors}["reaches_the_internet"]
     assert d.annotations == {"openWorldHint": True}  # non-empty, no readOnlyHint
     assert d.mutating is True
+
+
+async def test_stdio_refuses_per_request_headers():
+    """The silent discard this replaces attached green and forwarded nothing."""
+    backing = McpBacking(name="demo", transport="stdio", cmd="/bin/true")
+    with pytest.raises(UsageError, match="stdio"):
+        build_transport(backing, {"authorization": "Bearer t"})
+
+
+def test_http_identity_headers_override_the_attach_time_env():
+    backing = McpBacking(
+        name="demo",
+        transport="http",
+        url="https://backend.test/mcp",
+        env={"x-api-key": "deployment", "x-tenant": "acme"},
+    )
+    transport = build_transport(backing, {"x-api-key": "per-user"})
+    assert transport.headers["x-api-key"] == "per-user"
+    assert transport.headers["x-tenant"] == "acme"
+
+
+async def test_reconnecting_executor_builds_a_per_identity_transport(monkeypatch):
+    from beherouter.backends import mcp as mcp_backend
+    from beherouter.identity import CallIdentity
+
+    seen = []
+
+    class FakeClient:
+        def __init__(self, transport):
+            seen.append(transport)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def call_tool(self, verb, args):
+            class R:
+                data: ClassVar[dict] = {"ok": True}
+
+            return R()
+
+    monkeypatch.setattr(mcp_backend, "Client", FakeClient)
+    backing = McpBacking(name="demo", transport="http", url="https://backend.test/mcp")
+    executor = mcp_backend.ReconnectingMCPExecutor(
+        mcp_backend.build_transport(backing), backing=backing
+    )
+    await executor.run("ping", {})
+    await executor.run(
+        "ping", {}, identity=CallIdentity(subject="alice", headers={"x-api-key": "pat"})
+    )
+    assert not seen[0].headers
+    assert seen[1].headers == {"x-api-key": "pat"}
+
+
+async def test_an_identity_without_a_backing_is_a_usage_error():
+    from beherouter.backends.mcp import ReconnectingMCPExecutor
+    from beherouter.identity import CallIdentity
+
+    backing = McpBacking(name="demo", transport="http", url="https://backend.test/mcp")
+    executor = ReconnectingMCPExecutor(build_transport(backing))
+    with pytest.raises(UsageError):
+        await executor.run(
+            "ping", {}, identity=CallIdentity(subject="a", headers={"x": "y"})
+        )

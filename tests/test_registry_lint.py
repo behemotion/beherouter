@@ -78,5 +78,14 @@ def test_lint_refuses_an_identity_mode_on_a_shared_only_gateway(tmp_path, monkey
     """Checked only where the variable is visible — boot is the authority."""
     monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
     body = '[office]\nplugin = "office-mcp"\n  [office.identity]\n  mode = "bearer"\n'
-    with pytest.raises(UsageError):
+    with pytest.raises(UsageError, match="BEHEROUTER_AUTH_MODE is 'shared'"):
         registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_passes_the_same_entry_on_a_gateway_that_can_verify_a_user(
+    tmp_path, monkeypatch
+):
+    """The refusal above must be about the auth mode, not about the entry."""
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    body = '[office]\nplugin = "office-mcp"\n  [office.identity]\n  mode = "bearer"\n'
+    registry_lint(path=_write(tmp_path, body))

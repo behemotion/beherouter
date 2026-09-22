@@ -56,3 +56,11 @@ async def test_build_produces_an_http_backing(monkeypatch):
     assert seen["backing"].url == "http://office-mcp:8100/mcp/"
     assert seen["backing"].name == "office"
     assert seen["backing"].pinned == ["discover"]
+
+
+def test_office_declares_header_identity_support():
+    from beherouter.plugins import get
+
+    support = get("office-mcp").spec.identity
+    assert support.target == "header"
+    assert set(support.modes) == {"bearer", "claims", "client"}

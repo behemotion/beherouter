@@ -18,7 +18,7 @@ not traverse its Caddy vhost, so there is nothing to present.
 from ..backends.backing import McpBacking
 from ..backends.mcp import load_mcp_backend
 from . import register
-from .spec import ConfigField, PluginContext, PluginSpec
+from .spec import ConfigField, IdentitySupport, PluginContext, PluginSpec
 
 SPEC = PluginSpec(
     name="office-mcp",
@@ -35,6 +35,14 @@ SPEC = PluginSpec(
             type=str,
             default="http://office-mcp:8100/mcp/",
             doc="MCP endpoint on the shared behe-gateway network.",
+        ),
+    ),
+    identity=IdentitySupport(
+        modes=("bearer", "claims", "client"),
+        target="header",
+        doc=(
+            "office-mcp has no app-level auth of its own, so identity here is "
+            "an assertion the backend may act on, not a credential it checks."
         ),
     ),
 )
