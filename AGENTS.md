@@ -206,12 +206,13 @@ included. Entry and secret ship in the same playbook run, or not at all.
 | `beherouter registry-lint [--path P]` | validates a registry offline: no network, no attach. Turns a production-outage-shaped feedback loop into a local one |
 | `beherouter context-cost [--surface S] [--context-window N]` | attaches each backend and reports what its published tools cost a client's context; reports per surface rather than raising, so one dead backend does not hide the rest |
 
-### The two live surfaces
+### The live surfaces
 
 | Surface | Plugin | Backing | Pinned / advertised | Backend credential |
 |---------|--------|---------|--------------------|--------------------|
 | **`office`** | `office-mcp` | `http` | 4 / 4 | none — office-mcp has no app-level auth |
 | **`plane`** | `plane` | `stdio` | 11 / 30 | **yes** — a Plane PAT (`BEHEROUTER_PLANE_TOKEN`) |
+| **`sonarqube`** | `sonarqube` | `http` | 5 / 19 | **yes** — a SonarQube **user** token (`squ_…`; an `sqa_` analysis token 403s every read) |
 | _`gcal`_ | `gcal` | `native` | 6 / 6 | **yes** — Google OAuth refresh token |
 | _`m365`_ | `m365` | `native` | 6 / 6 | **yes** — Microsoft OAuth refresh token |
 | _`gitea-home`_ | — | — | — | removed 2026-07-30; needs a freshly minted PAT |
