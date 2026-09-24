@@ -148,6 +148,7 @@ from . import (  # noqa: F401  (imported for their registration side effect)
     plane,
     plane_http,
     plane_http_apikey,
+    sonarqube,
 )
 
 # Out-of-tree plugins, AFTER the in-tree ones: `register` refuses a duplicate
