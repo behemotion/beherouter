@@ -19,6 +19,13 @@ class McpBacking:
     url: str | None = None
     env: dict[str, str] | None = None
     pinned: list[str] | None = None
+    # False for a backend whose replies violate its OWN outputSchema. The
+    # surface validates every pinned tool's reply against the schema it
+    # republishes, so a backend declaring `string` and answering `null` fails
+    # every call through the gateway while a direct call succeeds. Declining
+    # the schema costs a code-mode host its typed result, nothing else; opt-in
+    # per plugin so no other surface's declared shape changes.
+    republish_output_schema: bool = True
 
 
 @dataclass(frozen=True)

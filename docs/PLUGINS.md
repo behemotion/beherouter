@@ -131,6 +131,20 @@ Pin resolution has exactly **one** implementation, `resolve_pinned(entry, plugin
 same reason: two call sites deciding the same thing separately is how one gets enriched and
 they diverge.
 
+## A backend whose replies break its own `outputSchema`
+
+A pinned MCP tool is republished with the backend's `outputSchema` (wrapped in the
+`{"result": ...}` envelope), and the surface **validates every reply against it**. That is
+correct for an honest backend and fatal for one whose schema is wrong: sonarqube-mcp
+1.27.0.4335 types fields as plain `string`/`boolean`/`object` and answers `null` for them,
+so four of its five pins failed every call with `None is not of type 'string'` while a
+direct call to the backend succeeded.
+
+`McpBacking(republish_output_schema=False)` drops the schema for that backend only — the
+tool is still pinned, listed and called; a code-mode host just loses the typed result. It
+is per plugin, never global, so no other surface's declared shape changes. The TTL
+re-list honours it too. Set it back to `True` once the backend's schemas match its replies.
+
 ## `ConfigField` and `EnvVar`
 
 ```python

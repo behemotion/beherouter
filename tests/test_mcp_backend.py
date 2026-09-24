@@ -409,3 +409,25 @@ async def test_an_identity_without_a_backing_is_a_usage_error():
         await executor.run(
             "ping", {}, identity=CallIdentity(subject="a", headers={"x": "y"})
         )
+
+
+async def test_output_schema_is_dropped_when_the_backing_declines(annotated_server):
+    """A backend whose replies break its own outputSchema can opt out of having
+    it republished; the tool itself is still listed and callable."""
+    async with Client(annotated_server) as c:
+        b = await backend_from_client(
+            "annotated", c, republish_output_schema=False
+        )
+    d = {x.name: x for x in b.descriptors}
+    assert d["list_things"].output_schema is None
+    assert d["list_things"].annotations is not None
+
+
+async def test_relist_keeps_declining_the_output_schema(annotated_server):
+    """The TTL refresh must not quietly bring the broken schema back."""
+    async with Client(annotated_server) as c:
+        b = await backend_from_client(
+            "annotated", c, republish_output_schema=False
+        )
+        fresh = await b.relist()
+    assert all(x.output_schema is None for x in fresh)

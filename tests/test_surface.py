@@ -672,3 +672,51 @@ async def test_a_bad_context_window_stays_a_usage_error(monkeypatch):
     tool = await surface.get_tool("context_cost")
     with pytest.raises(UsageError, match="context_window"):
         await tool.fn(context_window=-1)
+
+
+class _NullReplier:
+    """A backend whose reply violates its own declared schema.
+
+    The live shape: sonarqube-mcp 1.27.0.4335 declares `description` as a plain
+    string and answers `"description": null`.
+    """
+
+    async def run(self, verb, args, *, identity=None):
+        return {"result": {"description": None}}
+
+
+_LYING_SCHEMA = {
+    "type": "object",
+    "properties": {"description": {"type": "string"}},
+}
+
+
+async def test_a_backend_violating_its_own_schema_fails_when_republished():
+    """Why republishing is opt-out: the gateway validates what it declares."""
+    d = ToolDescriptor(
+        name="show_rule", verb="show_rule", summary="Show a rule",
+        schema={"type": "object", "properties": {}},
+        pinned=True, mutating=False, output_schema=_LYING_SCHEMA,
+    )
+    surface = build_surface(
+        Backend(name="sq", kind="mcp", descriptors=[d], executor=_NullReplier())
+    )
+    async with Client(surface) as c:
+        res = await c.call_tool("show_rule", {}, raise_on_error=False)
+    assert res.is_error
+
+
+async def test_the_same_reply_passes_when_no_schema_is_republished():
+    d = ToolDescriptor(
+        name="show_rule", verb="show_rule", summary="Show a rule",
+        schema={"type": "object", "properties": {}},
+        pinned=True, mutating=False, output_schema=None,
+    )
+    surface = build_surface(
+        Backend(name="sq", kind="mcp", descriptors=[d], executor=_NullReplier())
+    )
+    async with Client(surface) as c:
+        tool = {t.name: t for t in await c.list_tools()}["show_rule"]
+        res = await c.call_tool("show_rule", {})
+    assert tool.outputSchema is None
+    assert not res.is_error
