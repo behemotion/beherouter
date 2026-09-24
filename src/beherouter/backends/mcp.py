@@ -196,9 +196,16 @@ def _mutating(annotations: dict | None) -> bool | None:
 
 
 async def backend_from_client(
-    name: str, client: Client, pinned: list[str] | None = None
+    name: str,
+    client: Client,
+    pinned: list[str] | None = None,
+    republish_output_schema: bool = True,
 ) -> Backend:
-    """The testable core: build a Backend from a connected MCP client."""
+    """The testable core: build a Backend from a connected MCP client.
+
+    `republish_output_schema=False` drops every tool's outputSchema — see
+    `McpBacking.republish_output_schema` for when that is the right call.
+    """
     pinned_set = set(pinned or [])
     tools = await client.list_tools()
     descriptors = []
@@ -213,7 +220,11 @@ async def backend_from_client(
                 pinned=(t.name in pinned_set),
                 mutating=_mutating(annotations),
                 annotations=annotations,
-                output_schema=getattr(t, "outputSchema", None),
+                output_schema=(
+                    getattr(t, "outputSchema", None)
+                    if republish_output_schema
+                    else None
+                ),
             )
         )
 
@@ -224,7 +235,9 @@ async def backend_from_client(
         own short-lived session closes; this one exists so `backend_from_client`
         is independently testable without a transport to reconnect through.
         """
-        fresh = await backend_from_client(name, client, pinned)
+        fresh = await backend_from_client(
+            name, client, pinned, republish_output_schema
+        )
         return fresh.descriptors
 
     return Backend(
@@ -243,7 +256,12 @@ async def load_mcp_backend(
     transport = build_transport(backing, headers)
     try:
         async with Client(transport) as client:
-            backend = await backend_from_client(backing.name, client, backing.pinned)
+            backend = await backend_from_client(
+                backing.name,
+                client,
+                backing.pinned,
+                backing.republish_output_schema,
+            )
     except UsageError:
         raise
     except Exception as e:
@@ -259,7 +277,12 @@ async def load_mcp_backend(
         the gateway is long-lived while backend sessions are not.
         """
         async with Client(transport) as client:
-            fresh = await backend_from_client(backing.name, client, backing.pinned)
+            fresh = await backend_from_client(
+                backing.name,
+                client,
+                backing.pinned,
+                backing.republish_output_schema,
+            )
         return fresh.descriptors
 
     backend.relist = _relist
