@@ -448,3 +448,15 @@ async def test_a_missing_stdio_binary_is_refused_by_name_with_the_override():
     assert "/opt/nowhere/bin/plane-mcp-server" in msg
     assert "[plane.config]" in msg and "`cmd`" in msg
 
+
+def test_stdio_children_inherit_the_gateways_trust_store(monkeypatch):
+    """The chart's caBundle points SSL_CERT_FILE/REQUESTS_CA_BUNDLE at a merged
+    bundle; a stdio child is started with a scrubbed environment and would
+    otherwise fail TLS to a backend behind the same private CA."""
+    monkeypatch.setenv("SSL_CERT_FILE", "/etc/beherouter/ca/ca-bundle.crt")
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/beherouter/ca/ca-bundle.crt")
+    monkeypatch.setenv("SOME_SECRET", "must-not-leak")
+    t = build_transport(McpBacking(name="g", transport="stdio", cmd="x"))
+    assert t.env["SSL_CERT_FILE"] == "/etc/beherouter/ca/ca-bundle.crt"
+    assert t.env["REQUESTS_CA_BUNDLE"] == "/etc/beherouter/ca/ca-bundle.crt"
+    assert "SOME_SECRET" not in t.env

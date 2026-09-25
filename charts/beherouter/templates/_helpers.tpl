@@ -147,6 +147,16 @@ BEHEROUTER_GATEWAY_TOKEN
 {{- end }}
 {{- end }}
 {{- end }}
+{{- if .root.Values.caBundle.enabled }}
+- name: SSL_CERT_FILE
+  value: /etc/beherouter/ca/ca-bundle.crt
+- name: REQUESTS_CA_BUNDLE
+  value: /etc/beherouter/ca/ca-bundle.crt
+{{- end }}
+{{- if .root.Values.plugins.install }}
+- name: PYTHONPATH
+  value: {{ .root.Values.plugins.path | quote }}
+{{- end }}
 {{- if .root.Values.identityMap.enabled }}
 - name: BEHEROUTER_IDENTITY_MAP
   value: {{ .root.Values.identityMap.mountPath | quote }}
@@ -161,6 +171,153 @@ BEHEROUTER_GATEWAY_TOKEN
 {{- end }}
 {{- end }}
 {{- with .root.Values.extraEnv }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+
+{{/* The gateway image, for every container that runs it (the gateway, the
+       lint hook, and the chart's own init containers -- which reuse it so a
+       private CA or a plugin install costs no extra image pull). */}}
+{{- define "beherouter.image" -}}
+{{ required "image.repository is required (default: the published ghcr.io image; override only for a mirror or a self-built image)" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+{{- end -}}
+
+{{/* Init containers, shared VERBATIM by the Deployment and the lint hook:
+       the hook must see the same trust store and the same plugins that will
+       serve, or it lints a registry against a different gateway. */}}
+{{- define "beherouter.initContainers" -}}
+{{- if .Values.caBundle.enabled }}
+- name: ca-bundle
+  image: "{{ include "beherouter.image" . }}"
+  imagePullPolicy: {{ .Values.image.pullPolicy }}
+  # The system bundle FIRST and kept whole: public endpoints must still verify.
+  command: ["sh", "-c"]
+  args:
+    - |
+      set -eu
+      out=/etc/beherouter/ca/ca-bundle.crt
+      cat "$SYSTEM_BUNDLE" > "$out"
+      for f in /etc/beherouter/ca-extra/*; do
+        printf '\n' >> "$out"
+        cat "$f" >> "$out"
+      done
+  env:
+    - name: SYSTEM_BUNDLE
+      value: {{ .Values.caBundle.systemBundle | quote }}
+  securityContext:
+    {{- toYaml .Values.securityContext | nindent 4 }}
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+  volumeMounts:
+    - name: ca-bundle
+      mountPath: /etc/beherouter/ca
+    - name: ca-extra
+      mountPath: /etc/beherouter/ca-extra
+      readOnly: true
+{{- end }}
+{{- if .Values.plugins.install }}
+- name: plugins
+  image: "{{ include "beherouter.image" . }}"
+  imagePullPolicy: {{ .Values.image.pullPolicy }}
+  command:
+    - python
+    - -m
+    - beherouter.plugininstall
+    - --target
+    - {{ .Values.plugins.path | quote }}
+    {{- range .Values.plugins.install }}
+    - {{ . | quote }}
+    {{- end }}
+  env:
+    # uv needs somewhere writable; /tmp is the only such place under
+    # readOnlyRootFilesystem.
+    - name: HOME
+      value: /tmp
+    - name: UV_CACHE_DIR
+      value: /tmp/uv-cache
+    {{- with .Values.plugins.indexUrl }}
+    # Named, so its credentials can be passed as UV_INDEX_PLUGINS_* rather than
+    # embedded in a URL that ends up in `kubectl describe`.
+    - name: UV_DEFAULT_INDEX
+      value: {{ printf "plugins=%s" . | quote }}
+    {{- end }}
+    {{- with .Values.plugins.indexCredentialsSecret }}
+    - name: UV_INDEX_PLUGINS_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: {{ . }}
+          key: username
+    - name: UV_INDEX_PLUGINS_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ . }}
+          key: password
+    {{- end }}
+    {{- if .Values.caBundle.enabled }}
+    - name: SSL_CERT_FILE
+      value: /etc/beherouter/ca/ca-bundle.crt
+    {{- end }}
+  securityContext:
+    {{- toYaml .Values.securityContext | nindent 4 }}
+  resources:
+    {{- toYaml .Values.plugins.resources | nindent 4 }}
+  volumeMounts:
+    - name: plugins
+      mountPath: {{ .Values.plugins.path }}
+    - name: tmp
+      mountPath: /tmp
+    {{- if .Values.caBundle.enabled }}
+    - name: ca-bundle
+      mountPath: /etc/beherouter/ca
+      readOnly: true
+    {{- end }}
+{{- end }}
+{{- with .Values.extraInitContainers }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/* Volumes behind the init containers above, plus extraVolumes. */}}
+{{- define "beherouter.sharedVolumes" -}}
+{{- if .Values.caBundle.enabled }}
+- name: ca-bundle
+  emptyDir: {}
+- name: ca-extra
+  configMap:
+    name: {{ required "caBundle.configMap is required when caBundle.enabled" .Values.caBundle.configMap }}
+    {{- with .Values.caBundle.keys }}
+    items:
+      {{- range . }}
+      - key: {{ . }}
+        path: {{ . }}
+      {{- end }}
+    {{- end }}
+{{- end }}
+{{- if .Values.plugins.install }}
+- name: plugins
+  emptyDir: {}
+{{- end }}
+{{- with .Values.extraVolumes }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/* What the gateway (and the lint hook) mount from those volumes -- read-only:
+       only the init containers write. */}}
+{{- define "beherouter.sharedVolumeMounts" -}}
+{{- if .Values.caBundle.enabled }}
+- name: ca-bundle
+  mountPath: /etc/beherouter/ca
+  readOnly: true
+{{- end }}
+{{- if .Values.plugins.install }}
+- name: plugins
+  mountPath: {{ .Values.plugins.path }}
+  readOnly: true
+{{- end }}
+{{- with .Values.extraVolumeMounts }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}

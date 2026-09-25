@@ -1,0 +1,29 @@
+# Private CA + out-of-tree plugins + the generic escape hatches, together:
+# every init container the chart can render, in the Deployment AND the hook.
+secret:
+  gatewayToken: ci-token
+auth:
+  mode: both
+  oidc:
+    issuer: https://idp.example.com/realms/ai
+    audience: beherouter
+    jwksUri: https://idp.example.com/realms/ai/protocol/openid-connect/certs
+caBundle:
+  enabled: true
+  configMap: corp-ca
+  keys: ["corp-root.pem"]
+plugins:
+  install: ["acme-beherouter-crm==0.1.0"]
+  indexUrl: https://pypi.corp.example.com/simple
+  indexCredentialsSecret: corp-pypi
+extraInitContainers:
+  - name: wait-for-idp
+    image: busybox:1.36
+    command: ["sh", "-c", "true"]
+extraVolumes:
+  - name: extra
+    emptyDir: {}
+extraVolumeMounts:
+  - name: extra
+    mountPath: /opt/extra
+    readOnly: true
