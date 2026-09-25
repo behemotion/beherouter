@@ -100,7 +100,10 @@ to migrate.
 | `service.sessionAffinity` | `ClientIP` | MCP sessions are in-process; do not remove if `replicaCount > 1` |
 | `networkPolicy.enabled` | `false` | Default-deny ingress except `ingressFrom` sources |
 | `replicaCount` / `autoscaling` / `podDisruptionBudget` | `1` / off / off | Replicas are safe but each one re-attaches backends (stdio children included) |
-| `securityContext.readOnlyRootFilesystem` | `true` | The gateway writes nothing; `/tmp` is an emptyDir |
+| `securityContext.readOnlyRootFilesystem` | `true` | The gateway writes nothing; `/tmp` is an emptyDir. The image itself runs as UID 1000 (`USER` in the Containerfile), so it is non-root even without this chart's `podSecurityContext` |
+| `caBundle.enabled` / `.configMap` / `.keys` / `.systemBundle` | `false` / – / all keys / `/etc/ssl/certs/ca-certificates.crt` | A private CA for the IdP's JWKS or a backend. An init container appends the ConfigMap's PEMs to the system bundle; the gateway gets `SSL_CERT_FILE` + `REQUESTS_CA_BUNDLE`, and so do its stdio children. ⚠️ Without it every JWT fails while the shared token stays green |
+| `plugins.install` / `.indexUrl` / `.indexCredentialsSecret` / `.path` | `[]` / PyPI / – / `/opt/beherouter/plugins` | Out-of-tree plugins, installed by an init container onto `PYTHONPATH` for the gateway **and** the lint hook. Shared dependencies are pinned to the gateway's own versions, so a conflicting plugin fails its init container instead of shadowing the gateway. The Secret holds `username` + `password`. Makes the index a pod-start dependency |
+| `extraInitContainers` / `extraVolumes` / `extraVolumeMounts` | `[]` | Rendered into the Deployment and the lint hook alike, after the chart's own init containers |
 
 ## Caveats carried over from the VM deployment
 

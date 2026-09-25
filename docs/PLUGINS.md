@@ -352,5 +352,18 @@ Three rules worth knowing:
 - **A module that registers nothing is not reported as loaded** — saying
   otherwise would advertise a plugin `get()` cannot find.
 
-Install the distribution into the same environment as the gateway (for the
-published image, a derived image that `pip install`s it).
+Install the distribution into the same environment as the gateway. A `--with`
+on a stdio surface's `cmd` does **not** do that: it reaches only that child
+process. Two ways:
+
+- **A derived image** that `pip install`s it. This is the sturdiest option,
+  with no install at pod start.
+- **On Kubernetes, the chart's `plugins.install`.** An init container runs
+  `python -m beherouter.plugininstall` into an emptyDir on `PYTHONPATH`, for the
+  gateway and the registry-lint hook alike. ⚠️ Do not do this with a bare
+  `uv pip install --target`. That resolves against an empty directory and
+  installs fresh copies of `httpx`, `fastmcp` and the rest, and `PYTHONPATH`
+  puts them *ahead of* the gateway's own. The installer pins every shared
+  dependency to the gateway's version, which refuses a conflicting plugin, and
+  then prunes the duplicates. A plugin may declare `beherouter` itself as a
+  dependency; the installer drops it rather than asking an index for it.

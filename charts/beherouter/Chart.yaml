@@ -8,7 +8,7 @@ description: >-
 type: application
 # Chart version (packaging): bump on any template/values change -- patch
 # register by default, MINOR only on an explicit ask.
-version: 0.1.3
+version: 0.1.4
 # The gateway release this chart defaults to; also the default image tag
 # (ghcr.io/behemotion/beherouter:<appVersion>). Moves with the pyproject
 # version (patch by default, minor on explicit ask) -- release.yml refuses a

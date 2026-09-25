@@ -246,6 +246,23 @@ rollback`. Deep verification stays the same command, run against the Deployment:
 kubectl exec deploy/beherouter -- beherouter health --deep --json   # exit 6 == bad credential
 ```
 
+### Private CA, out-of-tree plugins
+
+- **`caBundle`**: use it when your IdP (JWKS over TLS) or a backend sits behind
+  a private CA. An init container appends the PEMs from a ConfigMap to the
+  system bundle, and the gateway, its stdio children and the lint hook read
+  the result through `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`. Without it,
+  every JWT fails verification while the shared token stays green, so
+  `health --deep` does not show the failure.
+- **`plugins.install`**: installs `beherouter.plugins` distributions into an
+  emptyDir on `PYTHONPATH`, in the gateway's own environment, before the
+  gateway **and** the lint hook start. Dependencies the gateway already has are
+  pinned to its versions and then pruned from that directory. A plugin that
+  needs a different `httpx` or `fastmcp` fails its init container rather than
+  shadowing the gateway's copy (`python -m beherouter.plugininstall`). For
+  anything the chart does not model, use `extraInitContainers` /
+  `extraVolumes` / `extraVolumeMounts`, which reach both pods too.
+
 ### Materialising a `stdio` backend at pod start (a `cmd` override)
 
 The published image ships `plane-mcp-server` for the `plane` plugin, so this is

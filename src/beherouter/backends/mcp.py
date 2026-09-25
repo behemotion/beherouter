@@ -8,6 +8,7 @@ Tool names are used verbatim (no `flatten()`): they are already flat MCP names
 chosen by the upstream server, and rewriting them would break `call_tool`.
 """
 
+import os
 import shlex
 import shutil
 
@@ -19,6 +20,11 @@ from mcp.client.stdio import get_default_environment
 from ..errors import Unavailable, UsageError
 from ..models import Backend, ToolDescriptor
 from .backing import McpBacking
+
+# Trust-store locations: not credentials, and without them a stdio child talking
+# to a backend behind a private CA fails TLS while the gateway itself succeeds.
+# `requests` (the Plane SDK) reads REQUESTS_CA_BUNDLE and ignores SSL_CERT_FILE.
+_TRUST_VARS = ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE")
 
 
 def build_transport(
@@ -52,8 +58,14 @@ def build_transport(
         # they are passed explicitly here. Merge ON TOP of that safe list rather
         # than replacing it — a subprocess without PATH cannot find its own
         # helper binaries. Left as None when the backing declares no env, so the
-        # SDK keeps applying its own default.
-        env = (get_default_environment() | resolved) if resolved else None
+        # SDK keeps applying its own default. The gateway's trust-store
+        # variables ride along (see _TRUST_VARS); the backing's own env wins.
+        trust = {k: os.environ[k] for k in _TRUST_VARS if os.environ.get(k)}
+        env = (
+            (get_default_environment() | trust | (resolved or {}))
+            if (resolved or trust)
+            else None
+        )
         # keep_alive lets FastMCP reuse the subprocess across sessions, so the
         # reconnect-per-call executor below stays cheap for stdio backends.
         return StdioTransport(command=argv[0], args=argv[1:], env=env, keep_alive=True)

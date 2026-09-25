@@ -128,6 +128,57 @@ identityMap:
   secretName: ""
   mountPath: "/etc/beherouter/identity-map.toml"
 
+# --- private CA ----------------------------------------------------------------
+#
+# For an IdP (auth.mode oidc|both fetches JWKS over TLS) or a backend behind a
+# private CA. ⚠️ Without it every JWT fails verification while the shared-token
+# path stays green, so health --deep does not show it.
+#
+# An init container concatenates systemBundle with the PEMs from an existing
+# ConfigMap into an emptyDir; the gateway gets SSL_CERT_FILE (httpx, uv) and
+# REQUESTS_CA_BUNDLE (requests: the Plane SDK in a stdio child) pointing at the
+# result. The system bundle is KEPT, so public endpoints still verify.
+caBundle:
+  enabled: false
+  configMap: ""          # existing ConfigMap holding PEMs
+  keys: []               # keys to append; empty = every key in the ConfigMap
+  systemBundle: /etc/ssl/certs/ca-certificates.crt
+
+# --- out-of-tree plugins -------------------------------------------------------
+#
+# `beherouter.plugins` entry points must be installed in the GATEWAY's own
+# environment (a --with on a stdio surface's cmd reaches only that child). An
+# init container installs these into an emptyDir on PYTHONPATH, for the gateway
+# AND the registry-lint hook, so lint validates the registry against the same
+# plugins that will serve. Pin exact versions.
+#
+# Shared dependencies are pinned to the gateway's own versions: a plugin that
+# needs a different httpx or fastmcp fails its install, before the pod starts,
+# instead of silently shadowing the gateway's (see beherouter.plugininstall).
+# ⚠️ This makes the package index a POD-START dependency. For an air-gapped
+# cluster, mirror it (indexUrl) or build an image instead.
+plugins:
+  install: []             # e.g. ["acme-beherouter-crm==0.1.0"]
+  indexUrl: ""            # optional; replaces PyPI (uv's default index)
+  # Optional Secret with keys `username` and `password` for indexUrl.
+  indexCredentialsSecret: ""
+  path: /opt/beherouter/plugins
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# Generic escape hatches, rendered into the Deployment AND the registry-lint
+# hook Job (a hook that cannot see an init-container-installed plugin would
+# refuse a registry naming it). Init containers run after the chart's own
+# (caBundle, plugins).
+extraInitContainers: []
+extraVolumes: []
+extraVolumeMounts: []
+
 # Extra env appended verbatim to the gateway container AND the registry-lint
 # hook Job: {name, value} or {name, valueFrom}. This is the escape hatch for
 # credentials from ExternalSecrets/Reloader and for anything BEHE_<LAYER>_.

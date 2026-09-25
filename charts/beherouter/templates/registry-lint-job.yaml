@@ -35,9 +35,13 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with (include "beherouter.initContainers" . | trim) }}
+      initContainers:
+        {{- . | nindent 8 }}
+      {{- end }}
       containers:
         - name: registry-lint
-          image: "{{ required "image.repository is required (default: the published ghcr.io image; override only for a mirror or a self-built image)" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ include "beherouter.image" . }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["beherouter", "registry-lint", "--path", "/data/registry.toml"]
           env:
@@ -52,6 +56,9 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- with (include "beherouter.sharedVolumeMounts" . | trim) }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- if .Values.identityMap.enabled }}
             # subPath + items, never a bare directory mount: the map is a single
             # file, and mounting a directory at its path would make that path a
@@ -67,6 +74,9 @@ spec:
             name: {{ include "beherouter.fullname" . }}-registry-lint
         - name: tmp
           emptyDir: {}
+        {{- with (include "beherouter.sharedVolumes" . | trim) }}
+        {{- . | nindent 8 }}
+        {{- end }}
         {{- if .Values.identityMap.enabled }}
         - name: identity-map
           secret:
