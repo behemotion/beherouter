@@ -88,9 +88,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The release body is this version's CHANGELOG.md section; the generated
+      # contributor appendix is appended below it by softprops.
+      - name: Release body from CHANGELOG.md
+        id: changelog
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v ver="$ver" '
+            index($0, "## [" ver "]") == 1 { f = 1; next }
+            /^## \[/ && f { exit }
+            f { print }
+          ' CHANGELOG.md > release-body.md
+          grep -q '[^[:space:]]' release-body.md \
+            || { echo "::error::no '## [${ver}]' section in CHANGELOG.md"; exit 1; }
+          {
+            echo 'body<<CHANGELOG_EOF'
+            cat release-body.md
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body: ${{ steps.changelog.outputs.body }}
           generate_release_notes: true
 
   # The chart is a shipped artifact too, and until it was published a
