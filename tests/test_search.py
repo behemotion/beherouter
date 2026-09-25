@@ -196,3 +196,28 @@ def test_default_limit_is_five():
         idx.add(f"t_{i}", "search things", [])
     assert DEFAULT_LIMIT == 5
     assert len(idx.search("search")) == 5
+
+
+def test_hits_matching_a_minority_of_the_query_are_dropped():
+    """Regression: 'send an email' returned every tool with an email FIELD.
+
+    All five matched `email` equally, so no score cutoff could separate them;
+    only the tool matching both words is a plausible answer.
+    """
+    idx = ToolIndex()
+    idx.add(
+        "notify",
+        "Notification settings. "
+        + "Options include colour, sound, badge, snooze, digest and quiet hours. " * 3
+        + "Can send to an email.",
+        [],
+    )
+    for i in range(4):
+        idx.add(
+            f"contact_{i}",
+            "Contact email addresses. Look up by email, primary email or backup email.",
+            [],
+        )
+    for i in range(6):
+        idx.add(f"other_{i}", "Unrelated things.", [])
+    assert idx.search("send an email") == ["notify"]

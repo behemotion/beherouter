@@ -86,6 +86,27 @@ PINNED = (
 PROBE = "member"
 PROBE_ARGS = {"action": "me"}
 
+# Words agents type that Plane's own descriptions do not use (Plane says
+# `cycle`, agents say "sprint"). Shared by all three Plane plugins, like PINNED.
+# Rule for adding one: a word an agent would type that the tool's description
+# does not already contain -- measured by tests/test_search_eval.py.
+SEARCH_ALIASES = {
+    "workitem": ("issue", "ticket", "task", "epic", "bug", "story"),
+    "cycle": ("sprint", "iteration"),
+    "state": ("status", "workflow", "column", "done"),
+    "member": ("user", "people", "team", "assignee", "current user"),
+    "intake": ("triage", "inbox"),
+    "work_log": ("timesheet", "hours", "time tracking"),
+    "workitem_comment": ("comment", "reply", "discussion", "add comment"),
+    "workitem_relation": ("blocked", "blocking", "dependency", "duplicate"),
+    "workitem_activity": ("history", "audit", "changes"),
+    "workitem_property": ("custom field",),
+    "page": ("wiki", "document", "docs"),
+    "label": ("tag",),
+    "workitem_type": ("issue type",),
+    "release": ("version",),
+}
+
 EDITIONS = ("community", "commercial")
 
 # Shared by all three Plane plugins, like PINNED: the edition is a property of
@@ -167,6 +188,7 @@ SPEC = PluginSpec(
     pinned=PINNED,
     probe=PROBE,
     probe_args=PROBE_ARGS,
+    search_aliases=SEARCH_ALIASES,
     config=(
         ConfigField(
             name="base_url",

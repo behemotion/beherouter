@@ -96,3 +96,18 @@ async def test_build_maps_logical_credential_to_the_backend_variable(monkeypatch
     assert env["PLANE_BASE_URL"] == "http://plane-api:8000"
     assert env["PLANE_WORKSPACE_SLUG"] == "homelab"
     assert seen["backing"].transport == "stdio"
+
+
+def test_search_aliases_name_real_tools(catalogue_descriptors):
+    from beherouter.plugins.plane import SEARCH_ALIASES
+
+    served = {d.name for d in catalogue_descriptors("plane-0.3.2")}
+    assert set(SEARCH_ALIASES) <= served
+
+
+def test_all_three_plane_plugins_share_one_vocabulary():
+    from beherouter.plugins import get
+    from beherouter.plugins.plane import SEARCH_ALIASES
+
+    for name in ("plane", "plane-http", "plane-http-apikey"):
+        assert get(name).spec.search_aliases is SEARCH_ALIASES

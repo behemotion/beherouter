@@ -11,7 +11,7 @@ every constant below is tuned against tests/test_search_eval.py, not by eye.
 import re
 from functools import lru_cache
 
-from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Plus
 from rapidfuzz import fuzz, process
 
 _WORD = re.compile(r"[a-z0-9]+")
@@ -50,13 +50,19 @@ MIN_PREFIX = 4  # "a" or "rep" would otherwise prefix-match half the corpus
 MIN_FUZZY = 5  # fuzzy ratio on short words is noise
 FUZZ_THRESHOLD = 85  # rapidfuzz ratio 0-100
 
-# rank-bm25's Okapi IDF is 0 or negative for a term in half or more of the
-# corpus (and for every term in a one-document corpus), so a genuine match can
-# score <= 0. Every matched term earns at least this, so a match is never lost.
+# Every matched term earns at least this, so a match is never lost to a
+# near-zero score. Kept from the BM25Okapi days, whose IDF is 0 or negative for
+# a term in half or more of the corpus; BM25Plus's never is.
 MATCH_FLOOR = 0.1
 
 # A hit scoring below this fraction of the best one is noise, not a result.
 RELATIVE_CUTOFF = 0.35
+# A hit must match at least this fraction of the DISTINCT query tokens the best
+# hit matches. Score alone cannot do this: "send an email" matched `email`, a
+# real field on five Plane tools, equally well on all five -- no score cutoff
+# separates hits that are all equally weak. Coverage does: four of them match
+# half of what the best one matches. Tuned against tests/test_search_eval.py.
+MIN_COVERAGE = 0.6
 DEFAULT_LIMIT = 5
 
 SUGGEST_CUTOFF = 60  # rapidfuzz ratio for "did you mean"
@@ -106,7 +112,7 @@ class ToolIndex:
         self._name_keys: list[str] = []
         self._corpus: list[list[str]] = []
         self._token_sets: list[set[str]] = []
-        self._bm25: BM25Okapi | None = None
+        self._bm25: BM25Plus | None = None
         self._vocab: set[str] = set()
 
     def add(
@@ -131,8 +137,13 @@ class ToolIndex:
         self._bm25 = None  # invalidate — rebuilt on next search
 
     def _ensure(self) -> None:
+        # BM25Plus, not BM25Okapi: Okapi's IDF is <= 0 for a term in half or
+        # more of the corpus, and on Plane `project`/`create`/`list`/`page` are
+        # in 23-29 of 30 tools. They all scored the floor and tied, so
+        # "create a project" never found `project`. Plus's IDF, log((N+1)/n),
+        # is never negative and keeps term-frequency signal.
         if self._bm25 is None and self._corpus:
-            self._bm25 = BM25Okapi(self._corpus)
+            self._bm25 = BM25Plus(self._corpus)
             self._vocab = set().union(*self._token_sets)
 
     def _expand(self, qt: str) -> list[tuple[str, float]]:
@@ -162,7 +173,8 @@ class ToolIndex:
         fuzzy), so one token cannot score twice through two spellings. A query
         equal to a tool's name (after normalisation, with or without the
         separators) puts that tool first. Hits under RELATIVE_CUTOFF of the
-        best finite score are dropped.
+        best score, or matching under MIN_COVERAGE of the query tokens the best
+        surviving hit matches, are dropped.
         """
         self._ensure()
         if self._bm25 is None:
@@ -172,6 +184,7 @@ class ToolIndex:
             return []
         n = len(self._names)
         scores = [0.0] * n
+        covered = [0] * n  # distinct query tokens each tool matched at all
         for qt in dict.fromkeys(q):
             best = [0.0] * n
             # An expansion earns the IDF of the term it MATCHED, and a rare
@@ -192,6 +205,7 @@ class ToolIndex:
                         best[i] = max(best[i], weight * raw)
             for i in range(n):
                 scores[i] += best[i]
+                covered[i] += best[i] > 0
 
         key = "".join(q)
         exact = [i for i, k in enumerate(self._name_keys) if k and k == key]
@@ -199,8 +213,10 @@ class ToolIndex:
         if not exact and not rest:
             return []
         top = max((scores[i] for i in rest), default=0.0)
+        rest = [i for i in rest if scores[i] >= RELATIVE_CUTOFF * top]
+        top_covered = max((covered[i] for i in rest), default=0)
         rest = sorted(
-            (i for i in rest if scores[i] >= RELATIVE_CUTOFF * top),
+            (i for i in rest if covered[i] >= MIN_COVERAGE * top_covered),
             key=lambda i: (-scores[i], i),
         )
         return [self._names[i] for i in (exact + rest)[:limit]]
