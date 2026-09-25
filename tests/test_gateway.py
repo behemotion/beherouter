@@ -358,3 +358,18 @@ async def test_build_gateway_app_refuses_a_role_gate_with_no_claim_path(monkeypa
     }
     with pytest.raises(UsageError, match="BEHEROUTER_OIDC_ROLES_CLAIM"):
         await build_gateway_app(registry)
+
+
+async def test_load_backend_resolves_registry_search_aliases(fake_cli_cmd):
+    """Resolved beside ttl_ms, so no plugin's build() has to forward it."""
+    from beherouter.gateway import load_backend
+
+    backend = await load_backend(
+        RegistryEntry(
+            name="faketool",
+            plugin="_test-cli",
+            config={"cmd": fake_cli_cmd},
+            search_aliases={"faketool_search": ["lookup"]},
+        )
+    )
+    assert backend.search_aliases == {"faketool_search": ("lookup",)}

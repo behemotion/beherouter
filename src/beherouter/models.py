@@ -5,7 +5,7 @@ Both backend kinds (`cli` and `mcp`) reduce to this one shape, which is what let
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 
@@ -50,6 +50,8 @@ class Backend:
     relist: "Relister | None" = None
     # Milliseconds the cached catalogue stays fresh. None or 0 disables refresh.
     ttl_ms: int | None = None
+    # Search vocabulary (plugin ∪ registry), resolved by gateway.load_backend.
+    search_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def pinned(self) -> list[ToolDescriptor]:

@@ -213,3 +213,17 @@ def test_a_well_formed_pin_list_and_probe_args_still_validate():
             probe_args={"query": "x"},
         )
     )
+
+
+def test_search_aliases_round_trip(tmp_path):
+    p = tmp_path / "registry.toml"
+    e = RegistryEntry(name="t", plugin="office-mcp",
+                      search_aliases={"discover": ["find", "look up"]})
+    save_registry(p, {"t": e})
+    assert load_registry(p)["t"].search_aliases == {"discover": ["find", "look up"]}
+
+
+@pytest.mark.parametrize("bad", ["sprint", {"cycle": "sprint"}, {"cycle": [1]}])
+def test_malformed_search_aliases_are_refused(bad):
+    with pytest.raises(UsageError, match="search_aliases"):
+        validate_entry(RegistryEntry(name="t", plugin="office-mcp", search_aliases=bad))

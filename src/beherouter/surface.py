@@ -208,6 +208,7 @@ def build_surface(
         relist=backend.relist,
         ttl_ms=backend.ttl_ms,
         name=backend.name,
+        aliases=backend.search_aliases,
     )
 
     # The FROZEN published set, captured once from attach-time descriptors --

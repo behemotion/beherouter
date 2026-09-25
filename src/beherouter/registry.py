@@ -29,6 +29,8 @@ class RegistryEntry:
     # surface may gate without forwarding anything, and gating needs no
     # IdentitySupport from the plugin.
     authz: dict | None = None
+    # Extra search words, ADDED to the plugin's own; see plugins.resolve_aliases.
+    search_aliases: dict[str, list[str]] | None = None
 
 
 def validate_entry(e: RegistryEntry) -> None:
@@ -74,6 +76,19 @@ def validate_entry(e: RegistryEntry) -> None:
     if e.probe_args is not None and not isinstance(e.probe_args, dict):
         raise UsageError(
             f"'{e.name}': probe_args must be a table of arguments, got {e.probe_args!r}"
+        )
+    aliases = e.search_aliases
+    if aliases is not None and (
+        not isinstance(aliases, dict)
+        or not all(
+            isinstance(tool, str)
+            and isinstance(words, (list, tuple))
+            and all(isinstance(w, str) for w in words)
+            for tool, words in aliases.items()
+        )
+    ):
+        raise UsageError(
+            f"'{e.name}': search_aliases must be a table of tool = [words], got {aliases!r}"
         )
     declared = {v.name for v in plugin.spec.env}
     supplied = set(e.env or {})
@@ -144,6 +159,10 @@ def save_registry(path: Path, entries: dict[str, RegistryEntry]) -> None:
             lines.append("")
             lines.append(f"[{name}.{k}]")
             for tk, tv in table.items():
-                lines.append(f"{tk} = {_toml_value(tv)}")
+                if isinstance(tv, (list, tuple)):
+                    inner = ", ".join(_toml_value(x) for x in tv)
+                    lines.append(f"{tk} = [{inner}]")
+                else:
+                    lines.append(f"{tk} = {_toml_value(tv)}")
         lines.append("")
     Path(path).write_text("\n".join(lines))
