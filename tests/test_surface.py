@@ -728,3 +728,43 @@ async def test_the_same_reply_passes_when_no_schema_is_republished():
         res = await c.call_tool("show_rule", {})
     assert tool.outputSchema is None
     assert not res.is_error
+
+
+# --- pinned tools' published schemas are frozen -----------------------------
+
+import json
+from pathlib import Path
+
+GOLDEN = Path(__file__).parent / "fixtures" / "pinned_schemas.golden.json"
+
+
+async def _published_pinned(catalogue_descriptors, fake_cli_cmd) -> dict:
+    """Every pinned tool as published, for a real MCP catalogue and a CLI one."""
+    from beherouter.models import Backend
+
+    class _Null:
+        async def run(self, verb, args, *, identity=None):
+            return {}
+
+    names = [d.name for d in catalogue_descriptors("plane-0.3.2")]
+    plane = Backend(
+        name="plane", kind="mcp",
+        descriptors=catalogue_descriptors("plane-0.3.2", pinned=tuple(names)),
+        executor=_Null(),
+    )
+    cli = load_cli_backend(CliBacking(name="faketool", cmd=fake_cli_cmd))
+    out = {}
+    for b in (plane, cli):
+        async with Client(build_surface(b)) as c:
+            for t in await c.list_tools():
+                if t.name not in META:
+                    out[f"{b.name}/{t.name}"] = json.loads(t.model_dump_json(exclude_none=True))
+    return out
+
+
+async def test_pinned_schemas_are_byte_identical(catalogue_descriptors, fake_cli_cmd):
+    """A changed published array invalidates every host's prompt cache."""
+    got = await _published_pinned(catalogue_descriptors, fake_cli_cmd)
+    if not GOLDEN.exists():  # first run records; commit the file
+        GOLDEN.write_text(json.dumps(got, indent=1, sort_keys=True) + "\n")
+    assert got == json.loads(GOLDEN.read_text())

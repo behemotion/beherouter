@@ -1,0 +1,2383 @@
+{
+ "faketool/faketool_search": {
+  "description": "search things",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "query": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "faketool_search"
+ },
+ "plane/collection": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Collections grouping workspace pages.\n\nActions:\n  list (no required params);\n  retrieve (collection_id);\n  create (name; optional access) -- access is fixed at creation and cannot be changed afterwards;\n  update (collection_id; optional name, sort_order) -- only the fields you pass are changed;\n  delete (collection_id; optional archive_pages) -- the pages survive; archive_pages defaults to true, pass false to leave them unfiled instead;\n  list_pages (collection_id; optional search, parent_id, cursor, per_page);\n  search_pages (collection_id; optional search) -- pages not yet in this collection, to pick ids for add_pages;\n  add_pages (collection_id, page_ids) -- files existing pages; use page create to make new ones;\n  remove_page (collection_id, page_collection_id) -- page_collection_id is the membership id from list_pages, not the page id; the page itself is kept;\n  list_members (collection_id);\n  add_member (collection_id, user_id, member_access);\n  update_member (collection_id, collection_member_id, member_access);\n  remove_member (collection_id, collection_member_id) -- collection_member_id is the membership id from list_members, not the user id.\n\naccess is one of: public, private -- a private collection is visible only to its members, and the level cannot be changed once the collection exists. member_access is one of: view, comment, edit and is a separate scale from access. Collections group workspace pages only; a project's pages cannot be filed in one. To file or move a page, use `page set_collection` -- it works out which collection holds the page for you, so it needs no membership id.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "access": {
+     "default": "",
+     "type": "string"
+    },
+    "action": {
+     "type": "string"
+    },
+    "archive_pages": {
+     "default": null,
+     "title": "Archive Pages"
+    },
+    "collection_id": {
+     "default": "",
+     "type": "string"
+    },
+    "collection_member_id": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "member_access": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "page_collection_id": {
+     "default": "",
+     "type": "string"
+    },
+    "page_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "parent_id": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "search": {
+     "default": "",
+     "type": "string"
+    },
+    "sort_order": {
+     "default": null,
+     "title": "Sort Order"
+    },
+    "user_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "collection"
+ },
+ "plane/customer": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Customers in the workspace.\n\nActions:\n  list (no required params; optional query, cursor, per_page);\n  retrieve (customer_id);\n  create (name; optional description_html, email, website_url, domain, employees, stage, contract_status, revenue, external_source, external_id) -- upsert: matches on external_source + external_id, else on name, so it never duplicates;\n  update (customer_id; optional name, description_html, email, website_url, domain, employees, stage, contract_status, revenue, external_source, external_id) -- only the fields you pass are changed;\n  delete (no required params; optional customer_id, external_source, external_id) -- address by customer_id, or by external_source plus external_id;\n  list_workitems (customer_id; optional customer_request_id, search);\n  manage_workitems (customer_id; optional link_ids, unlink_ids, customer_request_id) -- pass at least one of link_ids or unlink_ids; returns nothing, read back with list_workitems.\n\ndomain is the customer's industry, shown as \"Industry\" in Plane -- the website goes in website_url. stage renders as one of: lead, sales_qualified_lead, contract_negotiation, closed_won, closed_lost. contract_status renders as one of: active, pre_contract, signed, inactive. Both are stored free-form; anything else is kept but not displayed. revenue is annual revenue as a string.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "contract_status": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "customer_id": {
+     "default": "",
+     "type": "string"
+    },
+    "customer_request_id": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "domain": {
+     "default": "",
+     "type": "string"
+    },
+    "email": {
+     "default": "",
+     "type": "string"
+    },
+    "employees": {
+     "default": 0,
+     "type": "integer"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "link_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "query": {
+     "default": "",
+     "type": "string"
+    },
+    "revenue": {
+     "default": "",
+     "type": "string"
+    },
+    "search": {
+     "default": "",
+     "type": "string"
+    },
+    "stage": {
+     "default": "",
+     "type": "string"
+    },
+    "unlink_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "website_url": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "customer"
+ },
+ "plane/customer_property": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Custom properties on customers.\n\nActions:\n  list (no required params; optional cursor, per_page);\n  retrieve (property_id);\n  create (display_name, property_type; optional relation_type, description, is_required, is_multi, is_active, default_value, options, display_format, external_source, external_id);\n  update (property_id; optional display_name, relation_type, description, is_required, is_multi, is_active, default_value, options, external_source, external_id) -- only the fields you pass are changed;\n  delete (property_id);\n  get_values (customer_id; optional property_id) -- omit property_id to read them all;\n  set_values (customer_id, values) -- replaces the values of the properties named; others keep theirs.\n\ndisplay_name is the user-facing label and must be unique in the workspace -- the stored name is derived from it. property_type is one of: TEXT, DATETIME, DECIMAL, BOOLEAN, OPTION, RELATION, URL, EMAIL, FILE, FORMULA. relation_type (required for RELATION) is one of: ISSUE, USER, RELEASE, RICH_TEXT. display_format is required by TEXT (single-line, multi-line, readonly) and DATETIME (MMM dd, yyyy, dd/MM/yyyy, MM/dd/yyyy, yyyy/MM/dd). options takes a JSON array of {\"name\", \"description\", \"is_default\"} objects. values takes a JSON object of property id to a list of strings, e.g. {\"<id>\": [\"Enterprise\"]} -- every value is a string whatever the property type, and a single-item list unless is_multi.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "customer_id": {
+     "default": "",
+     "type": "string"
+    },
+    "default_value": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "display_format": {
+     "default": "",
+     "type": "string"
+    },
+    "display_name": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "is_active": {
+     "default": null,
+     "title": "Is Active"
+    },
+    "is_multi": {
+     "default": null,
+     "title": "Is Multi"
+    },
+    "is_required": {
+     "default": null,
+     "title": "Is Required"
+    },
+    "options": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "property_id": {
+     "default": "",
+     "type": "string"
+    },
+    "property_type": {
+     "default": "",
+     "type": "string"
+    },
+    "relation_type": {
+     "default": "",
+     "type": "string"
+    },
+    "values": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "customer_property"
+ },
+ "plane/customer_request": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Requests raised by a customer.\n\nActions:\n  list (customer_id; optional query, cursor, per_page);\n  retrieve (customer_id, request_id);\n  create (customer_id, name; optional description_html, link, workitem_ids) -- workitem_ids can only be set here; change links afterwards with customer manage_workitems;\n  update (customer_id, request_id; optional name, description_html, link) -- only the fields you pass are changed;\n  delete (customer_id, request_id).\n\nlink is a URL associated with the request. workitem_ids is never echoed back -- read the links with `customer list_workitems`.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "customer_id": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "link": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "query": {
+     "default": "",
+     "type": "string"
+    },
+    "request_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_ids": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "customer_request"
+ },
+ "plane/cycle": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Cycles (time-boxed iterations) in a project.\n\nActions:\n  list (project_id; optional archived, status, cursor, per_page, order_by);\n  retrieve (project_id, cycle_id);\n  create (project_id, name, owned_by; optional description, start_date, end_date, timezone, external_source, external_id);\n  update (project_id, cycle_id; optional name, description, start_date, end_date, owned_by, timezone, external_source, external_id) -- only the fields you pass are changed;\n  delete (project_id, cycle_id);\n  list_workitems (project_id, cycle_id; optional pql, order_by, cursor, per_page, expand, fields);\n  manage_workitems (project_id, cycle_id; optional add_ids, remove_ids) -- pass at least one of add_ids or remove_ids; returns nothing, read back with list_workitems;\n  transfer_workitems (project_id, cycle_id, new_cycle_id) -- moves only the unfinished work items to new_cycle_id; the source cycle must have ended first, so complete it before transferring or the call is rejected;\n  complete (project_id, cycle_id) -- sets end_date to today;\n  archive (project_id, cycle_id) -- ends the cycle first if it is still running;\n  unarchive (project_id, cycle_id).\n\nstatus filters active cycles: current, upcoming, completed, draft, incomplete; it is ignored when archived is true. Dates are ISO 8601 (YYYY-MM-DD). owned_by is a member id. Optional Plane Query Language (PQL) filter. Examples: `priority = \"urgent\" AND assignee = currentUser()`, `stateGroup IN openStates() AND isOverdue()`. UUID fields (project, assignee, state, label, cycle, module, type, milestone, createdBy) need UUIDs \u2014 resolve a name to its UUID first if you only have a name or short identifier (e.g. `LSS` \u2192 `project list` and match `identifier` to get `id`). Call `get_pql_reference` for full PQL syntax before composing complex queries.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "add_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "archived": {
+     "default": false,
+     "type": "boolean"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "cycle_id": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "end_date": {
+     "default": "",
+     "type": "string"
+    },
+    "expand": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "fields": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "new_cycle_id": {
+     "default": "",
+     "type": "string"
+    },
+    "order_by": {
+     "default": "",
+     "type": "string"
+    },
+    "owned_by": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "pql": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "remove_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "start_date": {
+     "default": "",
+     "type": "string"
+    },
+    "status": {
+     "default": "",
+     "type": "string"
+    },
+    "timezone": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "cycle"
+ },
+ "plane/get_pql_reference": {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": true,
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "description": "Plane Query Language (PQL) syntax reference. Call this before composing a `pql` filter for the workitem list, list_archived or count actions.\n\nActions:\n  read (no required params; optional detail) -- this tool has no action parameter.\n\ndetail 'full' gives operators, functions, common mistakes and worked examples; 'brief' gives the compact field and operator quick reference.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "detail": {
+     "default": "full",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "get_pql_reference"
+ },
+ "plane/initiative": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Workspace initiatives.\n\nActions:\n  list (no required params) -- returns every initiative; this endpoint does not paginate;\n  retrieve (initiative_id);\n  create (name; optional description_html, start_date, end_date, state, lead);\n  update (initiative_id; optional name, description_html, start_date, end_date, state, lead) -- only the fields you pass are changed;\n  delete (initiative_id);\n  list_projects (initiative_id; optional cursor, per_page);\n  add_projects (initiative_id, project_ids) -- returns nothing, read back with list_projects;\n  remove_projects (initiative_id, project_ids) -- returns nothing, read back with list_projects.\n\nstate is one of: DRAFT, PLANNED, ACTIVE, COMPLETED, CLOSED. Dates are ISO 8601 (YYYY-MM-DD). lead is a member id. project_ids takes project UUIDs.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "end_date": {
+     "default": "",
+     "type": "string"
+    },
+    "initiative_id": {
+     "default": "",
+     "type": "string"
+    },
+    "lead": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "start_date": {
+     "default": "",
+     "type": "string"
+    },
+    "state": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "initiative"
+ },
+ "plane/intake": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "The intake (triage) queue for a project.\n\nActions:\n  list (project_id; optional cursor, per_page);\n  retrieve (project_id, workitem_id);\n  create (project_id, name; optional description_html, priority);\n  update (project_id, workitem_id; optional status, snoozed_till, duplicate_to, source, source_email) -- pass status to make a triage decision;\n  delete (project_id, workitem_id).\n\nworkitem_id is the `issue` field of an intake record, not the record's own id. status: -2 pending, -1 declined, 0 snoozed (needs snoozed_till), 1 accepted, 2 duplicate (needs duplicate_to). priority is one of: urgent, high, medium, low, none.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "duplicate_to": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "priority": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "snoozed_till": {
+     "default": "",
+     "type": "string"
+    },
+    "source": {
+     "default": "",
+     "type": "string"
+    },
+    "source_email": {
+     "default": "",
+     "type": "string"
+    },
+    "status": {
+     "default": null,
+     "title": "Status"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "intake"
+ },
+ "plane/label": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Labels within a project.\n\nActions:\n  list (project_id; optional cursor, per_page);\n  retrieve (project_id, label_id);\n  create (project_id, name; optional color, description, parent, sort_order, external_source, external_id);\n  update (project_id, label_id; optional name, color, description, parent, sort_order, external_source, external_id) -- only the fields you pass are changed;\n  delete (project_id, label_id).\n\ncolor is a hex code such as #EF4444. parent is the UUID of another label, for nesting.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "color": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "label_id": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "parent": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "sort_order": {
+     "default": null,
+     "title": "Sort Order"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "label"
+ },
+ "plane/member": {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "description": "Workspace and project members, and role definitions.\n\nActions:\n  me (no required params) -- the authenticated user;\n  list_workspace (no required params; optional first_name, last_name, email, display_name, role_slug, is_active, is_bot, cursor, per_page, order_by) -- name filters match case-insensitively and combine with AND;\n  list_project (project_id);\n  list_roles (no required params; optional namespace, cursor, per_page);\n  retrieve_role (role_id).\n\nnamespace is 'workspace' (Owner/Admin/Member/Guest) or 'project' (Admin/Contributor/Commenter/Guest); omit for both. A role slug is stable but not globally unique -- key on (namespace, slug).",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "display_name": {
+     "default": "",
+     "type": "string"
+    },
+    "email": {
+     "default": "",
+     "type": "string"
+    },
+    "first_name": {
+     "default": "",
+     "type": "string"
+    },
+    "is_active": {
+     "default": null,
+     "title": "Is Active"
+    },
+    "is_bot": {
+     "default": null,
+     "title": "Is Bot"
+    },
+    "last_name": {
+     "default": "",
+     "type": "string"
+    },
+    "namespace": {
+     "default": "",
+     "type": "string"
+    },
+    "order_by": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "role_id": {
+     "default": "",
+     "type": "string"
+    },
+    "role_slug": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "member"
+ },
+ "plane/milestone": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Milestones within a project.\n\nActions:\n  list (project_id; optional cursor, per_page);\n  retrieve (project_id, milestone_id);\n  create (project_id, title; optional target_date, external_source, external_id);\n  update (project_id, milestone_id; optional title, target_date, external_source, external_id) -- only the fields you pass are changed;\n  delete (project_id, milestone_id);\n  list_workitems (project_id, milestone_id; optional cursor, per_page);\n  manage_workitems (project_id, milestone_id; optional add_ids, remove_ids) -- pass at least one of add_ids or remove_ids; returns nothing, read back with list_workitems.\n\ntarget_date is ISO 8601 (YYYY-MM-DD). add_ids and remove_ids take work item UUIDs.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "add_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "milestone_id": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "remove_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "target_date": {
+     "default": "",
+     "type": "string"
+    },
+    "title": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "milestone"
+ },
+ "plane/module": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Modules (feature groupings) in a project.\n\nActions:\n  list (project_id; optional archived, cursor, per_page, order_by);\n  retrieve (project_id, module_id);\n  create (project_id, name; optional description, start_date, target_date, status, lead, members, external_source, external_id);\n  update (project_id, module_id; optional name, description, start_date, target_date, status, lead, members, external_source, external_id) -- only the fields you pass are changed;\n  delete (project_id, module_id);\n  list_workitems (project_id, module_id; optional pql, order_by, cursor, per_page, expand, fields);\n  manage_workitems (project_id, module_id; optional add_ids, remove_ids) -- pass at least one of add_ids or remove_ids; returns nothing, read back with list_workitems;\n  archive (project_id, module_id);\n  unarchive (project_id, module_id).\n\nstatus is one of: backlog, planned, in-progress, paused, completed, cancelled. Dates are ISO 8601 (YYYY-MM-DD). lead and members are member ids. Optional Plane Query Language (PQL) filter. Examples: `priority = \"urgent\" AND assignee = currentUser()`, `stateGroup IN openStates() AND isOverdue()`. UUID fields (project, assignee, state, label, cycle, module, type, milestone, createdBy) need UUIDs \u2014 resolve a name to its UUID first if you only have a name or short identifier (e.g. `LSS` \u2192 `project list` and match `identifier` to get `id`). Call `get_pql_reference` for full PQL syntax before composing complex queries.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "add_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "archived": {
+     "default": false,
+     "type": "boolean"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "expand": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "fields": {
+     "default": "",
+     "type": "string"
+    },
+    "lead": {
+     "default": "",
+     "type": "string"
+    },
+    "members": {
+     "default": "",
+     "type": "string"
+    },
+    "module_id": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "order_by": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "pql": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "remove_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "start_date": {
+     "default": "",
+     "type": "string"
+    },
+    "status": {
+     "default": "",
+     "type": "string"
+    },
+    "target_date": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "module"
+ },
+ "plane/page": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Pages at workspace or project scope.\n\nActions:\n  list (no required params; optional project_id, cursor, per_page) -- workspace pages unless project_id is given;\n  retrieve (page_id; optional project_id);\n  create (name, description_html; optional project_id, parent_id, collection_id, access, color, is_locked, external_source, external_id) -- parent_id nests the new page under an existing one; collection_id files it. Pass one or the other, never both;\n  update (page_id; optional project_id, name, description_html) -- pass name, description_html, or both; description_html replaces the whole body, so retrieve the page first when editing part of it; a locked or archived page is refused;\n  archive (page_id; optional project_id, archive) -- archive defaults to true; pass archive=false to restore;\n  delete (page_id; optional project_id) -- requires the page to be archived first;\n  set_collection (page_id, collection_id) -- files a page into a collection, or moves it out of the one it is in; workspace pages only, and collection_id comes from the collection tool;\n  list_workitem_pages (project_id, workitem_id);\n  attach_to_workitem (project_id, workitem_id, page_id);\n  detach_from_workitem (project_id, workitem_id, workitem_page_id) -- workitem_page_id is the link id from list_workitem_pages, not the page id.\n\ndescription_html is the page body as HTML. access is the page access level. update changes only the fields you pass. A page must be archived before it can be deleted. Omit project_id to work with workspace-level pages. A page's parent is fixed at creation -- pass parent_id to create to build a hierarchy, since nothing can reparent it afterwards. list and retrieve both report a page's parent_id and the collection_id it is filed in, so neither needs looking up. Collections themselves live in the collection tool; here, create files a new page into one and set_collection files or moves an existing page.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "access": {
+     "default": null,
+     "title": "Access"
+    },
+    "action": {
+     "type": "string"
+    },
+    "archive": {
+     "default": true,
+     "type": "boolean"
+    },
+    "collection_id": {
+     "default": "",
+     "type": "string"
+    },
+    "color": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "is_locked": {
+     "default": null,
+     "title": "Is Locked"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "page_id": {
+     "default": "",
+     "type": "string"
+    },
+    "parent_id": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_page_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "page"
+ },
+ "plane/project": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Projects in a workspace.\n\nActions:\n  list (no required params; optional cursor, per_page, order_by) -- trimmed fields; use retrieve for full detail;\n  retrieve (project_id);\n  create (name, identifier; optional description, description_html, project_lead, default_assignee, emoji, cover_image, timezone, archive_in, close_in, external_source, external_id);\n  update (project_id; optional name, description, description_html, identifier, project_lead, default_assignee, emoji, cover_image, network, timezone, archive_in, close_in, default_state, estimate, is_time_tracking_enabled, external_source, external_id) -- only the fields you pass are changed;\n  delete (project_id);\n  archive (project_id);\n  unarchive (project_id);\n  worklog_summary (project_id);\n  get_features (project_id);\n  update_features (project_id; optional modules, cycles, views, pages, intakes, workitem_types, epics, parallel_cycles, project_updates, workflows) -- toggles project features on or off.\n\nidentifier is the short work item prefix, such as ENG. network is 0 for secret or 2 for public. project_lead and default_assignee are member ids -- get them from `member list_workspace`. Feature toggles are booleans; omitted ones are left as they are.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "archive_in": {
+     "default": 0,
+     "type": "integer"
+    },
+    "close_in": {
+     "default": 0,
+     "type": "integer"
+    },
+    "cover_image": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "cycles": {
+     "default": null,
+     "title": "Cycles"
+    },
+    "default_assignee": {
+     "default": "",
+     "type": "string"
+    },
+    "default_state": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "emoji": {
+     "default": "",
+     "type": "string"
+    },
+    "epics": {
+     "default": null,
+     "title": "Epics"
+    },
+    "estimate": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "identifier": {
+     "default": "",
+     "type": "string"
+    },
+    "intakes": {
+     "default": null,
+     "title": "Intakes"
+    },
+    "is_time_tracking_enabled": {
+     "default": null,
+     "title": "Is Time Tracking Enabled"
+    },
+    "modules": {
+     "default": null,
+     "title": "Modules"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "network": {
+     "default": null,
+     "title": "Network"
+    },
+    "order_by": {
+     "default": "",
+     "type": "string"
+    },
+    "pages": {
+     "default": null,
+     "title": "Pages"
+    },
+    "parallel_cycles": {
+     "default": null,
+     "title": "Parallel Cycles"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "project_lead": {
+     "default": "",
+     "type": "string"
+    },
+    "project_updates": {
+     "default": null,
+     "title": "Project Updates"
+    },
+    "timezone": {
+     "default": "",
+     "type": "string"
+    },
+    "views": {
+     "default": null,
+     "title": "Views"
+    },
+    "workflows": {
+     "default": null,
+     "title": "Workflows"
+    },
+    "workitem_types": {
+     "default": null,
+     "title": "Workitem Types"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "project"
+ },
+ "plane/project_estimate": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "A project's estimate system and its points.\n\nActions:\n  retrieve (project_id) -- a project has at most one estimate;\n  create (project_id, name; optional type, description, last_used, external_source, external_id) -- creates the estimate only; add its values afterwards with create_points;\n  update (project_id; optional name, description, external_source, external_id);\n  delete (project_id);\n  link (project_id, estimate_id) -- makes that estimate the project's active one;\n  list_points (project_id, estimate_id);\n  create_points (project_id, estimate_id, points);\n  update_point (project_id, estimate_id, estimate_point_id; optional value, key, description, external_source, external_id);\n  delete_point (project_id, estimate_id, estimate_point_id).\n\ntype is one of: categories, points, time. A point's `value` is its display label (\"5\", \"XL\") and its `key` is the sort order. points takes a JSON array such as [{\"value\": \"1\", \"key\": 0}]. To set a work item's estimate: retrieve to get the estimate_id, list_points to see the available values, then pass the chosen point's id to `workitem update` as estimate_point.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "estimate_id": {
+     "default": "",
+     "type": "string"
+    },
+    "estimate_point_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "key": {
+     "default": null,
+     "title": "Key"
+    },
+    "last_used": {
+     "default": true,
+     "type": "boolean"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "points": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "type": {
+     "default": "",
+     "type": "string"
+    },
+    "value": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "project_estimate"
+ },
+ "plane/release": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Releases in the workspace.\n\nActions:\n  list (no required params; optional cursor, per_page);\n  retrieve (release_id);\n  create (name; optional description_html, status, release_date, target_date, tag_id, lead_id, is_prerelease, external_source, external_id);\n  update (release_id; optional name, description_html, status, release_date, target_date, tag_id, lead_id, is_prerelease) -- only the fields you pass are changed;\n  delete (release_id);\n  get_changelog (release_id);\n  update_changelog (release_id; optional description_html, description_stripped);\n  list_workitems (release_id; optional cursor, per_page);\n  manage_workitems (release_id; optional add_ids, remove_ids) -- pass at least one of add_ids or remove_ids; returns nothing, read back with list_workitems.\n\nstatus is one of: unreleased, released, cancelled, defaulting to unreleased. release_date is what the Plane UI labels \"Target date\" (YYYY-MM-DD); target_date is a separate stored date that the UI does not show. tag_id comes from `release_tag list`, lead_id from `member list_workspace`. For the changelog pass description_html, or description_stripped for plain text. A changelog is created empty with the release, so get_changelog always returns one.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "add_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "description_stripped": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "is_prerelease": {
+     "default": null,
+     "title": "Is Prerelease"
+    },
+    "lead_id": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "release_date": {
+     "default": "",
+     "type": "string"
+    },
+    "release_id": {
+     "default": "",
+     "type": "string"
+    },
+    "remove_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "status": {
+     "default": "",
+     "type": "string"
+    },
+    "tag_id": {
+     "default": "",
+     "type": "string"
+    },
+    "target_date": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "release"
+ },
+ "plane/release_label": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Release labels, workspace palette and per release.\n\nActions:\n  list (no required params; optional release_id, cursor, per_page) -- the workspace palette unless release_id is given;\n  create (name; optional color, sort_order) -- adds to the workspace palette;\n  update (label_id; optional name, color, sort_order);\n  delete (label_id) -- removes it from the palette entirely;\n  attach (release_id, label_ids) -- returns nothing, read back with list;\n  detach (release_id, label_ids) -- returns nothing, read back with list.\n\ncolor is a hex code such as #4E5355. label_ids takes palette label ids. Detaching a label leaves it in the palette; delete removes it for everyone.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "color": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "label_id": {
+     "default": "",
+     "type": "string"
+    },
+    "label_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "release_id": {
+     "default": "",
+     "type": "string"
+    },
+    "sort_order": {
+     "default": null,
+     "title": "Sort Order"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "release_label"
+ },
+ "plane/release_tag": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Release tags (version markers).\n\nActions:\n  list (no required params; optional cursor, per_page);\n  retrieve (tag_id);\n  create (version; optional description, commit_hash, git_tag);\n  update (tag_id; optional version, description, commit_hash, git_tag) -- only the fields you pass are changed;\n  delete (tag_id).\n\nversion is a version string such as \"v1.2.0\". A tag id is what release takes as tag_id.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "commit_hash": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "git_tag": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "tag_id": {
+     "default": "",
+     "type": "string"
+    },
+    "version": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "release_tag"
+ },
+ "plane/state": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Workflow states within a project.\n\nActions:\n  list (no required params; optional project_id, cursor, per_page) -- workspace scope when project_id is omitted;\n  retrieve (state_id; optional project_id);\n  create (name, color; optional project_id, description, sequence, group, default, external_source, external_id) -- group is required at workspace scope;\n  update (state_id; optional project_id, name, color, description, sequence, group, default) -- only the fields you pass are changed;\n  delete (state_id; optional project_id).\n\ngroup is one of: backlog, unstarted, started, completed, cancelled. color is a hex code such as #EF4444. A project also has a triage state, but Plane owns it: it cannot be created here and is not listed, and Triage is a reserved name. Omit project_id to work with the workspace catalogue, which is where states live once the workspace owns them; sequence and default apply to a project's states only.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "color": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "default": {
+     "default": null,
+     "title": "Default"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "group": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "sequence": {
+     "default": null,
+     "title": "Sequence"
+    },
+    "state_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "state"
+ },
+ "plane/template": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Reusable templates for work items, pages and projects.\n\nActions:\n  list (kind; optional project_id);\n  create (kind, name, template_data; optional project_id, description);\n  update (kind, template_id; optional project_id, name, description, template_data) -- only the fields you pass are changed;\n  delete (kind, template_id; optional project_id).\n\nkind is one of: workitem, page, project. project_id chooses the scope a write lands in; omit it for the workspace, which is also the only scope a project kind can live at. For a workitem or page kind, listing without project_id is the wider view: it returns a project's templates as well as the workspace's own, told apart by a non-null project. Pass project_id to list one project's alone. template_data is a JSON object holding what gets templated -- for a work item template, the fields a work item created from it starts with, such as {\"name\": \"Spec\", \"description_html\": \"<p>Context / Acceptance criteria</p>\", \"priority\": \"medium\"}. update merges it into what is there rather than replacing it, so pass only what changes. description is the template's own summary, not the templated body.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "kind": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "template_data": {
+     "default": "",
+     "type": "string"
+    },
+    "template_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "template"
+ },
+ "plane/work_log": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Time logged against a work item.\n\nActions:\n  list (project_id, workitem_id; optional cursor, per_page);\n  create (project_id, workitem_id, duration; optional description);\n  update (project_id, workitem_id, work_log_id; optional duration, description);\n  delete (project_id, workitem_id, work_log_id).\n\nduration is in minutes.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "duration": {
+     "default": 0,
+     "type": "integer"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "work_log_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "work_log"
+ },
+ "plane/workitem": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Work items -- issues, tasks and epics.\n\nActions:\n  list (no required params; optional project_id, pql, order_by, per_page, cursor, expand, fields, external_id, external_source) -- omit project_id to search the whole workspace;\n  list_archived (project_id; optional pql, order_by, per_page, cursor, expand, fields, external_id, external_source);\n  retrieve (project_id, workitem_id; optional expand, fields, external_id, external_source, order_by);\n  retrieve_by_identifier (workitem_identifier; optional expand, fields, external_id, external_source, order_by) -- identifier is PROJECT-N, e.g. ENG-42;\n  search (query; optional expand, fields, external_id, external_source, order_by);\n  count (no required params; optional project_id, pql, group_by, sub_group_by) -- counts the whole workspace unless project_id narrows it;\n  create (project_id, name; optional assignees, labels, type_id, point, description_html, description_stripped, priority, start_date, target_date, sort_order, is_draft, parent, state, estimate_point, external_source, external_id);\n  update (project_id, workitem_id; optional name, assignees, labels, type_id, point, description_html, description_stripped, priority, start_date, target_date, sort_order, is_draft, parent, state, estimate_point, external_source, external_id) -- only the fields you pass are changed;\n  delete (project_id, workitem_id);\n  archive (project_id, workitem_id; optional archive) -- archive defaults to true; pass archive=false to unarchive. Only completed or cancelled items can be archived;\n  manage_assignee (project_id, workitem_id; optional add_user_id, remove_user_id) -- each takes one id or several; the list is merged, not replaced, and removals apply first;\n  manage_label (project_id, workitem_id; optional add_label_id, remove_label_id) -- each takes one id or several; the list is merged, not replaced, and removals apply first.\n\npriority: urgent, high, medium, low, none.\nUUID fields (assignees, labels, state, parent, type_id) need UUIDs -- list the relevant resource first if you only have a name.\ndescription_stripped is plain text and is wrapped into HTML on save; description_html wins if both are given.\nfields is a sparse fieldset: use `project`, not project_id, and `description_html`, not description.\ncount group_by and sub_group_by accept: state_id, state__group, priority, project_id, type_id, labels__id, assignees__id, issue_module__module_id, release_work_items__release_id, cycle_id, milestone_id, created_by, target_date, start_date. These are grouping keys only -- they are not PQL filter fields, and filtering on state__group is rejected.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "add_label_id": {
+     "default": "",
+     "type": "string"
+    },
+    "add_user_id": {
+     "default": "",
+     "type": "string"
+    },
+    "archive": {
+     "default": true,
+     "type": "boolean"
+    },
+    "assignees": {
+     "default": null,
+     "title": "Assignees"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description_html": {
+     "default": "",
+     "type": "string"
+    },
+    "description_stripped": {
+     "default": "",
+     "type": "string"
+    },
+    "estimate_point": {
+     "default": "",
+     "type": "string"
+    },
+    "expand": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "fields": {
+     "default": "",
+     "type": "string"
+    },
+    "group_by": {
+     "default": "",
+     "type": "string"
+    },
+    "is_draft": {
+     "default": null,
+     "title": "Is Draft"
+    },
+    "labels": {
+     "default": null,
+     "title": "Labels"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "order_by": {
+     "default": "",
+     "type": "string"
+    },
+    "parent": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "point": {
+     "default": 0,
+     "type": "integer"
+    },
+    "pql": {
+     "default": "",
+     "type": "string"
+    },
+    "priority": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "query": {
+     "default": "",
+     "type": "string"
+    },
+    "remove_label_id": {
+     "default": "",
+     "type": "string"
+    },
+    "remove_user_id": {
+     "default": "",
+     "type": "string"
+    },
+    "sort_order": {
+     "default": 0,
+     "type": "number"
+    },
+    "start_date": {
+     "default": "",
+     "type": "string"
+    },
+    "state": {
+     "default": "",
+     "type": "string"
+    },
+    "sub_group_by": {
+     "default": "",
+     "type": "string"
+    },
+    "target_date": {
+     "default": "",
+     "type": "string"
+    },
+    "type_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_identifier": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem"
+ },
+ "plane/workitem_activity": {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": true
+  },
+  "description": "Change history for a work item.\n\nActions:\n  list (project_id, workitem_id; optional cursor, per_page);\n  retrieve (project_id, workitem_id, activity_id).",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "activity_id": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_activity"
+ },
+ "plane/workitem_attachment": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": false
+  },
+  "description": "Files attached to a work item.\n\nActions:\n  list (project_id, workitem_id);\n  read (project_id, workitem_id, attachment_id) -- returns images and text inline; use download_url for anything else;\n  download_url (project_id, workitem_id, attachment_id);\n  upload_from_url (project_id, workitem_id, url; optional name);\n  delete (project_id, workitem_id, attachment_id).\n\nread supports PNG/JPEG/GIF/WEBP up to 5 MB and TXT/MD/CSV/HTML/XML/YAML/JSON up to 1 MB. Get attachment_id from the list action. upload_from_url fetches the file server-side, so the URL must be reachable without authentication and must not resolve to a private address.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "attachment_id": {
+     "default": "",
+     "type": "string"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "url": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_attachment"
+ },
+ "plane/workitem_comment": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Comments on a work item.\n\nActions:\n  list (project_id, workitem_id; optional cursor, per_page);\n  retrieve (project_id, workitem_id, comment_id);\n  create (project_id, workitem_id, comment_html; optional access, external_source, external_id);\n  update (project_id, workitem_id, comment_id; optional comment_html, access, external_source, external_id);\n  delete (project_id, workitem_id, comment_id).\n\ncomment_html is HTML, e.g. '<p>Looks good.</p>'. access is INTERNAL or EXTERNAL.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "access": {
+     "default": "",
+     "type": "string"
+    },
+    "action": {
+     "type": "string"
+    },
+    "comment_html": {
+     "default": "",
+     "type": "string"
+    },
+    "comment_id": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_comment"
+ },
+ "plane/workitem_link": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "External links attached to a work item.\n\nActions:\n  list (project_id, workitem_id; optional cursor, per_page);\n  retrieve (project_id, workitem_id, link_id);\n  create (project_id, workitem_id, url);\n  update (project_id, workitem_id, link_id, url);\n  delete (project_id, workitem_id, link_id).",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "link_id": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "url": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_link"
+ },
+ "plane/workitem_property": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Custom work item properties and their options.\n\nActions:\n  list (no required params; optional project_id, workitem_type_id, cursor, per_page) -- no ids lists every workspace property in one call -- the fast path for PQL;\n  retrieve (workitem_property_id; optional project_id, workitem_type_id);\n  create (display_name, property_type; optional project_id, workitem_type_id, description, relation_type, is_required, is_multi, is_active, default_value, options, display_format, external_source, external_id);\n  update (workitem_property_id; optional project_id, workitem_type_id, display_name, property_type, description, relation_type, is_required, is_multi, is_active, default_value, display_format, external_source, external_id) -- only the fields you pass are changed;\n  delete (workitem_property_id; optional project_id, workitem_type_id);\n  manage_type_properties (workitem_type_id; optional project_id, attach_ids, detach_ids) -- omit project_id where the workspace owns types; detach removes the association only, it does not delete the property;\n  list_options (property_id; optional project_id);\n  retrieve_option (property_id, option_id; optional project_id);\n  create_option (property_id, name; optional project_id, description, color, is_default, external_source, external_id);\n  update_option (property_id, option_id; optional project_id, name, description, color, is_default, external_source, external_id);\n  delete_option (property_id, option_id; optional project_id);\n  get_value (project_id, workitem_id, property_id);\n  set_value (project_id, workitem_id, property_id, value; optional external_source, external_id) -- upsert; for a multi-value property this replaces every existing value;\n  delete_value (project_id, workitem_id, property_id).\n\nproperty_type is one of: TEXT, DATETIME, DECIMAL, BOOLEAN, OPTION, RELATION, URL, EMAIL, FILE, FORMULA. relation_type (for RELATION properties) is one of: ISSUE, USER, RELEASE, RICH_TEXT. A property id is what goes in a PQL cf[\"<id>\"] filter; for OPTION properties the value is an option id. options takes a JSON array of {\"name\", \"color\", \"is_default\"} objects. display_format is required by TEXT (single-line, multi-line, readonly) and DATETIME (MMM dd, yyyy, dd/MM/yyyy, MM/dd/yyyy, yyyy/MM/dd) properties. A property lives with its type: where the workspace owns types, pass workitem_type_id without project_id and it is created in the workspace catalogue and associated for you. list resolves scope in this order: project_id + workitem_type_id is type-scoped (falling back to project-flat then workspace when empty), project_id alone is every property in the project, and neither is every workspace property. To filter by property name in PQL, call list with no ids -- one workspace-wide fetch beats iterating types -- then match display_name in memory to get the id for a cf[] condition. The *_value actions read and write a property on one work item: pass value in the type the property expects -- TEXT/URL/EMAIL/FILE as a string; DATETIME as a YYYY-MM-DD or YYYY-MM-DD HH:MM:SS string; DECIMAL as a number; BOOLEAN as true or false; OPTION and RELATION as an option or record id string, or an array of them when the property is multi-value. Send the value's own type, not a stringified form: \"007\" stays the text 007, whereas 7 is the number.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "attach_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "color": {
+     "default": "",
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "default_value": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "detach_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "display_format": {
+     "default": "",
+     "type": "string"
+    },
+    "display_name": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "is_active": {
+     "default": null,
+     "title": "Is Active"
+    },
+    "is_default": {
+     "default": null,
+     "title": "Is Default"
+    },
+    "is_multi": {
+     "default": null,
+     "title": "Is Multi"
+    },
+    "is_required": {
+     "default": null,
+     "title": "Is Required"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "option_id": {
+     "default": "",
+     "type": "string"
+    },
+    "options": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "property_id": {
+     "default": "",
+     "type": "string"
+    },
+    "property_type": {
+     "default": "",
+     "type": "string"
+    },
+    "relation_type": {
+     "default": "",
+     "type": "string"
+    },
+    "value": {
+     "default": "",
+     "title": "Value"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_property_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_type_id": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_property"
+ },
+ "plane/workitem_relation": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Relations between work items, and the definitions that type them.\n\nActions:\n  list (project_id, workitem_id);\n  create (project_id, workitem_id, workitem_ids; optional relation_type, relation_definition_id, relation_definition_label) -- pass relation_type for a dependency, or definition id + label for a custom relation;\n  delete (project_id, workitem_id, related_workitem_id; optional is_dependency) -- removes one relation; dependencies and custom relations are independent, so is_dependency must match the kind that was created (default false);\n  list_definitions (no required params; optional is_default, is_active);\n  create_definition (name; optional outward, inward, is_active, color);\n  update_definition (definition_id; optional name, outward, inward, is_active, color);\n  delete_definition (definition_id).\n\nCall list_definitions first and match the user's wording to an entry. A built_in_dependencies value (blocking, blocked_by, start_before, start_after, finish_before, finish_after) goes in relation_type; a custom definition needs its id in relation_definition_id and the matched outward or inward label in relation_definition_label, which sets direction.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "color": {
+     "default": "",
+     "type": "string"
+    },
+    "definition_id": {
+     "default": "",
+     "type": "string"
+    },
+    "inward": {
+     "default": "",
+     "type": "string"
+    },
+    "is_active": {
+     "default": null,
+     "title": "Is Active"
+    },
+    "is_default": {
+     "default": null,
+     "title": "Is Default"
+    },
+    "is_dependency": {
+     "default": false,
+     "type": "boolean"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "outward": {
+     "default": "",
+     "type": "string"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "related_workitem_id": {
+     "default": "",
+     "type": "string"
+    },
+    "relation_definition_id": {
+     "default": "",
+     "type": "string"
+    },
+    "relation_definition_label": {
+     "default": "",
+     "type": "string"
+    },
+    "relation_type": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_ids": {
+     "default": null,
+     "title": "Workitem Ids"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_relation"
+ },
+ "plane/workitem_type": {
+  "annotations": {
+   "destructiveHint": true,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Work item types, at project or workspace scope.\n\nActions:\n  list (no required params; optional project_id, cursor, per_page) -- workspace scope when project_id is omitted;\n  retrieve (workitem_type_id; optional project_id);\n  resolve (project_id, name) -- finds or creates a named type usable in the project; never duplicates;\n  create (name; optional project_id, description, project_ids, is_active, external_source, external_id);\n  update (workitem_type_id; optional project_id, name, description, project_ids, is_active, external_source, external_id) -- only the fields you pass are changed;\n  delete (workitem_type_id; optional project_id);\n  import_to_project (project_id, workitem_type_ids) -- links workspace types to a project.\n\nOmit project_id to work at workspace scope. A type's id is the type_id for `workitem create` and the workitem_type_id for `workitem_property list`. Prefer resolve over create when you just need a usable type such as Epic or Initiative: it handles both modes, matches exactly (case-sensitive, whitespace-stripped) and never duplicates. Where the workspace owns the vocabulary, creating a type on a project is rejected and importing is the only valid path -- resolve does that for you.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "cursor": {
+     "default": "",
+     "type": "string"
+    },
+    "description": {
+     "default": "",
+     "type": "string"
+    },
+    "external_id": {
+     "default": "",
+     "type": "string"
+    },
+    "external_source": {
+     "default": "",
+     "type": "string"
+    },
+    "is_active": {
+     "default": null,
+     "title": "Is Active"
+    },
+    "name": {
+     "default": "",
+     "type": "string"
+    },
+    "per_page": {
+     "default": 0,
+     "type": "integer"
+    },
+    "project_id": {
+     "default": "",
+     "type": "string"
+    },
+    "project_ids": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_type_id": {
+     "default": "",
+     "type": "string"
+    },
+    "workitem_type_ids": {
+     "default": "",
+     "type": "string"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workitem_type"
+ },
+ "plane/workspace": {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": false,
+   "readOnlyHint": false
+  },
+  "description": "Workspace-level feature flags.\n\nActions:\n  get_features (no required params) -- feature flags for the current workspace;\n  update_features (no required params; optional project_grouping, initiatives, teams, customers, wiki, pi) -- only the flags you pass are changed.\n\nFor a project's feature flags use `project get_features` and `project update_features`.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "type": "string"
+    },
+    "customers": {
+     "default": null,
+     "title": "Customers"
+    },
+    "initiatives": {
+     "default": null,
+     "title": "Initiatives"
+    },
+    "pi": {
+     "default": null,
+     "title": "Pi"
+    },
+    "project_grouping": {
+     "default": null,
+     "title": "Project Grouping"
+    },
+    "teams": {
+     "default": null,
+     "title": "Teams"
+    },
+    "wiki": {
+     "default": null,
+     "title": "Wiki"
+    }
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "meta": {
+   "fastmcp": {
+    "tags": []
+   }
+  },
+  "name": "workspace"
+ }
+}
