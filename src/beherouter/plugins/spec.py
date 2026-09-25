@@ -11,6 +11,13 @@ from dataclasses import dataclass, field
 
 BACKINGS = ("native", "http", "stdio", "cli")
 
+# The plugin contract's version. Bump ONLY on a change an existing plugin
+# cannot survive (a removed or re-typed PluginSpec/PluginContext field, a
+# changed build() contract); additive fields keep the number. A gateway
+# serving several versions lists them all.
+API_VERSION = 1
+SUPPORTED_API_VERSIONS: tuple[int, ...] = (API_VERSION,)
+
 
 @dataclass(frozen=True)
 class ConfigField:
@@ -80,6 +87,9 @@ class PluginSpec:
     # say "sprint"). A tested default; a registry entry may ADD to it, never
     # replace it. See docs/PLUGINS.md § Search vocabulary.
     search_aliases: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Which plugin contract this spec was written against; `register()`
+    # refuses one this gateway does not serve. See API_VERSION.
+    api: int = API_VERSION
 
 
 @dataclass(frozen=True)
