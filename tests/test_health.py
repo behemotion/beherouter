@@ -432,3 +432,25 @@ async def test_health_reports_a_missing_identity_map(mcp_loader, tmp_path):
         load=mcp_loader,
     )
     assert record["identity"]["map"]["state"] == "missing"
+
+
+async def test_health_reports_aliases_for_unserved_tools_without_failing():
+    from beherouter.health import check_entry, failed
+    from beherouter.models import Backend, ToolDescriptor
+    from beherouter.registry import RegistryEntry
+
+    class _Echo:
+        async def run(self, verb, args, *, identity=None):
+            return {}
+
+    d = ToolDescriptor(name="discover", verb="discover", summary="find tools",
+                       schema={}, pinned=True, mutating=False)
+
+    async def load(entry):
+        return Backend(name="office", kind="mcp", descriptors=[d], executor=_Echo(),
+                       search_aliases={"discover": ("find",), "ghost": ("x",)})
+
+    entry = RegistryEntry(name="office", plugin="office-mcp", pinned=["discover"])
+    record = await check_entry(entry, load=load)
+    assert record["aliases_unknown"] == ["ghost"]
+    assert failed([record]) == []

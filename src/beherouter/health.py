@@ -216,6 +216,13 @@ async def check_entry(
         }
         expected = resolve_pinned(entry, PLUGINS.get(entry.plugin))
         missing = sorted(n for n in expected if n not in served)
+        # Vocabulary for a tool the backend does not serve is dead weight, not
+        # an outage: reported, never in _FAILURES. Keyed by published name for
+        # every backing (unlike pins, which a cli backend keys by verb).
+        served_names = {d.name for d in backend.descriptors}
+        unknown_aliases = sorted(
+            t for t in backend.search_aliases if t not in served_names
+        )
     except Exception:
         logger.warning(
             "pin-check failed for backend %r; reporting health without a "
@@ -227,6 +234,8 @@ async def check_entry(
         record["catalogue"] = CATALOGUE_PINNED_MISSING if missing else CATALOGUE_OK
         if missing:
             record["pinned_missing"] = missing
+        if unknown_aliases:
+            record["aliases_unknown"] = unknown_aliases
     # No backing special-case: cli backends execute since 2026-08-04, so an
     # unprobed one is UNKNOWN for exactly the same reason an unprobed mcp one
     # is. Reporting them "unsupported" outlived the deferred-execution

@@ -166,6 +166,20 @@ def registry_lint(path: str = "") -> None:
     warnings: list[str] = []
     for entry in reg.values():
         validate_entry(entry)
+        if entry.search_aliases:
+            # A WARNING: lint never attaches, so the full catalogue is unknown
+            # here -- only the pins and the plugin's own vocabulary are.
+            # `health --deep` checks the words against the live catalogue.
+            from ..plugins import get as get_plugin
+
+            spec = get_plugin(entry.plugin).spec
+            known = set(spec.pinned) | set(spec.search_aliases) | set(entry.pinned or [])
+            for tool in sorted(set(entry.search_aliases) - known):
+                warnings.append(
+                    f"'{entry.name}': search_aliases names '{tool}', which plugin "
+                    f"'{entry.plugin}' neither pins nor has vocabulary for; check "
+                    f"the name (`health --deep` verifies it against the backend)."
+                )
         # ⚠️ WARN, never refuse: deployments (this harness's own included)
         # already use the colliding name, and lint is the gate in front of a
         # gateway that would otherwise be dead on arrival. The rule itself lives

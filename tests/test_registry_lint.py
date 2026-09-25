@@ -275,3 +275,28 @@ def test_no_warning_for_an_unrelated_variable():
     from beherouter.pluginconfig import collision_warning
 
     assert collision_warning("plane", "api_key", "${BEHEROUTER_PLANE_API_KEY}") is None
+
+
+def test_lint_warns_on_an_alias_for_an_unknown_tool(tmp_path, capsys):
+    body = (
+        '[office]\nplugin = "office-mcp"\n'
+        '  [office.search_aliases]\n  discovr = ["find"]\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    assert any("search_aliases" in w and "discovr" in w for w in out["warnings"])
+
+
+def test_lint_is_quiet_for_an_alias_on_a_pinned_tool(tmp_path, capsys):
+    body = (
+        '[office]\nplugin = "office-mcp"\n'
+        '  [office.search_aliases]\n  discover = ["find"]\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert not [w for w in out["warnings"] if "search_aliases" in w]
