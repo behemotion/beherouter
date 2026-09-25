@@ -20,9 +20,18 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ..errors import UsageError
-from .spec import BACKINGS, ConfigField, EnvVar, PluginContext, PluginSpec
+from .spec import (
+    API_VERSION,
+    BACKINGS,
+    SUPPORTED_API_VERSIONS,
+    ConfigField,
+    EnvVar,
+    PluginContext,
+    PluginSpec,
+)
 
 __all__ = [
+    "API_VERSION",
     "BACKINGS",
     "ENTRY_POINT_GROUP",
     "PLUGINS",
@@ -66,6 +75,13 @@ PLUGINS: dict[str, Plugin] = {}
 
 def register(spec: PluginSpec, build: BuildFn, validate=None) -> None:
     """Add a plugin. Duplicate names are a programming error, not a config one."""
+    if spec.api not in SUPPORTED_API_VERSIONS:
+        served = ", ".join(f"v{v}" for v in SUPPORTED_API_VERSIONS)
+        raise UsageError(
+            f"plugin '{spec.name}' is written for plugin API v{spec.api}; this "
+            f"gateway serves {served}. Install a release of the plugin built "
+            f"for it, or a beherouter that serves v{spec.api}."
+        )
     if spec.backing not in BACKINGS:
         raise UsageError(
             f"plugin '{spec.name}': backing must be one of {BACKINGS}, got '{spec.backing}'"
