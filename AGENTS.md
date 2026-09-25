@@ -34,12 +34,13 @@
 > surface and `/healthz` with it. Read `podman logs beherouter` after any
 > registry change.
 >
-> 703 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
-> per-user identity against a REAL `plane-mcp-server`: 22/22 — two callers acting
+> 748 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
+> per-user identity against a REAL `plane-mcp-server`: 24/24 — two callers acting
 > as themselves in Plane by PAT, an IdP JWT reaching Plane as `Bearer` through
 > `contrib/plane-mcp-bearer`, the stdio `plane` plugin attaching on its default
-> `cmd` inside the published image, and `health --deep --bearer-file` proving a
-> user's identity end to end. `beheaxi conformance "beherouter"` is 6/6; both backend kinds
+> `cmd` inside the published image, `health --deep --bearer-file` proving a
+> user's identity end to end, and `search_tools("sprint")` finding Plane's
+> `cycle` while a misspelled `run_tool` argument is refused with a suggestion. `beheaxi conformance "beherouter"` is 6/6; both backend kinds
 > attach for real, and **`cli` backends now execute** (they were listable but
 > not callable before 2026-08-04).
 > Design background: **`docs/DESIGN.md`**; the plugin seam:
@@ -97,8 +98,9 @@ ever be. See `docs/superpowers/specs/2026-08-02-beherouter-rename-design.md`.
 Build on **FastMCP** (Python). The gateway
 is an MCP **server** to clients and an MCP **client** to backends. Each backend is `mount()`ed
 / proxied under its own endpoint (`/<service>/mcp`). Per surface we expose: a small configurable
-**pinned** flat-tool set (the common verbs) **+** FastMCP's native **BM25 tool search**
-(`BM25SearchTransform` / `RegexSearchTransform`) as
+**pinned** flat-tool set (the common verbs) **+** beherouter's own **lexical tool index**
+(`search.py`: field-weighted BM25 + prefix/fuzzy expansion, no embeddings; FastMCP's
+`BM25SearchTransform` was evaluated and rejected — see docs/DESIGN.md § Search design) as
 `search_tools`/`describe_tool`/`run_tool`/`context_cost` for everything else and for the
 surface's own context cost. Per-user credentials are forwarded per-session (FastMCP forwards arbitrary
 headers — so a backend needing two or more per-user headers is handled). Plugin-driven: adding a
@@ -188,6 +190,13 @@ host sees at connect time is frozen for the process lifetime regardless — it i
 captured once, at attach, from the pinned set only — so a host's prompt cache is
 never invalidated by a catalogue refresh. That freeze is the design's whole
 point, not an incidental detail.
+
+**Search vocabulary.** A plugin may declare `search_aliases` — words agents type
+that the backend's descriptions lack (Plane: `sprint` → `cycle`). A registry
+entry may add words under `[surface.search_aliases]`, never remove them. Quality
+is gated by `tests/test_search_eval.py` against a recorded catalogue; after a
+backend upgrade, re-record it with `scripts/record_catalogue.py` and re-run that
+test.
 
 ⚠️ **`pinned` and `probe` in an entry are OVERRIDES of a tested default, not
 required knowledge.** Forgetting them yields the plugin's verified behaviour

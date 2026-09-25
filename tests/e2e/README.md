@@ -12,7 +12,7 @@ podman build -t localhost/beherouter:e2e -f Containerfile .
 podman build -t localhost/plane-mcp:e2e -f tests/e2e/Containerfile.plane-mcp tests/e2e
 podman build -t localhost/plane-mcp-bearer:e2e -f contrib/plane-mcp-bearer/Containerfile contrib/plane-mcp-bearer
 bash tests/e2e/up.sh                                # → {"status":"ok","surfaces":[...]}
-uv run python tests/e2e/e2e.py                      # → 22/22 checks passed
+uv run python tests/e2e/e2e.py                      # → 24/24 checks passed
 podman rm -f beherouter plane-mcp plane-mcp-bearer echo-mcp e2e-fixtures
 ```
 

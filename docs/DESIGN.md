@@ -88,3 +88,64 @@ if we ever accept Enterprise + embeddings — not now.)
   or re-folded into beherouter.
 - Per-user PAT plumbing through FastMCP per-session client factory for each backend.
 - Auth to the gateway itself + the LibreChat "anonymous probe → 200" handling per surface.
+
+## Search design (2026-09-25)
+
+Spec: [`docs/superpowers/specs/2026-09-25-tool-search-quality-design.md`](superpowers/specs/2026-09-25-tool-search-quality-design.md).
+The index is our own (`search.py`, `rank_bm25` + `rapidfuzz`), not FastMCP's
+`BM25SearchTransform`.
+
+**The measured problem.** Against the real `tools/list` of `plane-mcp-server`
+0.3.2 (30 tools), one `search_tools` call cost ≈ 3 200–4 300 tokens: up to ten
+hits, each carrying the full ~1 000-character description plus annotations. One
+or two searches spent the whole saving that pinning 11 of 30 tools bought. The
+index was also wrong for MCP tools: `_arg_tokens` iterated a JSON Schema's top
+level, so `properties required type additionalProperties` were indexed into
+every tool and the real argument names and enums never were. Filler words
+("to", "of", "a") put most of the corpus in the first tier, so "workitems"
+missed `workitem`.
+
+**What is indexed.** One BM25 document per tool, fields weighted by repetition:
+name tokens plus the joined name ×3, `search_aliases` ×2, the description's first
+sentence ×2, the rest ×1, argument names/enums/descriptions ×1 (dialect-aware:
+JSON Schema `properties`, or a beheaxi manifest). Index and query share one
+`normalize`: camelCase split, a short fixed stopword list, rule-based plural
+folding. Nothing is downloaded at runtime.
+
+**Scoring.** Each query token earns its best match per tool: exact ×1.0,
+prefix ×0.6, fuzzy (`ratio ≥ 85`) ×0.4. Expansion always runs, not only as an
+under-fill fallback, but an expansion is capped at its weight times the token's
+best *exact* score, because a rare misspelling carries a far higher IDF than the
+common word the agent typed. A query equal to a tool's name ranks that tool
+first. **BM25Plus, not Okapi**: Okapi's IDF is ≤ 0 for a term in half the corpus,
+and `project`/`create`/`list`/`page` are in 23–29 of Plane's 30 tools, so
+"create a project" never found `project`.
+
+**Cutoff.** Default `limit` 5. A hit must score ≥ 35 % of the best, *and* match
+≥ 60 % of the distinct query tokens the best surviving hit matches. The second
+rule is not in the spec. It was added during tuning because "send an email"
+matched `email`, a real field on five Plane tools, equally well on all five, and
+no score threshold separates equally weak hits.
+
+**Hit shape.** `{name, brief, mutating?, pinned?}`: `brief` is the first
+sentence, capped at 160 characters. The full description and schema are
+`describe_tool`'s job. `search_tools` and `beherouter search` share one builder
+(`indexing.search_hits`).
+
+**Arguments.** Pinned tools and `run_tool` share `args.prepare_args`: both
+spellings accepted (`--flag-name` / `flag_name`), `None` and schema-default
+echoes dropped (the `archive=True`-on-`create` failure class, previously open on
+`run_tool`), a missing required arg refused with its enum, an undeclared arg
+refused with a suggestion on a *closed* schema only. Types and enum membership
+are deliberately not checked. Unknown tool names are `NotFound` with "did you
+mean".
+
+**Measured after** (`tests/test_search_eval.py`, 40 queries + 4 negatives):
+top-1 32/40 (was 10/16 on the original 16), top-3 39/40, 2.9 hits per query,
+largest search ≈ 126 tokens, every negative ≤ 1 hit.
+
+**Rejected.** *Per-field BM25 (BM25F)* is the principled weighting, but it means
+more code and more tunables, and repetition-weighting reached the gates.
+*FastMCP's `BM25SearchTransform`* is single-field BM25 with no normalisation,
+weighting or vocabulary, so adopting it would lose every gain above.
+*Embeddings* are a hard constraint.
