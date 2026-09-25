@@ -7,12 +7,13 @@ isolated; only what `registry-lint` can see still refuses boot.
 
 import asyncio
 
+import httpx
 import pytest
 
 from beherouter.backends.backing import CliBacking
 from beherouter.backends.cli import load_cli_backend
 from beherouter.errors import Unavailable, UsageError
-from beherouter.gateway import build_surfaces
+from beherouter.gateway import build_gateway_app, build_surfaces
 from beherouter.plugins import PLUGINS, register
 from beherouter.plugins.spec import PluginContext, PluginSpec
 from beherouter.registry import RegistryEntry
@@ -124,3 +125,131 @@ def test_the_attach_timeout_defaults_to_30s(monkeypatch):
 
     monkeypatch.delenv("BEHEROUTER_ATTACH_TIMEOUT_S", raising=False)
     assert attach_timeout_s() == 30.0
+
+
+MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
+LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+
+INIT = {
+    "jsonrpc": "2.0",
+    "id": 0,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "test", "version": "0"},
+    },
+}
+
+
+async def _healthz(c) -> dict:
+    return (await c.get("/healthz")).json()
+
+
+async def _list_tools(c, path: str, token: str) -> httpx.Response:
+    """`tools/list` after the streamable-HTTP handshake it requires: a bare
+    list without a session is a 400, which would hide what is being tested."""
+    headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+    init = await c.post(path, json=INIT, headers=headers)
+    assert init.status_code == 200, init.text
+    headers["mcp-session-id"] = init.headers["mcp-session-id"]
+    await c.post(
+        path,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        headers=headers,
+    )
+    return await c.post(path, json=LIST, headers=headers)
+
+
+async def test_a_failed_surface_answers_503_problem_json_without_the_error(
+    test_plugin, fake_cli_cmd, monkeypatch
+):
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    test_plugin("t-good", _good(fake_cli_cmd))
+    test_plugin("t-boom", _boom)
+    registry = {
+        "bad": RegistryEntry(name="bad", plugin="t-boom"),
+        "good": RegistryEntry(name="good", plugin="t-good"),
+    }
+    app = await build_gateway_app(registry, retry_initial_s=3600)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as c,
+        app.router.lifespan_context(app),
+    ):
+        r = await c.post("/bad/mcp", json=LIST, headers=MCP_HEADERS)
+        assert r.status_code == 503
+        assert r.headers["content-type"].startswith("application/problem+json")
+        body = r.json()
+        assert body["status"] == 503 and "bad" in body["detail"]
+        # never echo the attach error to an unauthenticated caller
+        assert "refused the connection" not in r.text
+
+        health = await _healthz(c)
+        assert health == {"status": "degraded", "surfaces": ["good"], "failed": ["bad"]}
+
+        ok = await _list_tools(c, "/good/mcp", "s3cret")
+        assert ok.status_code == 200
+
+
+async def test_healthz_payload_is_unchanged_when_nothing_failed(
+    test_plugin, fake_cli_cmd, monkeypatch
+):
+    """The helm test and the homelab probe grep this exact shape."""
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    test_plugin("t-good", _good(fake_cli_cmd))
+    app = await build_gateway_app({"good": RegistryEntry(name="good", plugin="t-good")})
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as c,
+        app.router.lifespan_context(app),
+    ):
+        assert await _healthz(c) == {"status": "ok", "surfaces": ["good"]}
+
+
+async def test_a_failed_surface_is_swapped_in_once_a_retry_succeeds(
+    test_plugin, fake_cli_cmd, monkeypatch
+):
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    calls = {"n": 0}
+    good = _good(fake_cli_cmd)
+
+    async def flaky(ctx):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise Unavailable("not yet")
+        return await good(ctx)
+
+    test_plugin("t-flaky", flaky)
+    registry = {"late": RegistryEntry(name="late", plugin="t-flaky")}
+    app = await build_gateway_app(registry, retry_initial_s=0.01, retry_max_s=0.05)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as c,
+        app.router.lifespan_context(app),
+    ):
+        for _ in range(200):
+            if (await _healthz(c))["status"] == "ok":
+                break
+            await asyncio.sleep(0.02)
+        assert await _healthz(c) == {"status": "ok", "surfaces": ["late"]}
+        r = await _list_tools(c, "/late/mcp", "s3cret")
+        assert r.status_code == 200
+        assert "late_search" in r.text  # the fake CLI's pinned verb, published after retry
+    assert calls["n"] == 2  # retried exactly until it worked, then stopped
+
+
+async def test_shutdown_cancels_pending_retries(test_plugin, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    test_plugin("t-boom", _boom)
+    app = await build_gateway_app(
+        {"bad": RegistryEntry(name="bad", plugin="t-boom")},
+        retry_initial_s=0.01,
+        retry_max_s=0.01,
+    )
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.05)
+    # leaving the lifespan must not hang or leak a running retry task
+    pending = [t for t in asyncio.all_tasks() if "retry" in (t.get_name() or "")]
+    assert all(t.done() for t in pending)
