@@ -23,9 +23,12 @@ _SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
 # description and used to decide membership on their own. Kept deliberately
 # short: a word that names an action ("list", "use", "do") is NOT a stopword.
 STOPWORDS = frozenset(
-    "a an and are as at be by for from how i in into is it its me my of on or "
-    "please so that the their them then there these this to we what when which "
-    "who with you your".split()
+    (
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "i",
+        "in", "into", "is", "it", "its", "me", "my", "of", "on", "or", "please", "so",
+        "that", "the", "their", "them", "then", "there", "these", "this", "to", "we",
+        "what", "when", "which", "who", "with", "you", "your",
+    )
 )
 
 # Plural folding is rule-based on purpose: no stemmer library, nothing
@@ -68,7 +71,7 @@ def singular(token: str) -> str:
         return token
     if token.endswith("ies"):
         return token[:-3] + "y"
-    if token.endswith("sses") or token.endswith(("xes", "zes", "ches", "shes")):
+    if token.endswith(("sses", "xes", "zes", "ches", "shes")):
         return token[:-2]
     return token[:-1]
 

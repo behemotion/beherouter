@@ -7,13 +7,12 @@ reached through `search_tools` -> `describe_tool` -> `run_tool`.
 """
 
 import inspect
-import keyword
 import logging
-import re
 from typing import Any
 
 from fastmcp import FastMCP
 
+from .args import NO_DEFAULT, normalize_args, prepare_args
 from .catalogue import Catalogue
 from .errors import NotFound
 from .indexing import search_hits
@@ -21,89 +20,6 @@ from .models import Backend, ToolDescriptor
 from .search import DEFAULT_LIMIT, suggest
 
 logger = logging.getLogger(__name__)
-
-# beheaxi manifest arg types (manifest_schema.json) -> Python annotations.
-_PY_TYPES: dict[str, Any] = {
-    "string": str,
-    "integer": int,
-    "number": float,
-    "boolean": bool,
-    "array": list,
-    "object": dict,
-}
-
-
-_NO_DEFAULT = object()
-
-_KEYWORDS = frozenset(keyword.kwlist)
-
-
-def _param_name(wire_name: str) -> str:
-    """Turn a backend arg name into a valid Python parameter name.
-
-    beheaxi renders OPTIONAL args as `--flag-name` (describe.py:`_arg_entry`), and
-    upstream MCP servers can publish anything. `inspect.Parameter` requires a real
-    identifier, so strip leading dashes and normalize separators. The original
-    wire name is kept separately for forwarding.
-    """
-    name = wire_name.lstrip("-").replace("-", "_").replace(" ", "_")
-    name = re.sub(r"\W", "_", name)
-    if not name or name[0].isdigit():
-        name = f"arg_{name}"
-    if name in _KEYWORDS:
-        name = f"{name}_"
-    return name
-
-
-def _normalize_args(schema: dict) -> list[tuple[str, str, Any, bool, Any]]:
-    """Return `(wire_name, param_name, python_type, required, default)`.
-
-    Two dialects reach us:
-      * `cli` backends  -> `{arg_name: {"name","type","required"}}` (beheaxi manifest)
-      * `mcp` backends  -> a JSON Schema object with `properties` / `required`
-
-    Upstream MCP schemas carry `default` values; preserving them keeps the
-    re-published schema faithful to the backend's own (`{"type": "integer",
-    "default": 10}` rather than a lossy `anyOf[integer, null]`).
-    """
-    if not schema:
-        return []
-    # A zero-argument MCP tool publishes a bare `{"type": "object"}` with no
-    # `properties` at all (4 of gitea-mcp's 50 tools do). That is still JSON
-    # Schema, so detect the dialect by its marker keys rather than by whether
-    # `properties` happens to be present.
-    is_json_schema = (
-        "properties" in schema or "$schema" in schema or schema.get("type") == "object"
-    )
-    if is_json_schema:
-        properties = schema.get("properties") or {}
-        required = set(schema.get("required") or [])
-        raw = [
-            (
-                name,
-                _PY_TYPES.get(prop.get("type"), Any),
-                name in required,
-                prop.get("default", _NO_DEFAULT),
-            )
-            for name, prop in properties.items()
-            if isinstance(prop, dict)
-        ]
-    else:
-        # beheaxi manifests have no `default` field (the schema is closed).
-        raw = [
-            (name, _PY_TYPES.get(arg.get("type"), Any), bool(arg.get("required")), _NO_DEFAULT)
-            for name, arg in schema.items()
-            if isinstance(arg, dict)
-        ]
-
-    out, seen = [], set()
-    for wire, py_type, required, default in raw:
-        param = _param_name(wire)
-        while param in seen:  # two wire names can sanitize to the same identifier
-            param = f"{param}_"
-        seen.add(param)
-        out.append((wire, param, py_type, required, default))
-    return out
 
 
 def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, dispatch):
@@ -115,47 +31,17 @@ def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, dispatch):
     So we synthesize the signature instead. See docs/FASTMCP-NOTES.md.
     """
 
-    normalized = _normalize_args(descriptor.schema)
-    to_wire = {param: wire for wire, param, _, _, _ in normalized}
-    # Every optional that carries an upstream default, by PARAM name. Needed
-    # because the synthesized signature below uses that default as the Python
-    # default (for schema fidelity), which means Python fills it in before this
-    # function is ever entered — an omitted argument and an explicitly-passed
-    # one are indistinguishable in kwargs.
-    schema_defaults = {
-        param: default
-        for _wire, param, _py, required, default in normalized
-        if not required and default is not _NO_DEFAULT
-    }
+    normalized = normalize_args(descriptor.schema)
 
     async def _tool(**kwargs):
-        # Drop unset optionals, and forward under the backend's own arg names.
-        #
-        # "Unset" has to be inferred: a value equal to the schema's own default
-        # is treated as omitted. That is safe in both directions — the backend
-        # applies exactly that default for an absent argument, so omitting it is
-        # semantically identical — and it is what stops Python's signature
-        # defaults from being forwarded on every single call.
-        #
-        # ⚠️ This is not cosmetic. Against an ACTION-PARAMETERIZED tool, whose
-        # schema is the UNION of every action's parameters, forwarding a default
-        # belonging to a DIFFERENT action is a hard backend error. Plane's
-        # `workitem` declares `archive` (default True) for its archive action, so
-        # `workitem(action="create", ...)` used to arrive carrying `archive=True`
-        # and was refused with "action 'create' does not take: archive". Reads
-        # survived, so the surface looked healthy while every write failed.
-        args = {
-            to_wire.get(k, k): v
-            for k, v in kwargs.items()
-            if v is not None and not (k in schema_defaults and v == schema_defaults[k])
-        }
-        return await dispatch(descriptor.verb, args)
+        # One argument path for pinned tools and run_tool: see args.prepare_args.
+        return await dispatch(descriptor.verb, prepare_args(descriptor, kwargs))
 
     params, annotations = [], {}
     for _wire, param_name, py_type, required, default in normalized:
         if required:
             annotation, param_default = py_type, inspect.Parameter.empty
-        elif default is not _NO_DEFAULT:
+        elif default is not NO_DEFAULT:
             # Optional WITH an upstream default: keep the plain type so the
             # republished schema matches the backend's ({"type": "integer",
             # "default": 10}).
@@ -388,7 +274,7 @@ def build_surface(
         d = catalogue.by_name.get(name)
         if d is None:
             raise unknown_tool(name)
-        return await dispatch(d.verb, args or {})
+        return await dispatch(d.verb, prepare_args(d, args or {}))
 
     @mcp.tool(
         description=(

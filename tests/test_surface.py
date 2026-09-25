@@ -768,3 +768,21 @@ async def test_pinned_schemas_are_byte_identical(catalogue_descriptors, fake_cli
     if not GOLDEN.exists():  # first run records; commit the file
         GOLDEN.write_text(json.dumps(got, indent=1, sort_keys=True) + "\n")
     assert got == json.loads(GOLDEN.read_text())
+
+
+async def test_run_tool_refuses_an_unknown_arg_with_a_suggestion(cli_surface):
+    from fastmcp.exceptions import ToolError
+
+    async with Client(cli_surface) as c:
+        with pytest.raises(ToolError, match="did you mean 'name'"):
+            await c.call_tool(
+                "run_tool", {"name": "faketool_shelf_create", "args": {"nme": "x"}}
+            )
+
+
+async def test_run_tool_refuses_a_missing_required_arg(cli_surface):
+    from fastmcp.exceptions import ToolError
+
+    async with Client(cli_surface) as c:
+        with pytest.raises(ToolError, match="missing required arg 'name'"):
+            await c.call_tool("run_tool", {"name": "faketool_shelf_create", "args": {}})

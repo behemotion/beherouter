@@ -43,7 +43,6 @@ def test_index_strips_dashes_from_flag_names():
 
 from beherouter.indexing import _arg_tokens, search_hits
 
-
 PLANE_LIKE = {
     "type": "object",
     "additionalProperties": False,
