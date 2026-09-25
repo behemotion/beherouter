@@ -56,25 +56,33 @@ async def test_describe_tool_returns_schema(cli_surface):
 async def test_cli_describe_tool_reports_callable(cli_surface):
     async with Client(cli_surface) as c:
         res = await c.call_tool("describe_tool", {"name": "faketool_search"})
-    assert res.data["callable"] is True
+    assert "callable" not in res.data  # always true, so never sent
     assert "note" not in res.data
 
 
 async def test_describe_tool_unknown_name(cli_surface):
+    from fastmcp.exceptions import ToolError
+
     async with Client(cli_surface) as c:
-        res = await c.call_tool("describe_tool", {"name": "nope"})
-    assert "error" in res.data
+        with pytest.raises(ToolError, match="Did you mean: faketool_search"):
+            await c.call_tool("describe_tool", {"name": "faketool_serch"})
 
 
-async def test_search_tools_returns_descriptions(cli_surface):
-    """An agent must not need a describe_tool round-trip per hit."""
+async def test_run_tool_unknown_name_suggests(cli_surface):
+    from fastmcp.exceptions import ToolError
+
+    async with Client(cli_surface) as c:
+        with pytest.raises(ToolError, match="unknown tool 'faketool_shelf_crate'"):
+            await c.call_tool("run_tool", {"name": "faketool_shelf_crate", "args": {}})
+
+
+async def test_search_tools_returns_briefs(cli_surface):
+    """One line per hit; the full description is describe_tool's job."""
     async with Client(cli_surface) as c:
         res = await c.call_tool("search_tools", {"query": "search"})
     hit = res.data[0]
-    assert hit["name"] == "faketool_search"
-    assert hit["summary"] == "search things"
-    assert hit["pinned"] is True
-    assert hit["mutating"] is False
+    assert hit == {"name": "faketool_search", "brief": "search things",
+                   "mutating": False, "pinned": True}
 
 
 async def test_cli_surface_tool_is_callable(cli_surface):
@@ -355,7 +363,7 @@ async def test_declared_output_schema_validates_a_real_call():
     assert "result" in (res.structured_content or {})
 
 
-async def test_search_tools_reports_unknown_mutating_as_null():
+async def test_search_tools_omits_unknown_mutating():
     d = ToolDescriptor(
         name="mystery", verb="mystery", summary="mystery tool",
         schema={}, pinned=False, mutating=None,
@@ -363,7 +371,7 @@ async def test_search_tools_reports_unknown_mutating_as_null():
     surface = build_surface(_backend(d))
     async with Client(surface) as c:
         hits = (await c.call_tool("search_tools", {"query": "mystery"})).data
-    assert hits[0]["mutating"] is None
+    assert "mutating" not in hits[0]  # unknown is omitted, not sent as null
 
 
 # --- Task 6: context_cost meta-tool -----------------------------------------
@@ -547,7 +555,7 @@ async def test_a_tool_missing_at_attach_is_reported_unpinned_even_if_configured_
 
     assert "late_arrival" not in names  # registration really is frozen
     assert hits[0]["name"] == "late_arrival"
-    assert hits[0]["pinned"] is False
+    assert "pinned" not in hits[0]
     assert described["pinned"] is False
 
 

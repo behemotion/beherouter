@@ -16,7 +16,7 @@ from ..clientconfig import resolve_public_url
 from ..errors import NotFound, Unavailable
 from ..gateway import DEFAULT_HOST, DEFAULT_PORT, load_backend
 from ..health import deep_health, failed
-from ..indexing import build_index
+from ..indexing import build_index, search_hits
 from ..registry import RegistryEntry, load_registry, save_registry, validate_entry
 
 app = BeheaxiApp(
@@ -253,22 +253,19 @@ def registry_lint(path: str = "") -> None:
 
 
 @app.command(pinned=True, mutating=False)
-def search(tool: str, query: str) -> None:
-    """BM25-search a backend's tools; returns ranked flat names."""
+def search(tool: str, query: str, limit: int = 5) -> None:
+    """Search a backend's tools; returns ranked hits, as search_tools does."""
     entry = load_registry(_registry_path()).get(tool)
     if entry is None:
         raise NotFound(f"no attached tool '{tool}'")
     backend = _load(entry)
-    by_name = {d.name: d for d in backend.descriptors}
-    hits = [
-        {
-            "name": n,
-            "summary": by_name[n].summary,
-            "pinned": by_name[n].pinned,
-            "mutating": by_name[n].mutating,
-        }
-        for n in build_index(backend.descriptors).search(query)
-    ]
+    hits = search_hits(
+        build_index(backend.descriptors, getattr(backend, "search_aliases", None)),
+        {d.name: d for d in backend.descriptors},
+        query,
+        limit,
+        {d.name for d in backend.pinned},
+    )
     app.emit({"hits": hits})
 
 

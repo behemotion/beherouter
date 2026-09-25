@@ -229,10 +229,8 @@ def test_cli_search_emits_descriptions(fake_cli_cmd, tmp_path):
     r = _run(["search", "--json", "faketool", "search"], env=_env(tmp_path))
     assert r.returncode == 0, r.stderr
     hit = json.loads(r.stdout)["hits"][0]
-    assert hit["name"] == "faketool_search"
-    assert hit["summary"] == "search things"
-    assert hit["pinned"] is True
-    assert hit["mutating"] is False
+    assert hit == {"name": "faketool_search", "brief": "search things",
+                   "mutating": False, "pinned": True}
 
 
 def test_context_cost_reports_every_surface(fake_cli_cmd, tmp_path, monkeypatch, capsys):
