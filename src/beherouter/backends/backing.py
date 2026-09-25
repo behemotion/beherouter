@@ -8,7 +8,12 @@ build() constructs one of these instead, so the two can change independently.
 path, so every backing gets identical semantics.
 """
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+# A pre-call check: (verb, args) -> None, raising UsageError to refuse. Runs
+# before any transport is opened, so a refused call costs no backend round trip.
+Guard = Callable[[str, dict], None]
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,13 @@ class McpBacking:
     # the schema costs a code-mode host its typed result, nothing else; opt-in
     # per plugin so no other surface's declared shape changes.
     republish_output_schema: bool = True
+    # Refuse a call this deployment is known not to serve, with a sentence the
+    # model can act on, instead of forwarding it for an opaque backend 404.
+    guard: Guard | None = None
+    # Tool name -> a sentence appended to that tool's description, on attach
+    # AND on every re-list, so the published array and the searchable catalogue
+    # say the same thing. For what a model must know before it calls the tool.
+    notes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -31,6 +31,19 @@ THE REUSABLE COROLLARY: a backend's catalogue advertises the COMMERCIAL surface,
 so "the tool exists" says nothing about whether this deployment serves it. Probe
 before pinning; re-probe the whole list after an upgrade or an edition change.
 
+⚠️ A PINNED TOOL CAN STILL HALF-WORK. `workitem` is served on Community Edition,
+but two of its argument shapes are not (measured by a production deployment on
+Plane CE v1.4.1, 2026-09-24):
+  - `list` WITHOUT `project_id` goes to the workspace-wide endpoint, which 404s.
+  - ANY `pql` is refused with a 400, which plane-mcp-server rewrites as "fix
+    your PQL" — so a model retries with different PQL, forever.
+`count` hits both at once: it ALWAYS calls the workspace endpoint and turns a
+`project_id` into PQL (`tools/workitem.py: _scoped_pql`). One real conversation
+made twelve such calls, got twelve 404s, and the model told its user the
+service was having a temporary problem. With `edition = "community"` (the
+default) these calls are REFUSED here with a sentence naming the fix, and the
+tool's description says so up front; `edition = "commercial"` turns both off.
+
 ⚠️ EVERY WRITE IS ATTRIBUTED TO ONE PLANE IDENTITY — the PAT minted as
 "beherouter-mcp". One shared identity per surface, exactly like any other
 backend credential here. THIS IS A PROPERTY OF THE STDIO ATTACHMENT, not of
@@ -73,6 +86,80 @@ PINNED = (
 PROBE = "member"
 PROBE_ARGS = {"action": "me"}
 
+EDITIONS = ("community", "commercial")
+
+# Shared by all three Plane plugins, like PINNED: the edition is a property of
+# the Plane behind the surface, not of how the surface is attached.
+EDITION_FIELD = ConfigField(
+    name="edition",
+    type=str,
+    default="community",
+    doc=(
+        "Plane edition behind the surface: 'community' refuses the `workitem` "
+        "calls Community Edition cannot serve (workspace-wide list, PQL); "
+        "'commercial' forwards them."
+    ),
+)
+
+_NOT_TRANSIENT = (
+    "This is a limit of Plane Community Edition, not a temporary error: "
+    "retrying, or rewording the query, fails the same way."
+)
+
+COMMUNITY_NOTES = {
+    "workitem": (
+        "On this Plane (Community Edition): `list` requires `project_id` (find "
+        "it with the `project` tool), `pql` is not supported, and `count` works "
+        "only with neither `project_id` nor `pql`."
+    ),
+}
+
+
+def community_edition_guard(verb: str, args: dict) -> None:
+    """Refuse the `workitem` shapes Community Edition cannot serve.
+
+    Refusing at the gateway turns an opaque 404/400 into a UsageError the model
+    can act on. Only MEASURED failures are refused (see the module docstring),
+    plus `count`, whose code path provably reaches one of them.
+    """
+    if verb != "workitem":
+        return
+    action = args.get("action")
+    if args.get("pql"):
+        raise UsageError(
+            f"plane: `workitem` does not accept `pql` here. {_NOT_TRANSIENT} "
+            f"Call `workitem` with action 'list' and a `project_id` instead, "
+            f"and filter the results yourself."
+        )
+    if action == "list" and not args.get("project_id"):
+        raise UsageError(
+            f"plane: `workitem` action 'list' requires `project_id` here; the "
+            f"workspace-wide listing does not exist. {_NOT_TRANSIENT} Call "
+            f"`project` with action 'list' to find the project id, then list "
+            f"its work items."
+        )
+    if action == "count" and args.get("project_id"):
+        raise UsageError(
+            f"plane: `workitem` action 'count' cannot be scoped to a project "
+            f"here (the server turns `project_id` into PQL). {_NOT_TRANSIENT} "
+            f"Use action 'list' with the `project_id` and count the results."
+        )
+
+
+def validate_edition(plugin: str, config: dict) -> None:
+    edition = config.get("edition")
+    if edition is not None and edition not in EDITIONS:
+        raise UsageError(
+            f"{plugin}: edition must be one of {EDITIONS}, got {edition!r}"
+        )
+
+
+def edition_backing_options(config: dict) -> dict:
+    """The McpBacking keywords an edition implies — `guard` and `notes`."""
+    if config.get("edition", "community") == "community":
+        return {"guard": community_edition_guard, "notes": dict(COMMUNITY_NOTES)}
+    return {}
+
 SPEC = PluginSpec(
     name="plane",
     summary="Plane work tracking: work items, cycles, modules, comments and attachments.",
@@ -97,8 +184,12 @@ SPEC = PluginSpec(
             name="cmd",
             type=str,
             default="/opt/plane-mcp/bin/plane-mcp-server stdio",
-            doc="plane-mcp-server entry point inside the gateway image.",
+            doc=(
+                "plane-mcp-server entry point. The published image ships it at "
+                "this path; override it only for an image that does not."
+            ),
         ),
+        EDITION_FIELD,
     ),
     env=(
         EnvVar(
@@ -120,6 +211,7 @@ def validate(config: dict) -> None:
     podman-compose names the container `plane_api_1`, so the obvious value is
     the broken one; the alias `plane-api` is declared on the api service.
     """
+    validate_edition("plane", config)
     base_url = config.get("base_url")
     if not base_url:
         return
@@ -145,6 +237,7 @@ async def build(ctx: PluginContext):
                 "PLANE_API_KEY": ctx.env["api_key"],
             },
             pinned=ctx.pinned,
+            **edition_backing_options(ctx.config),
         )
     )
 

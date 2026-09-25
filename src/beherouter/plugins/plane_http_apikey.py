@@ -45,7 +45,14 @@ from ..backends.backing import McpBacking
 from ..backends.mcp import load_mcp_backend
 from ..errors import UsageError
 from . import register
-from .plane import PINNED, PROBE, PROBE_ARGS
+from .plane import (
+    EDITION_FIELD,
+    PINNED,
+    PROBE,
+    PROBE_ARGS,
+    edition_backing_options,
+    validate_edition,
+)
 from .spec import ConfigField, EnvVar, IdentitySupport, PluginContext, PluginSpec
 
 API_KEY_MOUNT = "/http/api-key"
@@ -85,6 +92,7 @@ SPEC = PluginSpec(
                 "refuses any request without it, the attach included."
             ),
         ),
+        EDITION_FIELD,
     ),
     env=(
         EnvVar(
@@ -118,6 +126,7 @@ def validate(config: dict) -> None:
     clean-looking attach — the shape of failure this repo spends its lint budget
     on.
     """
+    validate_edition("plane-http-apikey", config)
     base_url = config.get("base_url")
     if not base_url:
         return
@@ -152,6 +161,7 @@ async def build(ctx: PluginContext):
                 WORKSPACE_HEADER: ctx.config["workspace_slug"],
             },
             pinned=ctx.pinned,
+            **edition_backing_options(ctx.config),
         )
     )
 
