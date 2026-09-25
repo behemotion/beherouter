@@ -324,9 +324,13 @@ beherouter registry-lint --path registry.toml
 
 ## Four warnings
 
-⚠️ **An attach failure crash-loops the whole gateway**, taking every other surface and
-`/healthz` with it. `registry-lint` is the pre-deploy guard; the container logs are how you
-find out which backend did it.
+⚠️ **A surface that fails to attach is isolated, not fatal.** A `build()` that raises, or
+an attach that takes longer than `BEHEROUTER_ATTACH_TIMEOUT_S` (default 30 s), leaves that
+one surface answering RFC 9457 `503` while the gateway retries it in the background (5 s,
+doubling to 300 s) and swaps it in on the first success. `/healthz` stays HTTP 200 but
+reports `"status": "degraded"` and lists the surface under `failed`; the error itself is
+only in the container logs. What `registry-lint` can see — an unknown plugin, a bad config
+value, an unset `${VAR}` — **still refuses boot**, so run it before a deploy.
 
 ⚠️ **An entry may not be committed before its secret exists.** An unset or empty `${VAR}` is
 a `UsageError` raised during `build_surfaces` — i.e. at *startup* — so it does not yield a
@@ -378,13 +382,21 @@ acme-crm = "acme_beherouter.crm"      # a MODULE that calls register() on import
 
 ```python
 # acme_beherouter/crm.py
-from beherouter.plugins import register
-from beherouter.plugins.spec import ConfigField, PluginSpec
+from beherouter.plugin_api import ConfigField, McpBacking, PluginSpec, load_mcp_backend, register
 
-SPEC = PluginSpec(name="acme-crm", summary="...", backing="http", pinned=(...))
+SPEC = PluginSpec(
+    name="acme-crm",
+    summary="...",
+    backing="http",
+    pinned=(...),
+    config=(ConfigField("base_url", str, required=True),),
+)
 
 async def build(ctx):
-    ...
+    return await load_mcp_backend(
+        McpBacking(name=ctx.surface, transport="http",
+                   url=ctx.config["base_url"], pinned=ctx.pinned)
+    )
 
 register(SPEC, build)
 ```
@@ -420,3 +432,22 @@ process. Two ways:
   dependency to the gateway's version, which refuses a conflicting plugin, and
   then prunes the duplicates. A plugin may declare `beherouter` itself as a
   dependency; the installer drops it rather than asking an index for it.
+
+### The plugin API and its version
+
+Import **only** from `beherouter.plugin_api`. It is the one import path that
+carries a compatibility promise; `beherouter.plugins`, `beherouter.backends.*`
+and the rest stay importable and promise nothing. It exports exactly:
+
+`API_VERSION`, `AuthError`, `Backend`, `CliBacking`, `ConfigField`, `EnvVar`,
+`IdentitySupport`, `McpBacking`, `PluginContext`, `PluginSpec`,
+`ToolDescriptor`, `Unavailable`, `UsageError`, `load_cli_backend`,
+`load_mcp_backend`, `register`.
+
+`PluginSpec.api` defaults to the current `API_VERSION` (**1**), so a plugin
+states nothing to be current. The number moves only on a change an existing
+plugin cannot survive; additive fields keep it. `register()` refuses a plugin
+written for a version this gateway does not serve, naming both versions. An
+entry-point plugin refused that way is logged and skipped like any other that
+fails to import, so a registry naming it then fails `registry-lint` as an
+`unknown plugin`.
