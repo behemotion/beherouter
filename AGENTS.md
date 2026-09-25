@@ -361,6 +361,12 @@ beherouter runs on the **service** VM, rootless Podman + systemd user unit + lin
 Caddy at `https://beherouter.example.com`, app port **47100**. State is config-file only
 (`registry.toml`); no database.
 
+**The whole ship path — tag-driven release (image + chart + GitHub Release via
+`.github/workflows/release.yml`) plus the homelab re-vendor and VM deploy — is
+scripted as the `/deploy` skill (`.claude/skills/deploy/SKILL.md`, untracked
+like the other skills). Run it for every release instead of re-deriving the
+procedure.**
+
 **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) is the deployment authority** — the generic
 procedure (config, registry, the `registry-lint` pre-deploy gate, proxy and auth, health,
 upgrade ordering, rollback) plus a reference-deployment appendix carrying the failure modes
