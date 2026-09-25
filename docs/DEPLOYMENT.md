@@ -54,6 +54,7 @@ mode `0644`, or the same `keep-id` mapping.
 | `BEHEROUTER_REGISTRY` | yes | Path to `registry.toml` |
 | `BEHEROUTER_PUBLIC_URL` | no | Published origin used by `client-config` output |
 | `BEHEROUTER_<SURFACE>_*` | per backend | Backend credentials, referenced from the registry as `${VAR}` |
+| `BEHEROUTER_ATTACH_TIMEOUT_S` | no | Per-surface attach bound in seconds, default `30`; a surface that exceeds it is served as `503` and retried |
 
 Secrets appear in `registry.toml` as `${VAR}` placeholders, expanded from the environment
 at attach time. **They are never written into the registry**, so it is safe to commit.
@@ -237,7 +238,8 @@ How the chart holds this page's rules:
 | The proxy is the **per-client** token boundary | the Ingress routes only; per-client auth is whatever fronts it (forward-auth, Gateway filters). The shared in-app token cannot make that distinction here either |
 | `/healthz` (and `/metrics`) the only unauthenticated paths | startup/liveness/readiness probes all hit it; `helm test` asserts its payload |
 | Loopback bind, only the edge reaches in | optional NetworkPolicy: default-deny ingress except the sources you list |
-| An attach failure crash-loops the gateway | `maxUnavailable: 0` rolling update — the failing NEW pod stalls the rollout while the **previous revision keeps serving**; `helm rollback` back, no state to migrate |
+| A surface that fails to attach is isolated: `503` for it, `/healthz` `"degraded"` (still HTTP 200) | the probes check only for a 200, so a degraded pod **passes them and the rollout proceeds**; ⚠️ `helm test` asserts `"status":"ok"` and **fails on a degraded gateway** — intended, run it after every upgrade. A registry mistake still fails the lint hook. Surfaces attach one after another, so the startup probe's 3 minutes must cover `BEHEROUTER_ATTACH_TIMEOUT_S` × the surfaces that can hang |
+| The gateway itself fails to start (an import error, a bad auth setting) | `maxUnavailable: 0` rolling update — the failing NEW pod stalls the rollout while the **previous revision keeps serving**; `helm rollback` back, no state to migrate |
 
 Upgrade is `helm upgrade` (the lint hook re-runs first); rollback is `helm
 rollback`. Deep verification stays the same command, run against the Deployment:
@@ -321,8 +323,17 @@ host uptime, rather than trusting the unit file.
 
 ### Failure modes worth knowing before you hit them
 
-⚠️ **An attach failure crash-loops the whole gateway**, taking every other surface and
-`/healthz` with it. Read the container logs after any registry change.
+⚠️ **A surface that fails to attach no longer takes the gateway down — but look for it.**
+A `build()` that raises, or an attach that exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` (default
+30 s), leaves that surface answering RFC 9457 `503` while the gateway retries it (5 s,
+doubling to 300 s) and swaps it in on the first success. `/healthz` stays HTTP 200 and
+reports `"status": "degraded"` with the surface under `failed`; the error is only in the
+container logs, so read them after any registry change. What `registry-lint` can see — an
+unknown plugin, a bad config value, an unset `${VAR}` — **still refuses boot**.
+
+⚠️ **A probe matching `"status":"ok"` fails on a degraded gateway.** That is intended:
+`helm test` does it, and so should an external monitor (a blackbox probe matching that
+string). Check that yours alerts on it rather than ignoring the field.
 
 ⚠️ **A same-host backend needs a shared container network.** A rootless bridged container
 **cannot reach a port published on its own host** — so co-locating a backend makes it

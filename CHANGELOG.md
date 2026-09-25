@@ -8,6 +8,25 @@ released is the body of its GitHub Release (`release.yml` extracts it, and the
 auto-generated contributor appendix is appended below it). Releases before
 0.2.0 were not tagged; their history is the git log.
 
+## [Unreleased]
+
+### Changed
+
+- **One backend can no longer take the gateway down.** A surface whose attach
+  fails, or exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` (default 30 s), is served as
+  an RFC 9457 `503` and retried in the background (5 s doubling to 300 s); on
+  its first success it is swapped in and its tools array freezes as usual.
+  `/healthz` stays HTTP 200 and reports `"status": "degraded"` with the
+  surface under `failed`. Registry mistakes `registry-lint` can see still
+  refuse boot.
+- **FastMCP is capped below 4** (`fastmcp>=3.4,<4`); 4.0 moved modules
+  plugins build on.
+
+### Added
+
+- **`beherouter.plugin_api`**, the supported import surface for plugin
+  authors, and `PluginSpec.api` (plugin API v1), which `register()` checks.
+
 ## [0.2.4] - 2026-09-25
 
 ### Changed
