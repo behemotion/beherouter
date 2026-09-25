@@ -98,15 +98,18 @@ class IdentityPolicy:
     # IdentitySupport from the plugin — which is why it works on stdio.
     require_roles: tuple[str, ...] = ()
     roles_claim: str = ""  # dotted path; from $BEHEROUTER_OIDC_ROLES_CLAIM
+    # From [surface.authz] audience: the token's `aud` must name at least one.
+    # Checked IN ADDITION to the gateway-wide audience, never instead of it.
+    audiences: tuple[str, ...] = ()
 
     @property
     def enabled(self) -> bool:
         """Whether this surface needs a verified caller at all.
 
-        A role gate alone is enough: an authz-only surface still refuses a
-        shared-token caller, it simply forwards nothing afterwards.
+        A role or audience gate alone is enough: an authz-only surface still
+        refuses a shared-token caller, it simply forwards nothing afterwards.
         """
-        return bool(self.mode) or bool(self.require_roles)
+        return bool(self.mode) or bool(self.require_roles) or bool(self.audiences)
 
     @property
     def wanted_headers(self) -> tuple[str, ...]:
@@ -148,6 +151,8 @@ class IdentityPolicy:
                 f"surface '{self.surface}' requires a verified user; this "
                 f"caller presented the shared gateway token or none at all"
             )
+        if self.audiences:
+            self._check_audience(req)
         if self.require_roles:
             self._check_roles(req)
 
@@ -174,6 +179,24 @@ class IdentityPolicy:
         """
         if self.enabled:
             self.gate(request_identity())
+
+    def _check_audience(self, req: RequestIdentity) -> None:
+        """The token must be addressed to THIS surface, not just the gateway.
+
+        The gateway-wide verifier has already checked signature, issuer and the
+        gateway audience; this narrows it per surface, so a token minted for
+        one team's surface is not accepted by another's on the same gateway.
+        """
+        raw = req.claims.get("aud")
+        held = {raw} if isinstance(raw, str) else set(raw or ())
+        if not held & set(self.audiences):
+            # The EXPECTED audience, never the token's: what to request from
+            # the IdP is actionable, echoing the token's claims is not.
+            raise AuthError(
+                f"you do not have access to surface '{self.surface}': the "
+                f"token's audience does not include "
+                f"{' or '.join(repr(a) for a in self.audiences)}"
+            )
 
     def _check_roles(self, req: RequestIdentity) -> None:
         """Every role in `require_roles` must be held. ALL, not any.
@@ -303,8 +326,6 @@ def request_identity(wanted: tuple[str, ...] = ()) -> RequestIdentity:
     """
     from fastmcp.server.dependencies import get_access_token, get_http_headers
 
-    from .auth import SHARED_CLIENT_ID
-
     lowered = {name.lower() for name in wanted}
     headers = (
         {k: v for k, v in get_http_headers(include=lowered).items() if k in lowered}
@@ -314,6 +335,15 @@ def request_identity(wanted: tuple[str, ...] = ()) -> RequestIdentity:
     token = get_access_token()
     if token is None:
         return RequestIdentity(shared=False, subject=None, headers=headers)
+    return identity_from_token(token, headers)
+
+
+def identity_from_token(token, headers: Mapping[str, str] | None = None) -> RequestIdentity:
+    """A verified AccessToken as a RequestIdentity. Shared by the live request
+    path and `health --deep --bearer-file`, so the probe-as-a-user reads a
+    caller exactly as a real call does."""
+    from .auth import SHARED_CLIENT_ID
+
     claims = dict(getattr(token, "claims", None) or {})
     subject = next(
         (str(claims[name]) for name in _SUBJECT_CLAIMS if claims.get(name)), None
@@ -323,7 +353,7 @@ def request_identity(wanted: tuple[str, ...] = ()) -> RequestIdentity:
         subject=subject,
         claims=claims,
         raw_token=token.token,
-        headers=headers,
+        headers=dict(headers or {}),
     )
 
 
@@ -504,7 +534,7 @@ def validate_identity(surface: str, spec, raw: dict | None) -> None:
             )
 
 
-_AUTHZ_KEYS = ("require_roles",)
+_AUTHZ_KEYS = ("require_roles", "audience")
 
 
 def validate_authz(surface: str, raw: dict | None) -> None:
@@ -527,6 +557,12 @@ def validate_authz(surface: str, raw: dict | None) -> None:
             f"'{surface}': unknown authz key(s) {unknown}; "
             f"allowed: {sorted(_AUTHZ_KEYS)}"
         )
+    audience = raw.get("audience")
+    if audience is not None and not audiences_of(audience):
+        raise UsageError(
+            f"'{surface}': authz audience must be a non-empty string or a "
+            f"non-empty array of them, got {audience!r}"
+        )
     roles = raw.get("require_roles")
     if roles is None:
         return
@@ -542,6 +578,32 @@ def validate_authz(surface: str, raw: dict | None) -> None:
         )
 
 
+def audiences_of(value) -> tuple[str, ...]:
+    """`audience = "x"` or `audience = ["x", "y"]`, normalised; () if malformed."""
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple)) and value and all(
+        isinstance(a, str) and a for a in value
+    ):
+        return tuple(value)
+    return ()
+
+
+def gates_on_caller(entry) -> bool:
+    """Whether an entry needs a VERIFIED user: an identity mode or any gate.
+
+    One predicate for boot and lint, so the two cannot disagree about which
+    surfaces a shared-only gateway must refuse.
+    """
+    mode = (entry.identity or {}).get("mode")
+    authz = entry.authz or {}
+    return (
+        mode not in (None, "", "none")
+        or bool(authz.get("require_roles"))
+        or bool(authz.get("audience"))
+    )
+
+
 def policy_from_entry(entry, spec) -> IdentityPolicy:
     """The inert policy for one registry entry. Validate first."""
     from .auth import roles_claim
@@ -551,12 +613,16 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
     if mode == "none":
         mode = ""
     gate = tuple((entry.authz or {}).get("require_roles") or ())
+    audiences = audiences_of((entry.authz or {}).get("audience"))
     # Read once, at attach: os.environ is not I/O, and an inert policy is what
     # lets health and lint describe a surface without a request in hand.
     claim = roles_claim()
     if not mode:
         return IdentityPolicy(
-            surface=entry.name, require_roles=gate, roles_claim=claim
+            surface=entry.name,
+            require_roles=gate,
+            roles_claim=claim,
+            audiences=audiences,
         )
     return IdentityPolicy(
         surface=entry.name,
@@ -569,6 +635,7 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
         path=raw.get("path"),
         require_roles=gate,
         roles_claim=claim,
+        audiences=audiences,
     )
 
 
@@ -584,13 +651,18 @@ def identity_report(policy: IdentityPolicy) -> dict:
         return {"mode": "none"}
     if not policy.mode:
         # An authz-only surface: gated, but forwarding nothing.
-        return {"mode": "none", "require_roles": list(policy.require_roles)}
+        report = {"mode": "none", "require_roles": list(policy.require_roles)}
+        if policy.audiences:
+            report["audience"] = list(policy.audiences)
+        return report
     # `probe_scope` is the machine-readable half of the warning above: an
     # operator reading `health --deep --json` sees what the green probe covers
     # without having to have read the docs.
     report = {"mode": policy.mode, "probe_scope": "deployment-credential"}
     if policy.require_roles:
         report["require_roles"] = list(policy.require_roles)
+    if policy.audiences:
+        report["audience"] = list(policy.audiences)
     if policy.mode == "lookup":
         try:
             report["map"] = secret_map(policy._map_path()).status()

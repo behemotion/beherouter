@@ -3,8 +3,8 @@
 The Kubernetes packaging of the gateway described in
 [`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md): **one Deployment, no state,
 no database.** The registry is a ConfigMap, every credential arrives as an
-environment variable expanded at attach time, and `/healthz` is the only
-unauthenticated path.
+environment variable expanded at attach time, and `/healthz` and `/metrics`
+(counters only) are the only unauthenticated paths.
 
 ## Install
 
@@ -134,4 +134,12 @@ helm lint charts/beherouter -f charts/beherouter/ci/basic.yaml
 helm template charts/beherouter -f charts/beherouter/ci/full.yaml | kubeconform -strict
 helm test beherouter            # after install: curls /healthz, asserts the payload
 kubectl exec deploy/beherouter -- beherouter health --deep --json   # exit 6 == bad credential
+# per-user surfaces: probe AS a user (the token is read from stdin, never argv)
+kubectl exec -i deploy/beherouter -- beherouter health --deep --surface plane \
+  --bearer-file - --json < user-token.txt
 ```
+
+`GET /metrics` (unauthenticated, like `/healthz`) exposes
+`beherouter_auth_rejections_total{reason}`, where `reason` is one of `expired`,
+`invalid`, `issuer`, `audience` or `scope`. The first incident of a per-user
+rollout is usually `expired`.

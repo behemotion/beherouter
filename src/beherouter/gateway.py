@@ -9,8 +9,11 @@ from fastmcp import FastMCP
 from .auth import (
     AUTH_MODE_VAR,
     OIDC_ROLES_CLAIM_VAR,
+    ObservedVerifier,
+    RejectionMiddleware,
     auth_mode,
     build_verifier,
+    metrics_text,
     roles_claim,
 )
 from .envexpand import expand
@@ -136,7 +139,8 @@ async def build_gateway_app(
 ):
     """Build the ASGI app mounting each surface's http_app() at /<tool>/mcp."""
     from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
+    from starlette.middleware import Middleware
+    from starlette.responses import JSONResponse, PlainTextResponse
     from starlette.routing import Mount, Route
 
     if not isinstance(registry, dict):
@@ -145,6 +149,8 @@ async def build_gateway_app(
     # A gateway that cannot verify a user cannot require one. Refused BEFORE
     # any attach: an entry-level mistake should fail on the configuration, not
     # after a backend has been connected.
+    from .identity import gates_on_caller
+
     gated = sorted(
         name
         for name, entry in registry.items()
@@ -152,14 +158,12 @@ async def build_gateway_app(
     )
     if auth_mode() == "shared":
         per_user = sorted(
-            name
-            for name, entry in registry.items()
-            if (entry.identity or {}).get("mode") not in (None, "", "none")
+            name for name, entry in registry.items() if gates_on_caller(entry)
         )
-        if per_user or gated:
+        if per_user:
             raise UsageError(
                 f"{AUTH_MODE_VAR} is 'shared' but surface(s) "
-                f"{sorted(set(per_user) | set(gated))} require a verified user; "
+                f"{per_user} require a verified user; "
                 f"set it to 'oidc' or 'both'"
             )
     # A role gate with nowhere to read roles from can only fail closed on every
@@ -171,7 +175,7 @@ async def build_gateway_app(
             f"in (e.g. 'realm_access.roles')"
         )
 
-    auth = build_verifier(strict=strict_auth)
+    auth = ObservedVerifier(build_verifier(strict=strict_auth))
     surfaces = await build_surfaces(registry, auth=auth)
 
     sub_apps = {name: s.http_app(path="/mcp") for name, s in surfaces.items()}
@@ -190,14 +194,31 @@ async def build_gateway_app(
         """
         return JSONResponse({"status": "ok", "surfaces": sorted(sub_apps)})
 
-    # /healthz first: a surface may not be named "healthz", but an explicit
-    # Route ahead of the Mounts makes that collision impossible rather than
-    # merely unlikely.
+    async def metrics(_request):
+        """Unauthenticated, like /healthz: counters only, labelled by reason,
+        never by caller or token. Behind the reference Caddy vhost it is not
+        reachable from outside at all (default-deny); on Kubernetes, restrict
+        it the way you restrict /healthz if that matters to you.
+        """
+        return PlainTextResponse(
+            metrics_text(), media_type="text/plain; version=0.0.4"
+        )
+
+    # /healthz and /metrics first: a surface may not be named either, but an
+    # explicit Route ahead of the Mounts makes that collision impossible rather
+    # than merely unlikely.
     routes = [
         Route("/healthz", healthz, methods=["GET"]),
+        Route("/metrics", metrics, methods=["GET"]),
         *[Mount(f"/{name}", app=app) for name, app in sub_apps.items()],
     ]
-    return Starlette(routes=routes, lifespan=_combined_lifespan(list(sub_apps.values())))
+    # Around every route, so each surface's verifier reports into the slot it
+    # opens and an expired token's 401 says so on the way out.
+    return Starlette(
+        routes=routes,
+        middleware=[Middleware(RejectionMiddleware)],
+        lifespan=_combined_lifespan(list(sub_apps.values())),
+    )
 
 
 def serve(
