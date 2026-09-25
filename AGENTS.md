@@ -34,9 +34,12 @@
 > surface and `/healthz` with it. Read `podman logs beherouter` after any
 > registry change.
 >
-> 622 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
-> per-user identity against a REAL `plane-mcp-server`: 14/14, two callers acting
-> as themselves in Plane. `beheaxi conformance "beherouter"` is 6/6; both backend kinds
+> 703 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
+> per-user identity against a REAL `plane-mcp-server`: 22/22 — two callers acting
+> as themselves in Plane by PAT, an IdP JWT reaching Plane as `Bearer` through
+> `contrib/plane-mcp-bearer`, the stdio `plane` plugin attaching on its default
+> `cmd` inside the published image, and `health --deep --bearer-file` proving a
+> user's identity end to end. `beheaxi conformance "beherouter"` is 6/6; both backend kinds
 > attach for real, and **`cli` backends now execute** (they were listable but
 > not callable before 2026-08-04).
 > Design background: **`docs/DESIGN.md`**; the plugin seam:
@@ -229,11 +232,16 @@ whole reason there are two plugins** (measured against plane-mcp-server 0.3.2,
 | Mount | Plugin | What it accepts | Verdict |
 |---|---|---|---|
 | `/http/api-key/mcp` | `plane-http-apikey` | a per-request **Plane PAT** + `x-workspace-slug` | **works today**: `pat-alice` → Plane resolves alice |
-| `/http/mcp` | `plane-http` | only a token **its own OAuth proxy minted** (a FastMCP JWT with a `jti` in its store) | a forwarded IdP token is **401'd before Plane is consulted** — needs a backend with its own JWT auth |
+| `/http/mcp` | — | only a token **its own OAuth proxy minted** (a FastMCP JWT with a `jti` in its store) | a forwarded IdP token is **401'd before Plane is consulted**; `plane-http` now **refuses this path** at lint |
+| `/bearer/mcp` on [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md) | `plane-http` | a PAT-shaped token → `X-Api-Key`; **anything else → Plane as `Authorization: Bearer`** | **the IdP-token path** (verified in e2e); Plane itself must verify the token. Pinned to plane-mcp-server 0.3.2 exactly — it relies on upstream's private `auth_method` routing |
 
 So per-user Plane against the published server is the PAT path (mode `client`,
-each caller's own PAT, nothing stored by the gateway); the bearer path is for a
-backend that accepts a forwarded token.
+each caller's own PAT, nothing stored by the gateway); the bearer path needs
+`contrib/plane-mcp-bearer` in front of it. ⚠️ `plane-http` has **no default
+`base_url`** since 2026-09-24: the old default pointed at upstream's OAuth proxy,
+and its docstring claimed that mount verified the bearer against Plane — a
+production deployment followed both and got a surface that attached green and
+401'd every user call.
 
 **`office` is a pass-through, and that is deliberate.** office-mcp already does its
 own pinned-few + lexical-search split internally (`discover`/`invoke` over a 34-tool
@@ -251,6 +259,15 @@ the Django underscore-in-`Host` rule is a config validator; the five Community
 Edition 404s (`page`, `work_log`, `milestone`, `workitem_type`, `initiative`) and
 the uncallable `get_pql_reference` are tests. Read that module's docstring before
 changing a pin.
+
+⚠️ **A pinned tool can half-work.** On CE, `workitem` `list` without
+`project_id` 404s and any `pql` 400s (measured on CE v1.4.1 by a production
+deployment: twelve 404s in one conversation, reported to the user as
+"temporary"). All three Plane plugins now carry `edition = "community"` (the
+default): those calls are **refused at the gateway** with a non-transient,
+actionable message, and `workitem`'s description says so up front.
+`edition = "commercial"` turns both off. The mechanism is generic —
+`McpBacking.guard` / `.notes` — see `docs/PLUGINS.md`.
 
 ⚠️ **The reusable corollary, still manual:** a backend's catalogue advertises the
 **commercial** surface, so "the tool exists" says nothing about whether *this*
@@ -388,6 +405,25 @@ Helm chart for exactly that — [`charts/beherouter`](charts/beherouter), with t
 modes translated (`maxUnavailable: 0` keeps the previous revision serving). The service-VM
 deployment above stays ansible-driven from the homelab repo; the chart is the Kubernetes path.
 See `docs/DEPLOYMENT.md` § Deploying on Kubernetes and the chart README.
+
+**The published image** runs as **UID 1000** and ships **`plane-mcp-server`
+0.3.2** at `/opt/plane-mcp` (the `plane` plugin's default `cmd`), since
+2026-09-24. A stdio command missing from the image is refused at attach **by
+name**, and `registry-lint` warns about it. ⚠️ The homelab deployment builds from
+its **own** vendored Containerfile, so neither change reaches it until someone
+ports it there, and a bind-mounted file the gateway reads must then be readable
+by UID 1000.
+
+**Operator signals added 2026-09-24** (from a production deployment's asks):
+`GET /metrics` (unauthenticated, counters only) exposes
+`beherouter_auth_rejections_total{reason}`. An expired JWT logs at WARNING and
+its 401 carries RFC 6750 `error_description="token expired"`.
+`beherouter health --deep --bearer-file -` runs each probe **as a user** and
+reports the identity the backend returned. `[surface.authz] audience` narrows a
+surface to tokens addressed to it, and `BEHEROUTER_OIDC_AUDIENCE` may be a list.
+The chart gained `caBundle`, `plugins.install` and `extraInitContainers` /
+`extraVolumes` / `extraVolumeMounts`. Details: `docs/IDENTITY.md` §6 and §8,
+`docs/DEPLOYMENT.md`.
 
 **Releases are tag-driven and published:** pushing a `vX.Y.Z` tag runs
 `.github/workflows/release.yml` — full test suite on the tagged revision, a

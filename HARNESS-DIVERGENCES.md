@@ -230,14 +230,23 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
    consulted; `/http/api-key` takes a per-request PAT and works today. So
    per-user Plane against the published server means **a PAT per caller**
    (mode `client`, nothing stored by the gateway), not an IdP token. Mode
-   `bearer` against Plane needs a backend that accepts a forwarded token.
-3. **No end-to-end verification against a real IdP has been performed.** Every
-   rule is held by a test with a locally-minted key pair; no JWT from a real
-   Keycloak or Entra realm has traversed the deployed gateway.
+   `bearer` against Plane needs a backend that accepts a forwarded token:
+   since 2026-09-24 that is `contrib/plane-mcp-bearer` (proven in e2e), which
+   is pinned to exactly plane-mcp-server 0.3.2 because it relies on upstream's
+   private `auth_method` routing. An upstream bearer-forwarding mount would
+   retire it; none has been requested yet.
+3. **No end-to-end verification against a real IdP has been performed here.**
+   Every rule is held by a test with a locally-minted key pair. A production
+   deployment outside this harness reports Keycloak JWTs verified by JWKS in
+   `auth.mode: both` (2026-09-24); no such JWT has traversed THIS deployed
+   gateway.
 4. **The catalogue and the probe stay deployment-scoped by design.** A green
    `health --deep` proves the deployment credential and says nothing about any
    user's. The record now says so in its own output (`probe_scope`), which makes
-   the limitation legible rather than removing it.
+   the limitation legible rather than removing it. Since 2026-09-24,
+   `health --deep --bearer-file` runs the probe as a supplied user and reports
+   the identity the backend returned. That proves the per-user path on demand;
+   it does not make the scheduled probe per-user.
 5. **Modes `client` and `lookup` have no external consumer asking for them.** The
    requesting team wants `bearer` only. They were chosen deliberately and are
    tested; they are nonetheless unexercised by any stated need.
