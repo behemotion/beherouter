@@ -62,6 +62,7 @@ from .plane import (
     PINNED,
     PROBE,
     PROBE_ARGS,
+    SEARCH_ALIASES,
     edition_backing_options,
     validate_edition,
 )
@@ -82,6 +83,7 @@ SPEC = PluginSpec(
     pinned=PINNED,
     probe=PROBE,
     probe_args=PROBE_ARGS,
+    search_aliases=SEARCH_ALIASES,
     config=(
         ConfigField(
             name="base_url",

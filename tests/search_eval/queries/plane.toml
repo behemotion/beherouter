@@ -1,0 +1,134 @@
+# Agent-style queries against plane-mcp-server 0.3.2. `expect` is the tool a
+# competent human would pick after reading the catalogue. Fix an expectation
+# only if the catalogue proves it wrong -- never to make a gate pass.
+
+[[query]]
+q = "add a comment to an issue"
+expect = "workitem_comment"
+[[query]]
+q = "log time spent on a task"
+expect = "work_log"
+[[query]]
+q = "list issues"
+expect = "workitem"
+[[query]]
+q = "sprint"
+expect = "cycle"
+[[query]]
+q = "attach file to work item"
+expect = "workitem_attachment"
+[[query]]
+q = "who is on the project team"
+expect = "member"
+[[query]]
+q = "change status of a ticket to done"
+expect = "state"
+[[query]]
+q = "blocked by dependency"
+expect = "workitem_relation"
+[[query]]
+q = "upload attachment"
+expect = "workitem_attachment"
+[[query]]
+q = "estimate points"
+expect = "project_estimate"
+[[query]]
+q = "triage"
+expect = "intake"
+[[query]]
+q = "history of changes"
+expect = "workitem_activity"
+[[query]]
+q = "workitems"
+expect = "workitem"
+[[query]]
+q = "comments"
+expect = "workitem_comment"
+[[query]]
+q = "plane query language"
+expect = "get_pql_reference"
+[[query]]
+q = "epic"
+expect = "workitem"
+[[query]]
+q = "create a bug"
+expect = "workitem"
+[[query]]
+q = "current sprint"
+expect = "cycle"
+[[query]]
+q = "workflow states"
+expect = "state"
+[[query]]
+q = "labels"
+expect = "label"
+[[query]]
+q = "tag an issue with a label"
+expect = "label"
+[[query]]
+q = "feature grouping"
+expect = "module"
+[[query]]
+q = "modules"
+expect = "module"
+[[query]]
+q = "external link on a work item"
+expect = "workitem_link"
+[[query]]
+q = "create a project"
+expect = "project"
+[[query]]
+q = "list projects"
+expect = "project"
+[[query]]
+q = "custom fields for issues"
+expect = "workitem_property"
+[[query]]
+q = "issue type"
+expect = "workitem_type"
+[[query]]
+q = "wiki page"
+expect = "page"
+[[query]]
+q = "release version"
+expect = "release"
+[[query]]
+q = "milestone"
+expect = "milestone"
+[[query]]
+q = "customer requests"
+expect = "customer_request"
+[[query]]
+q = "initiatives"
+expect = "initiative"
+[[query]]
+q = "timesheet"
+expect = "work_log"
+[[query]]
+q = "current user"
+expect = "member"
+[[query]]
+q = "templates"
+expect = "template"
+[[query]]
+q = "workspace feature flags"
+expect = "workspace"
+[[query]]
+q = "inbox"
+expect = "intake"
+[[query]]
+q = "work item history"
+expect = "workitem_activity"
+[[query]]
+q = "coment on ticket"
+expect = "workitem_comment"
+
+# Negatives: nothing on this surface does these. At most one weak hit allowed.
+[[negative]]
+q = "send an email"
+[[negative]]
+q = "deploy a kubernetes cluster"
+[[negative]]
+q = "weather forecast"
+[[negative]]
+q = "convert pdf to docx"
