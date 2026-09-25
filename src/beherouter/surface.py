@@ -15,7 +15,10 @@ from typing import Any
 from fastmcp import FastMCP
 
 from .catalogue import Catalogue
+from .errors import NotFound
+from .indexing import search_hits
 from .models import Backend, ToolDescriptor
+from .search import DEFAULT_LIMIT, suggest
 
 logger = logging.getLogger(__name__)
 
@@ -332,32 +335,30 @@ def build_surface(
     # agent something the array contradicts.
     published_names = {d.name for d in backend.pinned}
 
+    def unknown_tool(name: str) -> NotFound:
+        close = suggest(name, list(catalogue.by_name), catalogue.index)
+        hint = (
+            f" Did you mean: {', '.join(close)}?"
+            if close
+            else " Use search_tools to find one."
+        )
+        return NotFound(f"unknown tool '{name}' on surface '{backend.name}'.{hint}")
+
     for d in backend.pinned:
         register_pinned(mcp, d, backend, dispatch)
 
     @mcp.tool(
         description=(
-            "Search this surface's tools. Returns each match with its description, "
-            "so no follow-up describe_tool call is needed to know what a tool does."
+            "Search this surface's tools. Returns name + one-line brief; call "
+            "describe_tool for arguments before run_tool."
         )
     )
-    async def search_tools(query: str, limit: int = 10) -> list[dict]:
+    async def search_tools(query: str, limit: int = DEFAULT_LIMIT) -> list[dict]:
         guard()
         await catalogue.ensure_fresh()
-        by_name = catalogue.by_name
-        hits = []
-        for name in catalogue.index.search(query, limit=limit):
-            d = by_name[name]
-            hits.append(
-                {
-                    "name": d.name,
-                    "summary": d.summary,
-                    "pinned": d.name in published_names,
-                    "mutating": d.mutating,
-                    "annotations": d.annotations,
-                }
-            )
-        return hits
+        return search_hits(
+            catalogue.index, catalogue.by_name, query, limit, published_names
+        )
 
     @mcp.tool(description="Return the argument schema + summary for a tool name.")
     async def describe_tool(name: str) -> dict:
@@ -365,17 +366,20 @@ def build_surface(
         await catalogue.ensure_fresh()
         d = catalogue.by_name.get(name)
         if d is None:
-            return {"error": f"unknown tool '{name}'"}
-        return {
+            raise unknown_tool(name)
+        out = {
             "name": d.name,
             "summary": d.summary,
             "mutating": d.mutating,
             "pinned": d.name in published_names,
-            "callable": True,
             "args": d.schema,
-            "annotations": d.annotations,
-            "returns": wrapped_output_schema(d),
         }
+        if d.annotations:
+            out["annotations"] = d.annotations
+        returns = wrapped_output_schema(d)
+        if returns:
+            out["returns"] = returns
+        return out
 
     @mcp.tool(description="Invoke any tool on this surface by name with an args object.")
     async def run_tool(name: str, args: dict | None = None) -> dict:
@@ -383,7 +387,7 @@ def build_surface(
         await catalogue.ensure_fresh()
         d = catalogue.by_name.get(name)
         if d is None:
-            return {"error": f"unknown tool '{name}'"}
+            raise unknown_tool(name)
         return await dispatch(d.verb, args or {})
 
     @mcp.tool(
