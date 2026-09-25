@@ -1,7 +1,9 @@
 """Assemble all surfaces from the registry and serve them under /<tool>/mcp behind auth."""
 
+import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -17,7 +19,7 @@ from .auth import (
     roles_claim,
 )
 from .envexpand import expand
-from .errors import UsageError
+from .errors import Unavailable, UsageError
 from .registry import RegistryEntry, load_registry, validate_entry
 from .surface import build_surface
 
@@ -25,6 +27,45 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 47100
 DEFAULT_HOST = "0.0.0.0"
+
+ATTACH_TIMEOUT_VAR = "BEHEROUTER_ATTACH_TIMEOUT_S"
+DEFAULT_ATTACH_TIMEOUT_S = 30.0
+
+
+def attach_timeout_s() -> float:
+    """How long one surface's attach may take before it counts as failed.
+
+    Bounded because an MCP attach does network I/O (`list_tools`) and a hung
+    backend would otherwise hold startup forever. A bad value is refused at
+    boot, like every other configuration mistake.
+    """
+    raw = os.environ.get(ATTACH_TIMEOUT_VAR, "")
+    if not raw:
+        return DEFAULT_ATTACH_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        raise UsageError(
+            f"{ATTACH_TIMEOUT_VAR} must be a positive number of seconds, got {raw!r}"
+        )
+    return value
+
+
+def preflight(registry: dict[str, RegistryEntry]) -> None:
+    """Refuse to boot on what `registry-lint` can see. No I/O.
+
+    These are operator mistakes with a local fix — an unknown plugin, a bad
+    config type, an unset `${VAR}` — and a gateway that booted around them
+    would hide them behind a degraded surface. Everything else a surface can
+    fail on is found only by attaching, and is isolated to that surface.
+    """
+    attach_timeout_s()
+    for name, entry in registry.items():
+        validate_entry(entry)
+        if entry.env:
+            expand(name, entry.env)
 
 
 async def load_backend(entry: RegistryEntry):
@@ -68,50 +109,71 @@ async def load_backend(entry: RegistryEntry):
     return backend
 
 
-async def build_surfaces(
-    registry: dict[str, RegistryEntry], auth: object | None = None
-) -> dict[str, FastMCP]:
-    """One FastMCP surface per attached backend.
+async def _attach_one(name: str, entry: RegistryEntry, auth: object | None) -> FastMCP:
+    """Attach one surface: backend, policy, surface, cost instructions.
 
     `instructions` is set HERE rather than in build_surface because computing
     the cost needs FastMCP.list_tools(), which is async, and build_surface is
     not. A host reads instructions at `initialize`, so it learns what the
     surface costs without spending a tool call.
 
-    Computing the cost is NOT allowed to fail the attach. `naive_tokens`
-    re-registers every descriptor a backend has -- pinned or not -- through the
-    same signature-synthesis path `context_cost` otherwise only exercises
-    lazily, on an explicit tool call where a failure is an isolated error. Here
-    it runs unconditionally for every attached backend, so a schema edge case
-    in even one unpinned tool would otherwise turn into a failed attach --
-    and AGENTS.md is explicit that an attach failure crash-loops the whole
-    gateway, taking every other surface and /healthz down with it. So one
-    surface's costing failure degrades to a plain, cost-free `instructions`
-    (logged), rather than raising -- the same "report, don't take the whole
-    process down" instinct as `health.check_entry` and `gateway.healthz`.
+    Computing the cost is NOT allowed to fail the attach: `naive_tokens`
+    re-registers every descriptor a backend has through the signature-synthesis
+    path, so a schema edge case in one unpinned tool would otherwise fail the
+    whole surface. It degrades to a plain, cost-free `instructions` (logged).
     """
     from .costing import instructions_line, surface_cost
     from .identity import policy_from_entry
     from .plugins import PLUGINS
 
+    timeout = attach_timeout_s()
+    try:
+        backend = await asyncio.wait_for(load_backend(entry), timeout)
+    except TimeoutError as e:
+        raise Unavailable(f"'{name}': attach timed out after {timeout:g}s") from e
+    plugin = PLUGINS.get(entry.plugin)
+    policy = policy_from_entry(entry, plugin.spec) if plugin else None
+    surface = build_surface(backend, auth=auth, policy=policy)
+    try:
+        surface.instructions = instructions_line(await surface_cost(surface, backend), name)
+    except Exception:
+        logger.warning(
+            "context-cost computation failed for surface %r; attaching "
+            "without cost instructions",
+            name,
+            exc_info=True,
+        )
+    return surface
+
+
+async def build_surfaces(
+    registry: dict[str, RegistryEntry],
+    auth: object | None = None,
+    *,
+    failed: dict[str, str] | None = None,
+) -> dict[str, FastMCP]:
+    """One FastMCP surface per attached backend.
+
+    With `failed=None` (the CLI, `health`, most tests) the first attach
+    failure raises, as it always has. The gateway passes a dict: a surface
+    that fails to attach is then recorded there as `{name: "Type: message"}`
+    and skipped, so one dead backend no longer takes every other surface and
+    /healthz down with it. `preflight` runs first either way, so a registry
+    mistake still refuses boot.
+    """
+    preflight(registry)
     surfaces: dict[str, FastMCP] = {}
     for name, entry in registry.items():
-        backend = await load_backend(entry)
-        plugin = PLUGINS.get(entry.plugin)
-        policy = policy_from_entry(entry, plugin.spec) if plugin else None
-        surface = build_surface(backend, auth=auth, policy=policy)
+        if failed is None:
+            surfaces[name] = await _attach_one(name, entry, auth)
+            continue
         try:
-            surface.instructions = instructions_line(
-                await surface_cost(surface, backend), name
+            surfaces[name] = await _attach_one(name, entry, auth)
+        except Exception as e:
+            logger.exception(
+                "surface %r failed to attach; serving it as unavailable", name
             )
-        except Exception:
-            logger.warning(
-                "context-cost computation failed for surface %r; attaching "
-                "without cost instructions",
-                name,
-                exc_info=True,
-            )
-        surfaces[name] = surface
+            failed[name] = f"{type(e).__name__}: {e}"
     return surfaces
 
 
