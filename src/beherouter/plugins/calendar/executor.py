@@ -12,7 +12,7 @@ from collections import OrderedDict
 from ...errors import AxiError, Unavailable, UsageError
 from .tools import SCHEMAS
 
-# beheaxi manifest arg types -> Python types, mirroring surface._PY_TYPES. A
+# beheaxi manifest arg types -> Python types, mirroring args.PY_TYPES. A
 # schema type absent from this map (or a property with no "type" at all) means
 # "don't check" rather than a guess.
 _JSON_TYPES: dict[str, type] = {
