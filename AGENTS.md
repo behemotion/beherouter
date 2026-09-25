@@ -433,7 +433,10 @@ leading `v`; that tag is also the chart's default image) and the GitHub
 Release, and finally the **chart** as an OCI artifact to
 `ghcr.io/behemotion/charts/beherouter` (a published chart version is never
 overwritten — the job refuses a `Chart.yaml` `version` that already exists, so
-any template or values change bumps it). The workflow must already be on main
+any template or values change bumps it). **A release also writes its
+`CHANGELOG.md` section**: the workflow refuses to publish without a `##
+[X.Y.Z]` heading and uses that section as the release body (the generated
+contributor appendix is appended below it). The workflow must already be on main
 when the tag is cut — it runs from the tagged commit. The chart defaults to the
 published image, so a client's only required value is `secret.gatewayToken`,
 and a Kubernetes user installs with
