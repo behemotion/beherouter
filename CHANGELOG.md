@@ -8,6 +8,45 @@ released is the body of its GitHub Release (`release.yml` extracts it, and the
 auto-generated contributor appendix is appended below it). Releases before
 0.2.0 were not tagged; their history is the git log.
 
+## [0.2.4] - 2026-09-25
+
+### Changed
+
+- **`search_tools` returns one-line briefs.** Each hit is `{name, brief,
+  mutating?, pinned?}` — the first sentence of the description, capped at 160
+  characters — instead of the full description plus annotations. On Plane a
+  search fell from ≈4 300 tokens to ≈130. The full description and the
+  argument schema are `describe_tool`'s job. Default `limit` is 5.
+- **Precision.** Queries are normalised (stopwords, plurals, camelCase), tool
+  names and first sentences weigh more than the rest, prefix and typo matches
+  score instead of only back-filling, and weak hits are cut — by score, and by
+  how much of the query they match. Scoring is BM25Plus rather than BM25Okapi,
+  whose IDF went to zero for words most tools share. MCP tools are now indexed
+  by their real argument names, enums and descriptions — previously their JSON
+  Schema keywords were indexed instead.
+- **`describe_tool`** no longer sends `callable` or empty `annotations`/`returns`.
+- The `beherouter search` verb emits the same hits as `search_tools`, and takes
+  `--limit`.
+
+### Added
+
+- **`search_aliases`**: per-plugin search vocabulary (Plane ships words such as
+  `sprint` → `cycle`, `ticket` → `workitem`), extendable per surface under
+  `[surface.search_aliases]`. `registry-lint` and `health --deep` warn on words
+  for tools a surface does not serve.
+- **Search quality gates** against Plane's recorded catalogue
+  (`tests/test_search_eval.py`, `scripts/record_catalogue.py`).
+
+### Fixed
+
+- **`run_tool` argument handling matches pinned tools**: `None` values and
+  schema-default echoes are dropped (the `archive=True`-on-`create` failure
+  class), both argument spellings are accepted, and a missing required or
+  undeclared argument is refused with an actionable `UsageError`.
+- An unknown tool name in `describe_tool` / `run_tool` is a `NotFound` tool
+  error with "did you mean" suggestions, instead of a successful
+  `{"error": ...}` result.
+
 ## [0.2.3] - 2026-09-25
 
 ### Added

@@ -314,6 +314,27 @@ async def main() -> int:
         json.dumps(up),
     )
 
+    # --- 18. search: vocabulary and argument checks against the REAL server
+    """The stdio `plane` plugin's vocabulary reaches a real client, and a
+    misspelled argument is refused at the gateway with a suggestion instead of
+    reaching plane-mcp-server."""
+    res = await call(client("plane-stdio", token=SHARED_TOKEN), "search_tools", {"query": "sprint"})
+    names = [h["name"] for h in res.structured_content["result"]]
+    check(names[:1] == ["cycle"], "search_tools('sprint') finds Plane's `cycle`", str(names))
+    try:
+        await call(
+            client("plane-stdio", token=SHARED_TOKEN),
+            "run_tool",
+            {"name": "member", "args": {"acton": "me"}},
+        )
+        check(False, "a misspelled run_tool arg is refused with a suggestion", "it was forwarded")
+    except Exception as e:
+        check(
+            "did you mean 'action'" in str(e),
+            "a misspelled run_tool arg is refused with a suggestion",
+            str(e)[:160],
+        )
+
     failed = [name for ok, name, _ in results if not ok]
     print("\n" + "=" * 72)
     print(f"{len(results) - len(failed)}/{len(results)} checks passed")

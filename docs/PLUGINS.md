@@ -95,6 +95,7 @@ class PluginSpec:
     config: tuple[ConfigField, ...] = ()
     env: tuple[EnvVar, ...] = ()
     catalogue_ttl_ms: int = 300_000    # 0 disables refresh
+    search_aliases: Mapping[str, tuple[str, ...]] = {}  # tool -> extra search words
 ```
 
 | Field | Meaning |
@@ -107,6 +108,7 @@ class PluginSpec:
 | `config` | The keys allowed in `[surface.config]` |
 | `env` | Credentials, by **logical** name |
 | `catalogue_ttl_ms` | How long the searchable catalogue stays fresh |
+| `search_aliases` | Extra search words per tool: what agents type that the backend's descriptions lack. See § Search vocabulary |
 
 ## `pinned` and `probe` are overrides, not required knowledge
 
@@ -226,6 +228,57 @@ gateway.
 
 The freeze is the design's whole point, not an incidental detail: a host's prompt cache is
 never invalidated by a catalogue refresh.
+
+## Search vocabulary
+
+`search_tools` is lexical (no embeddings), so it can only find a tool by words
+the index contains. A backend names things its own way: Plane says `cycle`,
+agents say "sprint", and no amount of scoring bridges that. `search_aliases`
+does:
+
+```python
+SEARCH_ALIASES = {
+    "cycle": ("sprint", "iteration"),
+    "workitem": ("issue", "ticket", "task", "epic", "bug", "story"),
+}
+SPEC = PluginSpec(..., search_aliases=SEARCH_ALIASES)
+```
+
+**The rule for adding a word:** it is a word an agent would type that the
+tool's own description does *not* already contain. A word already in the
+description gains nothing, and a word that belongs to another tool steals that
+tool's queries. Adding "issue" to Plane's `workitem_comment` fixed "add a comment
+to an issue" and broke "list issues", because "issue" already means `workitem`.
+Aliases weigh ×2 in the index, the same as the description's first sentence.
+
+**A registry entry may add words, never remove them:**
+
+```toml
+[plane.search_aliases]
+cycle = ["sprint", "PI"]   # UNION with the plugin's words, never replaces
+```
+
+Additive for the same reason `pinned`/`probe` are overrides of a tested
+default: an operator adding one word cannot lose the tested vocabulary.
+`registry-lint` warns about a word for a tool the plugin neither pins nor has
+vocabulary for (lint does not attach, so it cannot see the full catalogue), and
+`health --deep` reports `aliases_unknown` for a word naming a tool the backend
+does not serve. Both are warnings, never failures.
+
+**Measure, don't guess.** A plugin with a vocabulary should have an evaluation
+set: a recorded catalogue in `tests/search_eval/catalogues/` and queries in
+`tests/search_eval/queries/`, gated by `tests/test_search_eval.py`. After a
+backend upgrade, re-record the snapshot and re-run the gates:
+
+```bash
+uv run python scripts/record_catalogue.py plane-mcp-server==0.3.2 \
+  tests/search_eval/catalogues/plane-0.3.2.json \
+  PLANE_API_KEY=x PLANE_WORKSPACE_SLUG=w PLANE_BASE_URL=http://127.0.0.1:9
+uv run pytest tests/test_search_eval.py -v
+```
+
+The recording runs the server over stdio with dummy credentials, which is
+enough to *list* tools and never enough to call one.
 
 ## Testing a plugin
 
