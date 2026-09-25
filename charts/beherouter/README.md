@@ -119,10 +119,12 @@ to migrate.
 - **Entry and secret ship together, still.** An unset `${VAR}` still kills the
   pod at boot (by design); here that surfaces as a failed hook or a stuck
   rollout, not a silent broken surface.
-- **A stdio backend needs its binary in the image.** The repo root Containerfile
-  builds the gateway only — the `plane` plugin expects
-  `/opt/plane-mcp/bin/plane-mcp-server` inside the image (the deployed VM image
-  installs it). Extend the image before attaching stdio surfaces.
+- **A stdio backend needs its binary in the image.** The published image ships
+  `plane-mcp-server` 0.3.2 at `/opt/plane-mcp/bin/plane-mcp-server`, so the
+  in-tree `plane` plugin attaches on its defaults. Any other stdio server must
+  be in the image too: extend it, or override the plugin's `cmd`. A missing
+  binary is refused at attach **by name**, and `registry-lint` warns about it
+  in the hook Job.
 - **A same-cluster `http` backend is reached by its Service DNS name**, which
   must be underscore-free for the same Django reason as on podman networks
   (Service names are RFC 1123 anyway).

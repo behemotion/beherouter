@@ -222,6 +222,40 @@ def test_lint_does_not_warn_about_a_distinct_credential_name(
     from beherouter.cli.app import app
 
     assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    warnings = json.loads(capsys.readouterr().out)["warnings"]
+    assert not [w for w in warnings if "GATEWAY BEARER" in w]
+
+
+def test_lint_warns_about_a_stdio_command_missing_here(tmp_path, monkeypatch, capsys):
+    """A WARNING, not a refusal: lint also runs on workstations that lack the
+    image's binaries. In the serving image it names the attach failure ahead."""
+    monkeypatch.setenv("BEHEROUTER_PLANE_API_KEY", "pat")
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        '  [plane.config]\n  workspace_slug = "w"\n'
+        '  cmd = "/opt/nowhere/plane-mcp-server stdio"\n'
+        '  [plane.env]\n  api_key = "${BEHEROUTER_PLANE_API_KEY}"\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    assert any("/opt/nowhere/plane-mcp-server" in w and "`cmd`" in w for w in out["warnings"])
+
+
+def test_lint_is_quiet_about_a_stdio_command_that_exists(tmp_path, monkeypatch, capsys):
+    import sys
+
+    monkeypatch.setenv("BEHEROUTER_PLANE_API_KEY", "pat")
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        f'  [plane.config]\n  workspace_slug = "w"\n  cmd = "{sys.executable} -V"\n'
+        '  [plane.env]\n  api_key = "${BEHEROUTER_PLANE_API_KEY}"\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["warnings"] == []
 
 

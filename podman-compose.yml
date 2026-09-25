@@ -12,4 +12,7 @@ services:
       - BEHEROUTER_REGISTRY=/data/registry.toml
     volumes:
       - ./data:/data
+    # The image runs as UID 1000. Under rootless podman, map the host user onto
+    # it, so ./data (owned by you) stays writable for `beherouter attach`.
+    userns_mode: "keep-id:uid=1000,gid=1000"
     restart: unless-stopped

@@ -38,6 +38,28 @@ def _load(entry: RegistryEntry):
     return asyncio.run(load_backend(entry))
 
 
+def _missing_stdio_command(entry: RegistryEntry) -> str | None:
+    """The executable a stdio entry's `cmd` names, when it is not on PATH here.
+
+    Read from the plugin's `cmd` config key — the convention every stdio
+    plugin here follows. No `cmd` key, or not stdio, means nothing to check.
+    """
+    import shlex
+    import shutil
+
+    from ..plugins import get
+    from ..plugins.validate import validate_config
+
+    plugin = get(entry.plugin)
+    if plugin.spec.backing != "stdio":
+        return None
+    cmd = validate_config(entry.name, plugin.spec, entry.config).get("cmd")
+    argv = shlex.split(cmd) if isinstance(cmd, str) else []
+    if argv and shutil.which(argv[0]) is None:
+        return argv[0]
+    return None
+
+
 @app.command(pinned=True, mutating=False)
 def surfaces() -> None:
     """List attached surfaces and the plugin behind each."""
@@ -156,6 +178,18 @@ def registry_lint(path: str = "") -> None:
             )
             if w
         )
+        stdio_missing = _missing_stdio_command(entry)
+        if stdio_missing:
+            # A WARNING, because lint also runs on workstations that lack the
+            # image's binaries. In the image that will serve (the chart's hook
+            # Job) it is exactly the attach failure that would crash-loop the
+            # gateway, which refuses it by name at boot.
+            warnings.append(
+                f"'{entry.name}': stdio command '{stdio_missing}' is not "
+                f"installed here. If this is the image that will serve, the "
+                f"attach will fail; use an image that ships it or override "
+                f"`cmd` in [{entry.name}.config]."
+            )
         if entry.env:
             # Checked against the LOCAL environment, so this catches the
             # entry-before-secret ordering mistake only where the variables
