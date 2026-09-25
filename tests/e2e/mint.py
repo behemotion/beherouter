@@ -33,26 +33,32 @@ def main() -> None:
     jwk = JsonWebKey.import_key(public, {"kty": "RSA"}).as_dict()
     jwk.update({"kid": KID, "use": "sig", "alg": "RS256"})
 
+    def mint(name, roles, audience=AUDIENCE, expires=3600):
+        return kp.create_token(
+            subject=name,
+            issuer=ISSUER,
+            audience=audience,
+            kid=KID,
+            expires_in_seconds=expires,
+            additional_claims={
+                "email": f"{name}@bank.invalid",
+                "preferred_username": name,
+                "realm_access": {"roles": roles},
+            },
+        )
+
     material = {
         "issuer": ISSUER,
         "audience": AUDIENCE,
         "jwks": {"keys": [jwk]},
-        "tokens": {
-            name: kp.create_token(
-                subject=name,
-                issuer=ISSUER,
-                audience=AUDIENCE,
-                kid=KID,
-                expires_in_seconds=3600,
-                additional_claims={
-                    "email": f"{name}@bank.invalid",
-                    "preferred_username": name,
-                    "realm_access": {"roles": roles},
-                },
-            )
-            for name, roles in USERS.items()
-        },
+        "tokens": {name: mint(name, roles) for name, roles in USERS.items()},
     }
+    # alice once more: addressed to the `plane-bearer` surface too (its
+    # [authz] audience), and once already expired (the RFC 6750 401).
+    material["tokens"]["alice_plane"] = mint(
+        "alice", USERS["alice"], audience=[AUDIENCE, "plane-mcp"]
+    )
+    material["tokens"]["alice_expired"] = mint("alice", USERS["alice"], expires=-60)
     out = pathlib.Path(__file__).parent / "material.json"
     out.write_text(json.dumps(material, indent=2))
     print(f"wrote {out} ({', '.join(USERS)}; tokens valid 1h)")

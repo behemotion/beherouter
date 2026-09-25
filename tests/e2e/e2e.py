@@ -22,6 +22,7 @@ TOKENS = MATERIAL["tokens"]
 GATEWAY = "http://localhost:47100"
 FIXTURES = "http://localhost:18000"
 SHARED_TOKEN = "e2e-shared-gateway-token"
+SURFACES = ["echo", "plane", "plane-bearer", "plane-stdio"]
 
 results: list[tuple[bool, str, str]] = []
 
@@ -50,8 +51,8 @@ async def main() -> int:
     # --- 1. the gateway is up, with both surfaces -------------------------
     health = httpx.get(f"{GATEWAY}/healthz", timeout=10).json()
     check(
-        health == {"status": "ok", "surfaces": ["echo", "plane"]},
-        "healthz reports both surfaces attached",
+        health == {"status": "ok", "surfaces": SURFACES},
+        "healthz reports every surface attached",
         json.dumps(health),
     )
 
@@ -171,9 +172,9 @@ async def main() -> int:
     # file exists to avoid — and it did exactly that on the first run.
     by_name = {s["name"]: s for s in deep.get("backends", [])}
     check(
-        len(by_name) == 2
+        len(by_name) == len(SURFACES)
         and all(s.get("attach") == "ok" and s.get("probe") == "ok" for s in by_name.values()),
-        "health --deep: both surfaces attach and probe with the deployment credential",
+        "health --deep: every surface attaches and probes with the deployment credential",
         json.dumps({n: {"attach": s.get("attach"), "probe": s.get("probe")} for n, s in by_name.items()}),
     )
     check(
@@ -212,6 +213,105 @@ async def main() -> int:
         shared_lint.returncode != 0 and "requires a verified user" in shared_out,
         "registry-lint refuses a per-user registry on a shared-mode gateway",
         shared_out.strip()[:200],
+    )
+
+    # --- 12. the published image runs its own `plane` stdio plugin ---------
+    """Bug 3: the plugin's default cmd, /opt/plane-mcp/bin/plane-mcp-server,
+    used to be absent from the published image. `plane-stdio` attaches on that
+    default and calls member/me through it (checked by health --deep above)."""
+    uid = subprocess.run(
+        ["podman", "exec", "beherouter", "id", "-u"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    check(uid == "1000", "the image runs as UID 1000, not root", f"uid={uid}")
+    check(
+        by_name.get("plane-stdio", {}).get("probe") == "ok",
+        "the `plane` stdio plugin attaches on its default cmd inside the image",
+        json.dumps(by_name.get("plane-stdio")),
+    )
+
+    # --- 13. contrib/plane-mcp-bearer: an IdP token reaches Plane as Bearer --
+    """Bug 1: neither upstream mount can carry a forwarded IdP token. Through
+    the wrapper, alice's own JWT reaches the Plane API as `Authorization:
+    Bearer`, and the deployment PAT went as x-api-key."""
+    httpx.post(f"{FIXTURES}/_calls/reset", timeout=10)
+    res = await call(
+        client("plane-bearer", jwt=TOKENS["alice_plane"]),
+        "run_tool",
+        {"name": "member", "args": {"action": "me"}},
+    )
+    me = res.structured_content["result"]
+    calls = httpx.get(f"{FIXTURES}/_calls", timeout=10).json()["calls"]
+    bearer_calls = [c for c in calls if c["scheme"] == "bearer"]
+    check(
+        me.get("id") == "alice" and bearer_calls
+        and all(c["resolved"] == "alice" for c in bearer_calls),
+        "plane-http + contrib/plane-mcp-bearer: the caller's JWT reaches Plane as Bearer",
+        f"member/me -> {me.get('id')}; bearer calls resolved {[c['resolved'] for c in bearer_calls]}",
+    )
+
+    # --- 14. per-surface audience ---------------------------------------
+    try:
+        await call(client("plane-bearer", jwt=TOKENS["alice"]), "run_tool",
+                   {"name": "member", "args": {"action": "me"}})
+        check(False, "a token not addressed to the surface is refused", "it was served")
+    except Exception as e:
+        check(
+            "'plane-mcp'" in str(e),
+            "a token not addressed to the surface is refused, naming the audience",
+            str(e)[:160],
+        )
+
+    # --- 15. Community Edition guard ------------------------------------
+    try:
+        await call(client("plane-bearer", jwt=TOKENS["alice_plane"]), "run_tool",
+                   {"name": "workitem", "args": {"action": "list"}})
+        check(False, "a workspace-wide workitem list is refused", "it was served")
+    except Exception as e:
+        check(
+            "not a temporary error" in str(e) and "project_id" in str(e),
+            "a workspace-wide workitem list is refused as non-transient, naming the fix",
+            str(e)[:160],
+        )
+
+    # --- 16. an expired token says so -----------------------------------
+    r = httpx.post(
+        f"{GATEWAY}/echo/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {TOKENS['alice_expired']}",
+        },
+        timeout=10,
+    )
+    check(
+        r.status_code == 401
+        and 'error_description="token expired"' in r.headers.get("www-authenticate", ""),
+        "an expired token's 401 carries RFC 6750 error_description=\"token expired\"",
+        f"HTTP {r.status_code}: {r.headers.get('www-authenticate')}",
+    )
+    metrics = httpx.get(f"{GATEWAY}/metrics", timeout=10).text
+    expired = [ln for ln in metrics.splitlines() if 'reason="expired"' in ln]
+    check(
+        bool(expired) and not expired[0].endswith(" 0"),
+        "/metrics counts the expired rejection by reason",
+        expired[0] if expired else metrics[:200],
+    )
+
+    # --- 17. health --deep --bearer-file: probe AS the user --------------
+    probe = subprocess.run(
+        ["podman", "exec", "-i", "beherouter", "beherouter", "health", "--deep",
+         "--surface", "plane-bearer", "--bearer-file", "-", "--json"],
+        input=TOKENS["alice_plane"], capture_output=True, text=True, check=False,
+    )
+    try:
+        up = json.loads(probe.stdout)["backends"][0]["user_probe"]
+    except (ValueError, KeyError, IndexError):
+        up = {"raw": (probe.stdout + probe.stderr)[:300]}
+    check(
+        probe.returncode == 0 and up.get("state") == "ok" and up.get("matches_caller") is True
+        and up.get("backend_identity", {}).get("email") == "alice@bank.invalid",
+        "health --deep --bearer-file proves the user's identity reaches the backend",
+        json.dumps(up),
     )
 
     failed = [name for ok, name, _ in results if not ok]

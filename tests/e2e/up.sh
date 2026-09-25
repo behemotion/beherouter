@@ -4,6 +4,7 @@
 #   fixtures      fake Plane REST API + the IdP's JWKS          (stdlib python)
 #   plane-mcp     plane-mcp-server 0.3.2, HTTP mode             (upstream, real)
 #   echo-mcp      an MCP backend that reports its credential    (bearer proof)
+#   plane-mcp-bearer  contrib/plane-mcp-bearer over real 0.3.2    (bearer -> Plane)
 #   beherouter    the build under test                          (image under test)
 #
 # One podman network, because the gateway reaches its backends BY NAME — the
@@ -36,7 +37,7 @@ wait_for() {
   exit 1
 }
 
-podman rm -f beherouter plane-mcp echo-mcp e2e-fixtures >/dev/null 2>&1 || true
+podman rm -f beherouter plane-mcp plane-mcp-bearer echo-mcp e2e-fixtures >/dev/null 2>&1 || true
 podman network rm -f "$NET" >/dev/null 2>&1 || true
 podman network create "$NET" >/dev/null
 
@@ -68,7 +69,18 @@ podman run -d --name echo-mcp --network "$NET" \
   -p 18300:8300 \
   localhost/beherouter:e2e python /app/echo_mcp.py >/dev/null
 
+echo "== plane-mcp-bearer (contrib: forwards a bearer to Plane) =="
+# The e2e deployment credential is `pat-…`, not Plane's real `plane_api_…`
+# shape, so the PAT pattern is widened to match it.
+podman run -d --name plane-mcp-bearer --network "$NET" \
+  -e PLANE_BASE_URL="http://e2e-fixtures:8000" \
+  -e PLANE_WORKSPACE_SLUG="e2e" \
+  -e PLANE_MCP_BEARER_PAT_PATTERN='^pat-' \
+  -p 18212:8211 \
+  localhost/plane-mcp-bearer:e2e >/dev/null
+
 wait_for e2e-fixtures http://localhost:18000/jwks.json
+wait_for plane-mcp-bearer http://localhost:18212/healthz
 wait_for plane-mcp http://localhost:18211/http/api-key/mcp
 wait_for echo-mcp http://localhost:18300/mcp
 
@@ -104,6 +116,25 @@ probe_args = {}
   access_token = "${BEHEROUTER_ECHO_ACCESS_TOKEN}"
   [echo.identity]
   mode = "bearer"
+
+[plane-bearer]
+plugin = "plane-http"
+  [plane-bearer.config]
+  base_url = "http://plane-mcp-bearer:8211/bearer/mcp"
+  [plane-bearer.env]
+  access_token = "${BEHEROUTER_PLANE_PAT}"
+  [plane-bearer.identity]
+  mode = "bearer"
+  [plane-bearer.authz]
+  audience = "plane-mcp"
+
+[plane-stdio]
+plugin = "plane"
+  [plane-stdio.config]
+  base_url = "http://e2e-fixtures:8000"
+  workspace_slug = "e2e"
+  [plane-stdio.env]
+  api_key = "${BEHEROUTER_PLANE_PAT}"
 TOML
 
 podman run -d --name beherouter --network "$NET" \
