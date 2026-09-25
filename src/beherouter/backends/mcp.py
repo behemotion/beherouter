@@ -149,6 +149,10 @@ class ReconnectingMCPExecutor:
         self._backing = backing
 
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
+        if self._backing is not None and self._backing.guard is not None:
+            # Before any transport is built: a refused call must not cost a
+            # round trip, and must not depend on the backend being up.
+            self._backing.guard(verb, args)
         transport = self._transport
         if identity is not None and identity.headers:
             if self._backing is None:
@@ -166,6 +170,12 @@ class ReconnectingMCPExecutor:
         except Exception as e:
             raise Unavailable(f"backend call '{verb}' failed: {e}") from e
         return {"result": _payload(res)}
+
+
+def _with_note(description: str, note: str | None) -> str:
+    if not note:
+        return description
+    return f"{description.rstrip()}\n\n{note}" if description else note
 
 
 def _annotations(tool) -> dict | None:
@@ -200,12 +210,16 @@ async def backend_from_client(
     client: Client,
     pinned: list[str] | None = None,
     republish_output_schema: bool = True,
+    notes: dict[str, str] | None = None,
 ) -> Backend:
     """The testable core: build a Backend from a connected MCP client.
 
     `republish_output_schema=False` drops every tool's outputSchema — see
     `McpBacking.republish_output_schema` for when that is the right call.
+    `notes` appends a sentence to named tools' descriptions — see
+    `McpBacking.notes`.
     """
+    notes = notes or {}
     pinned_set = set(pinned or [])
     tools = await client.list_tools()
     descriptors = []
@@ -215,7 +229,7 @@ async def backend_from_client(
             ToolDescriptor(
                 name=t.name,
                 verb=t.name,
-                summary=(t.description or ""),
+                summary=_with_note(t.description or "", notes.get(t.name)),
                 schema=getattr(t, "inputSchema", {}) or {},
                 pinned=(t.name in pinned_set),
                 mutating=_mutating(annotations),
@@ -236,7 +250,7 @@ async def backend_from_client(
         is independently testable without a transport to reconnect through.
         """
         fresh = await backend_from_client(
-            name, client, pinned, republish_output_schema
+            name, client, pinned, republish_output_schema, notes
         )
         return fresh.descriptors
 
@@ -261,6 +275,7 @@ async def load_mcp_backend(
                 client,
                 backing.pinned,
                 backing.republish_output_schema,
+                backing.notes,
             )
     except UsageError:
         raise
@@ -282,6 +297,7 @@ async def load_mcp_backend(
                 client,
                 backing.pinned,
                 backing.republish_output_schema,
+                backing.notes,
             )
         return fresh.descriptors
 

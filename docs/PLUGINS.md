@@ -145,6 +145,26 @@ tool is still pinned, listed and called; a code-mode host just loses the typed r
 is per plugin, never global, so no other surface's declared shape changes. The TTL
 re-list honours it too. Set it back to `True` once the backend's schemas match its replies.
 
+## A tool the deployment serves only in part: `guard` and `notes`
+
+A pinned tool can be served while some of its argument shapes are not. Plane
+Community Edition serves `workitem`, but 404s its workspace-wide `list` and
+400s any `pql`, and a model reads those errors as transient and retries. Two
+`McpBacking` fields handle it:
+
+- **`guard(verb, args)`** runs before any transport is built. It raises a
+  `UsageError` for a call this deployment is known not to serve, with a
+  sentence naming the fix and saying the error is not transient. It costs no
+  backend round trip and does not depend on the backend being up.
+- **`notes={tool: sentence}`** is appended to that tool's description at attach
+  **and** on every re-list, so the published array and the searchable
+  catalogue say the same thing before the model calls.
+
+The Plane plugins set both through `edition = "community"` (the default);
+`edition = "commercial"` turns them off. Refuse only failures you have
+measured: a guard that refuses a working call is worse than the 404 it
+replaces.
+
 ## `ConfigField` and `EnvVar`
 
 ```python
