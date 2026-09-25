@@ -177,13 +177,17 @@ async def build_surfaces(
     return surfaces
 
 
-def _combined_lifespan(sub_apps: list):
+def _combined_lifespan(sub_apps: list, retries: list | None = None):
     """Run every mounted surface's own lifespan alongside the parent app's.
 
     Each `http_app()` carries an MCP session manager that is started by its
     lifespan. Starlette does NOT run the lifespan of sub-apps mounted via
     `Mount`, so without this every request would fail with "Task group is not
     initialized".
+
+    `retries` are zero-argument coroutine functions, one per surface that failed
+    to attach. Each runs as a task for the app's lifetime and is cancelled on
+    shutdown; see `_retry_attach` for why it owns its own sub-app lifespan.
     """
 
     @contextlib.asynccontextmanager
@@ -191,15 +195,102 @@ def _combined_lifespan(sub_apps: list):
         async with contextlib.AsyncExitStack() as stack:
             for sub in sub_apps:
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
-            yield
+            tasks = [
+                asyncio.create_task(retry(), name=f"beherouter-retry-{i}")
+                for i, retry in enumerate(retries or [])
+            ]
+            try:
+                yield
+            finally:
+                for t in tasks:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     return lifespan
+
+
+class _PendingSurface:
+    """The ASGI app mounted for a surface whose attach failed.
+
+    Answers RFC 9457 503 until `_retry_attach` sets `app`, then delegates to it
+    for the rest of the process. The body names the surface only: an attach
+    error can carry internal hostnames, and this path is reachable before
+    authentication. The error itself is in the log.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.app = None
+
+    async def __call__(self, scope, receive, send):
+        if self.app is not None:
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            return
+        from starlette.responses import JSONResponse
+
+        response = JSONResponse(
+            {
+                "type": "about:blank",
+                "title": "Surface unavailable",
+                "status": 503,
+                "detail": f"surface '{self.name}' is not attached; the gateway is retrying",
+            },
+            status_code=503,
+            media_type="application/problem+json",
+            headers={"Retry-After": "30"},
+        )
+        await response(scope, receive, send)
+
+
+async def _retry_attach(
+    name: str,
+    entry: RegistryEntry,
+    auth: object | None,
+    pending: _PendingSurface,
+    failed: dict[str, str],
+    *,
+    initial_s: float,
+    max_s: float,
+) -> None:
+    """Retry one failed attach with exponential backoff; swap it in ONCE.
+
+    ⚠️ The sub-app's lifespan is entered AND held here, in this task, until
+    shutdown cancels it. Pushing it onto the parent's exit stack instead would
+    exit an anyio task group from a different task than entered it, which
+    raises. The published tools array freezes at this first success, exactly
+    as it does for a surface that attached at boot.
+    """
+    delay = initial_s
+    while True:
+        await asyncio.sleep(delay)
+        try:
+            surface = await _attach_one(name, entry, auth)
+        except Exception as e:
+            delay = min(delay * 2, max_s)
+            failed[name] = f"{type(e).__name__}: {e}"
+            logger.warning(
+                "surface %r still failing to attach; next try in %gs",
+                name,
+                delay,
+                exc_info=True,
+            )
+            continue
+        app = surface.http_app(path="/mcp")
+        async with app.router.lifespan_context(app):
+            pending.app = app
+            failed.pop(name, None)
+            logger.info("surface %r attached on retry", name)
+            await asyncio.Event().wait()  # until shutdown cancels this task
 
 
 async def build_gateway_app(
     registry: dict[str, RegistryEntry] | Path | str,
     *,
     strict_auth: bool = True,
+    retry_initial_s: float = 5.0,
+    retry_max_s: float = 300.0,
 ):
     """Build the ASGI app mounting each surface's http_app() at /<tool>/mcp."""
     from starlette.applications import Starlette
@@ -240,9 +331,20 @@ async def build_gateway_app(
         )
 
     auth = ObservedVerifier(build_verifier(strict=strict_auth))
-    surfaces = await build_surfaces(registry, auth=auth)
+    failed: dict[str, str] = {}
+    surfaces = await build_surfaces(registry, auth=auth, failed=failed)
 
     sub_apps = {name: s.http_app(path="/mcp") for name, s in surfaces.items()}
+    pending = {name: _PendingSurface(name) for name in failed}
+    retries = [
+        (
+            lambda n=name, p=pending[name]: _retry_attach(
+                n, registry[n], auth, p, failed,
+                initial_s=retry_initial_s, max_s=retry_max_s,
+            )
+        )
+        for name in pending
+    ]
 
     async def healthz(_request):
         """Unauthenticated liveness (CONVENTIONS §Health).
@@ -255,8 +357,18 @@ async def build_gateway_app(
 
         Exposes only surface names — already public in the URL path — so
         leaving it unauthenticated leaks nothing.
+
+        A surface that failed to attach makes the status `degraded` — still
+        HTTP 200, because the gateway itself is up and every other surface is
+        serving; alert on the field. Only names are listed.
         """
-        return JSONResponse({"status": "ok", "surfaces": sorted(sub_apps)})
+        attached = sorted(
+            [*sub_apps, *(n for n, p in pending.items() if p.app is not None)]
+        )
+        body = {"status": "degraded" if failed else "ok", "surfaces": attached}
+        if failed:
+            body["failed"] = sorted(failed)
+        return JSONResponse(body)
 
     async def metrics(_request):
         """Unauthenticated, like /healthz: counters only, labelled by reason,
@@ -275,13 +387,14 @@ async def build_gateway_app(
         Route("/healthz", healthz, methods=["GET"]),
         Route("/metrics", metrics, methods=["GET"]),
         *[Mount(f"/{name}", app=app) for name, app in sub_apps.items()],
+        *[Mount(f"/{name}", app=p) for name, p in pending.items()],
     ]
     # Around every route, so each surface's verifier reports into the slot it
     # opens and an expired token's 401 says so on the way out.
     return Starlette(
         routes=routes,
         middleware=[Middleware(RejectionMiddleware)],
-        lifespan=_combined_lifespan(list(sub_apps.values())),
+        lifespan=_combined_lifespan(list(sub_apps.values()), retries),
     )
 
 
