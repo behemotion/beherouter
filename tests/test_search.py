@@ -109,3 +109,90 @@ def test_short_tokens_do_not_prefix_match_everything():
     idx.add("t_a", "alpha beta", [])
     idx.add("t_b", "gamma delta", [])
     assert idx.search("xy") == []
+
+
+from beherouter.search import DEFAULT_LIMIT, normalize, singular, split_lead
+
+
+def test_normalize_splits_camel_case_and_snake_case():
+    assert normalize("projectId work_item") == ["project", "id", "work", "item"]
+
+
+def test_normalize_drops_stopwords():
+    assert normalize("change the status of a ticket to done") == [
+        "change", "status", "ticket", "done",
+    ]
+
+
+def test_singular_folds_plurals():
+    assert singular("issues") == "issue"
+    assert singular("repositories") == "repository"
+    assert singular("boxes") == "box"
+    assert singular("classes") == "class"
+    assert singular("workitems") == "workitem"
+
+
+def test_singular_leaves_non_plurals_alone():
+    for word in ("status", "access", "alias", "analysis", "bus", "item"):
+        assert singular(word) == word
+
+
+def test_split_lead_takes_the_first_sentence():
+    assert split_lead("Comments on a work item. Actions: list, create.") == (
+        "Comments on a work item.",
+        "Actions: list, create.",
+    )
+    assert split_lead("No full stop\nsecond line") == ("No full stop", "second line")
+
+
+def test_filler_words_do_not_decide_membership():
+    """Regression: 'to'/'of'/'a' used to put most of the corpus in tier 0."""
+    idx = ToolIndex()
+    idx.add("state", "Workflow states within a project.", [])
+    for i in range(12):
+        idx.add(f"other_{i}", "Something to do with a thing of the workspace.", [])
+    assert idx.search("change status of a ticket to done") == []
+    idx2 = ToolIndex()
+    idx2.add("state", "Workflow states within a project.", [], ("status",))
+    for i in range(12):
+        idx2.add(f"other_{i}", "Something to do with a thing of the workspace.", [])
+    assert idx2.search("change status of a ticket to done") == ["state"]
+
+
+def test_plural_query_finds_singular_name():
+    idx = ToolIndex()
+    idx.add("workitem", "Work items -- issues, tasks and epics.", [])
+    for i in range(8):
+        idx.add(f"workitem_x{i}", "Things on workitems.", [])
+    assert idx.search("workitems")[0] == "workitem"
+
+
+def test_exact_name_match_ranks_first():
+    idx = ToolIndex()
+    idx.add("work_log", "Time logged against a work item.", [])
+    idx.add("workitem", "Work items. Work work work item item.", [])
+    assert idx.search("work log")[0] == "work_log"
+
+
+def test_aliases_are_searchable():
+    idx = ToolIndex()
+    idx.add("cycle", "Cycles (time-boxed iterations) in a project.", [], ("sprint",))
+    idx.add("module", "Modules in a project.", [])
+    assert idx.search("sprint") == ["cycle"]
+
+
+def test_weak_hits_are_cut_off():
+    idx = ToolIndex()
+    idx.add("attachment", "Files attached to a work item.", ["upload"])
+    for i in range(6):
+        idx.add(f"t_{i}", f"Unrelated tool number {i} mentioning a file once.", [])
+    hits = idx.search("upload attachment")
+    assert hits == ["attachment"]
+
+
+def test_default_limit_is_five():
+    idx = ToolIndex()
+    for i in range(9):
+        idx.add(f"t_{i}", "search things", [])
+    assert DEFAULT_LIMIT == 5
+    assert len(idx.search("search")) == 5
