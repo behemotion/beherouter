@@ -276,10 +276,45 @@ nothing.
 `/http` (bearer) and `/http/api-key`. The bearer mount is an **OAuth proxy**: it
 only accepts tokens it minted itself and 401s a forwarded one *before Plane is
 consulted*, so a forwarded IdP token cannot reach Plane through it. The api-key
-mount takes a per-request PAT and calls Plane with it. Use `plane-http` (mode
-`bearer`) only against a backend that accepts a forwarded token — a fork with
-its own JWT authentication, say. `registry-lint` refuses the wrong pairing
-offline, because each plugin declares only the mode its mount can honour.
+mount takes a per-request PAT and calls Plane with it. `registry-lint` refuses
+the wrong pairing offline, because each plugin declares only the mode its mount
+can honour, and `plane-http` refuses both upstream mounts by path.
+
+### The IdP-token variant: `plane-http` + `contrib/plane-mcp-bearer`
+
+To forward each caller's **own IdP token** instead of a PAT, `plane-http` (mode
+`bearer`) needs two things upstream does not provide:
+
+1. A **backend mount that forwards the bearer to Plane.**
+   [`contrib/plane-mcp-bearer`](../contrib/plane-mcp-bearer/README.md) is
+   upstream's own server behind a verifier that sends a PAT-shaped token as
+   `X-Api-Key` (the gateway's deployment credential) and anything else as
+   `Authorization: Bearer`. It is pinned to exactly plane-mcp-server 0.3.2,
+   because it relies on upstream's private routing.
+2. A **Plane that verifies your IdP's tokens**, for example an authentication
+   class that checks your realm's JWKS. Plane is the control; the wrapper
+   checks only that Plane accepts the token.
+
+```toml
+[plane]
+plugin = "plane-http"
+  [plane.config]
+  base_url = "http://plane-mcp-bearer:8211/bearer/mcp"   # REQUIRED: no default
+  [plane.env]
+  access_token = "${BEHEROUTER_PLANE_ACCESS_TOKEN}"      # a Plane PAT: attach + probe
+  [plane.identity]
+  mode = "bearer"
+  [plane.authz]
+  audience = "plane-mcp"
+```
+
+Verified in `tests/e2e/`: alice's JWT reaches the Plane API as
+`Authorization: Bearer`, and the deployment PAT goes as `x-api-key`.
+
+⚠️ An earlier `plane-http` docstring claimed upstream's `/http` mount verified
+the bearer against Plane, and the plugin's default `base_url` pointed there. A
+surface built from both attached green and 401'd every user call. The default
+is gone: `base_url` is required.
 
 ## 7. The rules that will refuse you
 

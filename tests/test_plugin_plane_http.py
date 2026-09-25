@@ -63,9 +63,16 @@ def test_claims_mode_is_refused_because_plane_verifies_the_token_itself():
         )
 
 
-def test_base_url_defaults_to_the_bearer_mount():
-    cfg = validate_config("plane", get(PLUGIN).spec, {})
-    assert cfg["base_url"].endswith("/http/mcp")
+def test_base_url_is_required_because_upstream_has_no_bearer_mount():
+    """The old default pointed at upstream's OAuth proxy, which 401s a forwarded
+    token; a surface built from it attached green and 401'd every user call."""
+    with pytest.raises(UsageError, match="base_url"):
+        validate_config("plane", get(PLUGIN).spec, {})
+
+
+def test_upstreams_oauth_proxy_mount_is_refused():
+    with pytest.raises(UsageError, match="OAuth proxy"):
+        get(PLUGIN).validate({"base_url": "http://plane-mcp:8211/http/mcp"})
 
 
 def test_no_workspace_slug_is_configured():
@@ -88,8 +95,8 @@ def test_a_url_that_is_not_an_mcp_endpoint_is_refused():
         get(PLUGIN).validate({"base_url": "http://plane-mcp:8211/http"})
 
 
-def test_the_bearer_mount_passes_the_validator():
-    get(PLUGIN).validate({"base_url": "http://plane-mcp:8211/http/mcp"})
+def test_a_bearer_forwarding_mount_passes_the_validator():
+    get(PLUGIN).validate({"base_url": "http://plane-mcp-bearer:8211/bearer/mcp"})
 
 
 async def test_the_deployment_token_attaches_as_a_bearer_header(monkeypatch):
@@ -104,14 +111,14 @@ async def test_the_deployment_token_attaches_as_a_bearer_header(monkeypatch):
     monkeypatch.setattr("beherouter.plugins.plane_http.load_mcp_backend", fake_load)
     ctx = PluginContext(
         surface="plane",
-        config={"base_url": "http://plane-mcp:8211/http/mcp"},
+        config={"base_url": "http://plane-mcp-bearer:8211/bearer/mcp"},
         env={"access_token": "deployment-bearer"},
         pinned=["workitem"],
     )
     await get(PLUGIN).build(ctx)
     backing = seen["backing"]
     assert backing.transport == "http"
-    assert backing.url == "http://plane-mcp:8211/http/mcp"
+    assert backing.url == "http://plane-mcp-bearer:8211/bearer/mcp"
     assert backing.env["authorization"] == "Bearer deployment-bearer"
 
 
