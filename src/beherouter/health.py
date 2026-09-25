@@ -16,6 +16,7 @@ Each check reports rather than raises: one dead backend must not hide the state
 of the others.
 """
 
+import json
 import logging
 
 from .costing import surface_cost
@@ -48,8 +49,104 @@ CATALOGUE_PINNED_MISSING = "pinned_missing"
 # instead.
 _FAILURES = (ATTACH_FAILED, PROBE_FAILED, CATALOGUE_PINNED_MISSING)
 
+# user-probe verdicts (`health --deep --bearer-file`)
+USER_OK = "ok"
+USER_NOT_APPLICABLE = "not_applicable"  # no identity mode: nothing per-user to prove
+USER_SKIPPED = "skipped"  # no probe, or attach failed
+USER_REJECTED = "rejected"  # the gateway would not accept this token at all
+USER_REFUSED = "refused"  # accepted, but this surface refuses the caller
+USER_FAILED = "failed"  # the backend call failed with the caller's identity
+USER_MISMATCH = "mismatch"  # the backend answered as someone else
+_USER_FAILURES = (USER_REJECTED, USER_REFUSED, USER_FAILED, USER_MISMATCH)
 
-async def check_entry(entry: RegistryEntry, load=load_backend) -> dict:
+# Fields a backend's "who am I" answer is likely to carry, and the token claims
+# a caller is likely to be recognised by. Compared case-insensitively.
+_BACKEND_IDENTITY_KEYS = (
+    "id", "email", "username", "preferred_username", "display_name", "login", "sub",
+)
+_CALLER_CLAIMS = ("email", "preferred_username", "sub", "upn")
+
+
+def _backend_identity(result) -> dict:
+    """The identity fields of a probe's answer, or {} when there are none."""
+    payload = result.get("result") if isinstance(result, dict) else result
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return {}
+    # FastMCP wraps a non-object return as {"result": ...}; one level only.
+    if isinstance(payload, dict) and set(payload) == {"result"}:
+        payload = payload["result"]
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        k: payload[k]
+        for k in _BACKEND_IDENTITY_KEYS
+        if isinstance(payload.get(k), (str, int)) and payload.get(k) != ""
+    }
+
+
+async def probe_as_user(entry, backend, probe, probe_args, token: str, verifier) -> dict:
+    """Run the surface's probe AS the holder of `token`, through the same gate
+    and materialisation a real call goes through.
+
+    ⚠️ This is what a green deployment-credential probe cannot tell you: that
+    a USER's identity reaches the backend and the backend answers as them.
+    The token is verified by the gateway's own verifier first, so an expired or
+    mis-addressed token is reported as the gateway would treat it.
+    """
+    from . import auth
+    from .errors import AxiError
+    from .identity import identity_from_token, policy_from_entry
+
+    plugin = PLUGINS.get(entry.plugin)
+    policy = policy_from_entry(entry, plugin.spec) if plugin else None
+    if policy is None or not policy.mode:
+        return {
+            "state": USER_NOT_APPLICABLE,
+            "reason": "the surface has no identity mode, so every call uses the "
+            "deployment credential; there is no per-user path to prove",
+        }
+    if not probe:
+        return {"state": USER_SKIPPED, "reason": "no probe configured"}
+    slot: dict = {}
+    reset = auth._SLOT.set(slot)
+    try:
+        access = await auth.ObservedVerifier(verifier).verify_token(token)
+    finally:
+        auth._SLOT.reset(reset)
+    if access is None:
+        return {"state": USER_REJECTED, "reason": slot.get("reason", "invalid")}
+    req = identity_from_token(access)
+    try:
+        ident = policy.authorise(req)
+    except AxiError as e:
+        return {"state": USER_REFUSED, "subject": req.subject, "error": str(e)}
+    try:
+        result = await backend.executor.run(probe, probe_args or {}, identity=ident)
+    except AxiError as e:
+        return {"state": USER_FAILED, "subject": req.subject, "error": str(e)}
+    seen = _backend_identity(result)
+    caller = {
+        str(req.claims[c]).lower() for c in _CALLER_CLAIMS if req.claims.get(c)
+    }
+    matches = (
+        bool(caller & {str(v).lower() for v in seen.values()}) if seen else None
+    )
+    return {
+        "state": USER_MISMATCH if matches is False else USER_OK,
+        "subject": req.subject,
+        "backend_identity": seen,
+        # None when the probe's answer carries no recognisable identity field:
+        # absence of evidence, never a failure.
+        "matches_caller": matches,
+    }
+
+
+async def check_entry(
+    entry: RegistryEntry, load=load_backend, user_token: str | None = None, verifier=None
+) -> dict:
     """Attach one backend and, where a probe is configured, call it.
 
     Attaching fresh makes this a black-box check: it exercises the same load path
@@ -58,12 +155,15 @@ async def check_entry(entry: RegistryEntry, load=load_backend) -> dict:
     try:
         backend = await load(entry)
     except AxiError as e:
-        return {
+        failed_record = {
             "name": entry.name,
             "attach": ATTACH_FAILED,
             "probe": PROBE_SKIPPED,
             "error": str(e),
         }
+        if user_token is not None:
+            failed_record["user_probe"] = {"state": USER_SKIPPED, "reason": "attach failed"}
+        return failed_record
 
     from .surface import build_surface
 
@@ -151,17 +251,41 @@ async def check_entry(entry: RegistryEntry, load=load_backend) -> dict:
     else:
         probe, probe_args = None, None
     if not probe:
-        return {**record, "probe": PROBE_NONE}
-    try:
-        await backend.executor.run(probe, probe_args or {})
-    except AxiError as e:
-        return {**record, "probe": PROBE_FAILED, "error": str(e)}
-    return {**record, "probe": PROBE_OK}
+        record["probe"] = PROBE_NONE
+    else:
+        try:
+            await backend.executor.run(probe, probe_args or {})
+        except AxiError as e:
+            record.update(probe=PROBE_FAILED, error=str(e))
+        else:
+            record["probe"] = PROBE_OK
+    if user_token is not None:
+        record["user_probe"] = await probe_as_user(
+            entry, backend, probe, probe_args, user_token, verifier
+        )
+    return record
 
 
-async def deep_health(registry: dict[str, RegistryEntry], load=load_backend) -> list[dict]:
-    """One record per registry entry, in registry order."""
-    return [await check_entry(entry, load=load) for entry in registry.values()]
+async def deep_health(
+    registry: dict[str, RegistryEntry],
+    load=load_backend,
+    user_token: str | None = None,
+    verifier=None,
+) -> list[dict]:
+    """One record per registry entry, in registry order.
+
+    With `user_token`, each record also carries `user_probe`: the probe run as
+    that token's holder (see `probe_as_user`). `verifier` defaults to the
+    gateway's own, built from this environment.
+    """
+    if user_token is not None and verifier is None:
+        from .auth import build_verifier
+
+        verifier = build_verifier(strict=False)
+    return [
+        await check_entry(entry, load=load, user_token=user_token, verifier=verifier)
+        for entry in registry.values()
+    ]
 
 
 def failed(records: list[dict]) -> list[str]:
@@ -176,4 +300,5 @@ def failed(records: list[dict]) -> list[str]:
         if r.get("attach") in _FAILURES
         or r.get("probe") in _FAILURES
         or r.get("catalogue") in _FAILURES
+        or (r.get("user_probe") or {}).get("state") in _USER_FAILURES
     ]

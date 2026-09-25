@@ -219,3 +219,91 @@ def test_the_gate_refuses_a_shared_token_caller():
     policy = _gate(["ai-plane-access"])
     with pytest.raises(AuthError, match="requires a verified user"):
         policy.gate(RequestIdentity(shared=True, subject=None))
+
+
+# --- per-surface audience ------------------------------------------------------
+#
+# `BEHEROUTER_OIDC_AUDIENCE` is gateway-wide, so with several teams' surfaces on
+# one gateway every surface accepted every team's tokens. `[surface.authz]
+# audience` narrows a surface to tokens addressed to it, on top of (never
+# instead of) the gateway-wide verification.
+
+
+def _aud_gate(audiences) -> IdentityPolicy:
+    return IdentityPolicy(surface="plane", audiences=tuple(audiences))
+
+
+def test_a_token_addressed_to_the_surface_passes():
+    _aud_gate(["plane-mcp"]).gate(_user({"sub": "alice", "aud": ["beherouter", "plane-mcp"]}))
+    _aud_gate(["plane-mcp"]).gate(_user({"sub": "alice", "aud": "plane-mcp"}))
+
+
+def test_any_one_listed_audience_is_enough():
+    _aud_gate(["plane-mcp", "plane"]).gate(_user({"sub": "alice", "aud": "plane"}))
+
+
+def test_a_token_for_another_surface_is_refused_naming_the_expected_audience():
+    with pytest.raises(AuthError, match="'plane-mcp'") as e:
+        _aud_gate(["plane-mcp"]).gate(_user({"sub": "alice", "aud": ["wiki-mcp"]}))
+    assert "wiki-mcp" not in str(e.value)  # never echo the token's own claims
+
+
+def test_a_token_with_no_aud_is_refused():
+    with pytest.raises(AuthError):
+        _aud_gate(["plane-mcp"]).gate(_user({"sub": "alice"}))
+
+
+def test_an_audience_gate_alone_enables_the_policy_and_refuses_shared_callers():
+    policy = _aud_gate(["plane-mcp"])
+    assert policy.enabled
+    with pytest.raises(AuthError):
+        policy.gate(RequestIdentity(shared=True))
+
+
+@pytest.mark.parametrize("value", ["plane-mcp", ["plane-mcp", "plane"]])
+def test_audience_validates_as_a_string_or_a_list(value):
+    validate_authz("plane", {"audience": value})
+
+
+@pytest.mark.parametrize("value", ["", [], [""], [1], {"a": 1}])
+def test_a_malformed_audience_is_refused_offline(value):
+    with pytest.raises(UsageError, match="audience"):
+        validate_authz("plane", {"audience": value})
+
+
+def test_policy_from_entry_carries_the_audience():
+    entry = RegistryEntry(
+        name="plane", plugin="demo-http", authz={"audience": "plane-mcp"}
+    )
+    assert policy_from_entry(entry, HTTP).audiences == ("plane-mcp",)
+
+
+async def test_boot_refuses_an_audience_gate_on_a_shared_gateway(monkeypatch):
+    from beherouter.gateway import build_gateway_app
+
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    entry = RegistryEntry(name="office", plugin="office-mcp", authz={"audience": "x"})
+    with pytest.raises(UsageError, match="shared"):
+        await build_gateway_app({"office": entry})
+
+
+def test_lint_refuses_an_audience_gate_on_a_shared_gateway(tmp_path, monkeypatch):
+    from beherouter.cli.app import registry_lint
+
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    path = tmp_path / "registry.toml"
+    path.write_text('[office]\nplugin = "office-mcp"\n  [office.authz]\n  audience = "x"\n')
+    with pytest.raises(UsageError, match="shared"):
+        registry_lint(path=str(path))
+
+
+def test_an_audience_gate_needs_no_roles_claim(tmp_path, monkeypatch):
+    """Unlike require_roles, an audience lives in a standard claim."""
+    from beherouter.cli.app import registry_lint
+
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    monkeypatch.delenv("BEHEROUTER_OIDC_ROLES_CLAIM", raising=False)
+    path = tmp_path / "registry.toml"
+    path.write_text('[office]\nplugin = "office-mcp"\n  [office.authz]\n  audience = "x"\n')
+    registry_lint(path=str(path))

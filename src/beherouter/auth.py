@@ -17,10 +17,24 @@ exist, and a boot-time failure here takes /healthz down for every surface.
 which is the correct side of the attach boundary. A convention-derived path is
 rejected too: it would be an IdP-vendor assumption, and nothing else here makes
 one.
+
+⚠️ A REJECTED TOKEN SAYS WHY — to the operator and to the client. An expired
+token is THE failure of a per-user rollout (a client forwarding a stale access
+token), and FastMCP both logs it at INFO and answers it with the same generic
+401 as a forged one. Here it is logged at WARNING, counted by reason
+(`/metrics`), and answered with RFC 6750's
+`WWW-Authenticate: Bearer error="invalid_token", error_description="token
+expired"` so a client can tell "refresh" from "re-authenticate". The reason is
+only ever "expired" for a token whose SIGNATURE verified: FastMCP checks the
+signature before `exp`, so a forged token with an old `exp` is "invalid".
 """
 
+import collections
+import contextvars
 import hmac
+import json
 import os
+import re
 
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -42,6 +56,186 @@ OIDC_SCOPES_VAR = "BEHEROUTER_OIDC_REQUIRED_SCOPES"
 OIDC_ROLES_CLAIM_VAR = "BEHEROUTER_OIDC_ROLES_CLAIM"
 
 AUTH_MODES = ("shared", "oidc", "both")
+
+# --- rejection reasons --------------------------------------------------------
+#
+# Why the last token on THIS request was refused. The slot is a dict set per
+# request by `RejectionMiddleware`, so a verifier deep in a mounted sub-app can
+# report into it however many tasks sit in between (a copied context still
+# holds the same dict).
+REASONS = ("expired", "invalid", "issuer", "audience", "scope")
+REJECTIONS: collections.Counter[str] = collections.Counter()
+_SLOT: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "beherouter_auth_rejection", default=None
+)
+
+# FastMCP's JWTVerifier rejection log lines -> our reason. Matched on the
+# FORMAT string, which is a constant in FastMCP's source; if a future FastMCP
+# rewords one, that reason degrades to "invalid" and its level to FastMCP's
+# own, never to a crash. test_auth pins the mapping against the real verifier.
+_LOG_REASONS = (
+    ("token expired", "expired"),
+    ("issuer mismatch", "issuer"),
+    ("audience mismatch", "audience"),
+    ("missing required scopes", "scope"),
+)
+
+
+def _note(reason: str) -> None:
+    slot = _SLOT.get()
+    if slot is not None:
+        slot["reason"] = reason
+
+
+class _RejectionLog:
+    """Stands in for `JWTVerifier.logger`: forwards every call, and turns
+    FastMCP's rejection lines into a reason — raising expiry to WARNING."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    @staticmethod
+    def _reason(msg) -> str | None:
+        text = str(msg)
+        return next((r for needle, r in _LOG_REASONS if needle in text), None)
+
+    def info(self, msg, *args, **kwargs):
+        reason = self._reason(msg)
+        if reason:
+            _note(reason)
+        if reason == "expired":
+            # FastMCP files expiry as rotation noise. On a gateway forwarding
+            # user tokens it is the first incident of every rollout.
+            return self._inner.warning(msg, *args, **kwargs)
+        return self._inner.info(msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        reason = self._reason(msg)
+        if reason:
+            _note(reason)
+        return self._inner.warning(msg, *args, **kwargs)
+
+
+class GatewayJWTVerifier(JWTVerifier):
+    """FastMCP's JWKS verifier, reporting WHY it refused a token."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.logger = _RejectionLog(self.logger)
+
+
+class ObservedVerifier(TokenVerifier):
+    """Count every refusal by reason, once per presented token.
+
+    Wraps the whole verifier (shared, JWT or both) rather than living inside
+    one, so a `both` gateway counts a token once — not once per verifier it
+    fell through.
+    """
+
+    def __init__(self, inner: TokenVerifier) -> None:
+        super().__init__(required_scopes=inner.required_scopes)
+        self._inner = inner
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        slot = _SLOT.get()
+        reset = None
+        if slot is None:  # outside RejectionMiddleware (tests, in-process use)
+            slot = {}
+            reset = _SLOT.set(slot)
+        slot.pop("reason", None)
+        try:
+            found = await self._inner.verify_token(token)
+        finally:
+            if reset is not None:
+                _SLOT.reset(reset)
+        if found is None:
+            reason = slot.setdefault("reason", "invalid")
+            REJECTIONS[reason] += 1
+        return found
+
+
+_EXPIRED_BODY = json.dumps(
+    {"error": "invalid_token", "error_description": "token expired"}
+).encode()
+_RESOURCE_METADATA = re.compile(rb'resource_metadata="[^"]*"')
+
+
+class RejectionMiddleware:
+    """Pure ASGI. Opens the per-request reason slot, and rewrites the 401 for
+    an EXPIRED token to say so (RFC 6750 §3.1 `error_description`).
+
+    Only the expired case is rewritten: it is the one a client can fix on its
+    own, by refreshing. Every other refusal keeps FastMCP's generic answer —
+    telling a caller WHICH check its forged token failed helps nobody else.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        slot: dict = {}
+        token = _SLOT.set(slot)
+        replaced = False
+
+        async def send_wrapper(message) -> None:
+            nonlocal replaced
+            if replaced:
+                if message["type"] == "http.response.body":
+                    return  # the generic body we already replaced
+            elif (
+                message["type"] == "http.response.start"
+                and message.get("status") == 401
+                and slot.get("reason") == "expired"
+            ):
+                challenge = b'Bearer error="invalid_token", error_description="token expired"'
+                headers = []
+                for name, value in message.get("headers", []):
+                    if name.lower() == b"www-authenticate":
+                        found = _RESOURCE_METADATA.search(value)
+                        if found:
+                            challenge += b", " + found.group(0)
+                        continue
+                    if name.lower() in (b"content-length", b"content-type"):
+                        continue
+                    headers.append((name, value))
+                headers += [
+                    (b"www-authenticate", challenge),
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(_EXPIRED_BODY)).encode()),
+                ]
+                await send({**message, "headers": headers})
+                await send({"type": "http.response.body", "body": _EXPIRED_BODY})
+                replaced = True
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            _SLOT.reset(token)
+
+
+def metrics_text() -> str:
+    """Prometheus text exposition of the rejection counter. Every known reason
+    is emitted, zero included, so a dashboard has a series before an incident."""
+    lines = [
+        (
+            "# HELP beherouter_auth_rejections_total Bearer tokens the gateway "
+            "refused, by reason."
+        ),
+        "# TYPE beherouter_auth_rejections_total counter",
+    ]
+    for reason in sorted(set(REASONS) | set(REJECTIONS)):
+        lines.append(
+            f'beherouter_auth_rejections_total{{reason="{reason}"}} {REJECTIONS[reason]}'
+        )
+    return "\n".join(lines) + "\n"
 
 # The shared token's AccessToken.client_id, and the ONE discriminator between a
 # shared-secret caller and a user. `identity.py` refuses per-user surfaces on
@@ -130,10 +324,15 @@ def oidc_verifier() -> JWTVerifier:
         for s in (os.environ.get(OIDC_SCOPES_VAR) or "").split(",")
         if s.strip()
     ]
-    return JWTVerifier(
+    # Comma-separated means ANY of them, which is JWTVerifier's list rule.
+    # Several surfaces owned by several teams can then each keep an audience
+    # of their own and narrow to it with [surface.authz] audience, instead of
+    # all sharing one gateway-wide name.
+    audiences = [a.strip() for a in audience.split(",") if a.strip()]
+    return GatewayJWTVerifier(
         jwks_uri=jwks_uri,
         issuer=issuer,
-        audience=audience,
+        audience=audiences if len(audiences) > 1 else audiences[0],
         required_scopes=scopes or None,
     )
 

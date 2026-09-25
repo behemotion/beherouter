@@ -76,16 +76,41 @@ def detach(tool: str) -> None:
     app.emit({"detached": tool})
 
 
+def _read_bearer(path: str) -> str:
+    """A user token from a file (`-` = stdin), never from argv: argv is visible
+    to every process on the host, and to `ps` in every sidecar of the pod."""
+    import sys
+
+    from ..errors import UsageError
+
+    raw = sys.stdin.read() if path == "-" else Path(path).read_text()
+    token = raw.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        raise UsageError(f"--bearer-file {path!r} holds no token")
+    return token
+
+
 @app.command(pinned=True, mutating=False)
-def health(deep: bool = False) -> None:
-    """Report gateway/registry health; --deep probes each backend's credential."""
+def health(deep: bool = False, bearer_file: str = "", surface: str = "") -> None:
+    """Report health; --deep probes each backend, --bearer-file F also probes as that user."""
+    from ..errors import UsageError
+
     reg = load_registry(_registry_path())
+    if surface:
+        if surface not in reg:
+            raise NotFound(f"no attached tool '{surface}'")
+        reg = {surface: reg[surface]}
+    if bearer_file and not deep:
+        raise UsageError("--bearer-file probes a backend, so it needs --deep")
     if not deep:
         # Registry counts only, and deliberately so: the default must not fan out
         # to the backends, or it becomes as slow and as flaky as the slowest one.
         app.emit({"ok": True, "count": len(reg)})
         return
-    records = asyncio.run(deep_health(reg))
+    token = _read_bearer(bearer_file) if bearer_file else None
+    records = asyncio.run(deep_health(reg, user_token=token))
     bad = failed(records)
     # Records first: the verdict travels in the exit code, but the operator needs
     # to be told WHICH backend died, so the detail must reach stdout either way.
@@ -111,7 +136,7 @@ def registry_lint(path: str = "") -> None:
     from .. import auth
     from ..envexpand import expand
     from ..errors import UsageError
-    from ..identity import DEFAULT_MAP_VAR, SecretMap
+    from ..identity import DEFAULT_MAP_VAR, SecretMap, gates_on_caller
     from ..pluginconfig import collision_warning
 
     target = Path(path) if path else _registry_path()
@@ -140,7 +165,7 @@ def registry_lint(path: str = "") -> None:
         identity = entry.identity or {}
         mode = identity.get("mode")
         gate = (entry.authz or {}).get("require_roles")
-        if (mode and mode != "none") or gate:
+        if gates_on_caller(entry):
             # ⚠️ Both rules below are checked ONLY where the gateway's own
             # environment is visible. Lint runs on a workstation and in an init
             # container, and defaulting to 'shared' there would fail a valid

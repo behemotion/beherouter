@@ -116,7 +116,9 @@ Configure **default-deny**, with an explicit allow per surface. Publishing the g
 LAN interface would let anyone reach every surface with the one shared token, bypassing that
 split entirely.
 
-`/healthz` should be the only unauthenticated path.
+`/healthz` and `/metrics` are the only unauthenticated paths. `/metrics` carries counters only,
+labelled by reason and never by caller. Leave it out of the edge's allow-list unless a scraper
+needs it from outside.
 
 ## Health and verification
 
@@ -127,6 +129,12 @@ curl -sS https://<your-gateway>/healthz
 
 # the credentials behind each surface — a real call per backend
 beherouter health --deep --json      # exit 6 == a backend credential is bad
+
+# per-user surfaces: the same probe AS a user (token from a file or stdin)
+beherouter health --deep --surface plane --bearer-file - --json < token.txt
+
+# auth rejections by reason (expired | invalid | issuer | audience | scope)
+curl -sS https://<your-gateway>/metrics
 
 # the CLI contract, inside the image (not a host venv)
 beheaxi conformance "beherouter"     # 6/6
@@ -215,7 +223,7 @@ How the chart holds this page's rules:
 | Pre-deploy gate **inside the image that is about to serve** | a pre-install/pre-upgrade **hook Job**: same image, same env, same registry text; lint failure fails the release before anything is created |
 | Entry and secret ship together | `required` at render time — no token, no release; an unset `${VAR}` fails the hook, not a live surface |
 | The proxy is the **per-client** token boundary | the Ingress routes only; per-client auth is whatever fronts it (forward-auth, Gateway filters). The shared in-app token cannot make that distinction here either |
-| `/healthz` is the only unauthenticated path | startup/liveness/readiness probes all hit it; `helm test` asserts its payload |
+| `/healthz` (and `/metrics`) the only unauthenticated paths | startup/liveness/readiness probes all hit it; `helm test` asserts its payload |
 | Loopback bind, only the edge reaches in | optional NetworkPolicy: default-deny ingress except the sources you list |
 | An attach failure crash-loops the gateway | `maxUnavailable: 0` rolling update — the failing NEW pod stalls the rollout while the **previous revision keeps serving**; `helm rollback` back, no state to migrate |
 

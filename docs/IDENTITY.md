@@ -223,6 +223,29 @@ surface, at the edge, before the call is made.
   can never carry an identity.
 - A shared-token caller is refused by a gate, exactly as by an identity mode.
 
+### Per-surface audience
+
+```toml
+# gateway-wide: ANY of these (comma-separated), checked by the JWT verifier
+#   BEHEROUTER_OIDC_AUDIENCE=plane-mcp,wiki-mcp
+
+[plane]
+plugin = "plane-http"
+  [plane.authz]
+  audience = "plane-mcp"          # or ["plane-mcp", "plane"]: any one of them
+```
+
+`BEHEROUTER_OIDC_AUDIENCE` is gateway-wide. With several teams' surfaces on one
+gateway, every surface used to accept every team's tokens, under an audience
+name that fit only one of them. `audience` narrows a surface to tokens whose
+`aud` names it. It is checked **in addition to** the gateway-wide verification,
+never instead of it, and the gateway-wide value may now be a list. The gate
+behaves like `require_roles`: it applies to the meta-tools too, it refuses a
+shared-token caller, and it is refused at boot (and at lint, where visible) on
+an `auth.mode: shared` gateway. It needs no `BEHEROUTER_OIDC_ROLES_CLAIM`,
+because `aud` is a standard claim. A refusal names the **expected** audience,
+never the token's.
+
 ## 6b. Worked example — per-user Plane
 
 Verified end to end against real `plane-mcp-server` 0.3.2 in
@@ -273,13 +296,14 @@ Offline, from `registry-lint` (and from `validate_entry`, so also at boot):
 | `lookup` with no `path` and no `$BEHEROUTER_IDENTITY_MAP` | Nowhere to read from |
 | A `lookup` map that does not exist, where lint can see it | It would fail every call |
 | `require_roles` that is not a non-empty array of names | Malformed gate |
+| `audience` that is not a non-empty string or array of strings | Malformed gate |
 
 At boot, where the gateway's own environment is authoritative:
 
 | Configuration | Refused because |
 |---|---|
 | A per-user surface with `BEHEROUTER_AUTH_MODE=shared` | A gateway that cannot verify a user cannot require one |
-| `require_roles` with `BEHEROUTER_AUTH_MODE=shared` | Same |
+| `require_roles` or `audience` with `BEHEROUTER_AUTH_MODE=shared` | Same |
 | `require_roles` with no `BEHEROUTER_OIDC_ROLES_CLAIM` | The gate could only fail every call |
 
 `registry-lint` repeats the boot checks **only where the variables are visible**:
@@ -314,6 +338,50 @@ A `health --deep` record carries:
 
 An applied identity is logged with the subject, the mode and the **names** of
 the material applied — never a value.
+
+### Proving a user's identity reaches the backend
+
+A green `health --deep` probe proves the deployment credential and nothing
+more. To prove the per-user path, run the same probe **as a user**:
+
+```bash
+beherouter health --deep --surface plane --bearer-file - --json < token.txt
+```
+
+```json
+{"name": "plane", "probe": "ok",
+ "user_probe": {"state": "ok", "subject": "alice",
+                "backend_identity": {"id": "…", "email": "alice@bank.invalid"},
+                "matches_caller": true}}
+```
+
+The token is read from a file or stdin, never from argv. It goes through the
+gateway's **own** path: the same verifier (`rejected` with the reason, e.g.
+`expired`), the surface's gate and materialisation (`refused`), then the probe
+with the caller's identity (`failed`). `matches_caller` compares the identity
+the backend returned with the token's `email` / `preferred_username` / `sub`.
+`mismatch` is exactly the incident this exists to catch: every user's call
+quietly acting as the deployment identity. `rejected`, `refused`, `failed` and
+`mismatch` fail the command. A surface without an identity mode reports
+`not_applicable`.
+
+### Expired tokens
+
+An expired token is the typical first incident of a per-user rollout: a client
+forwards a stale access token. The gateway:
+
+- logs it at **WARNING** (FastMCP's own line, raised from INFO);
+- answers with RFC 6750
+  `WWW-Authenticate: Bearer error="invalid_token", error_description="token expired"`
+  so a client can tell "refresh" from "re-authenticate". Every other refusal
+  keeps the generic answer;
+- counts it in `GET /metrics` as
+  `beherouter_auth_rejections_total{reason="expired"}`, beside `invalid`,
+  `issuer`, `audience` and `scope`.
+
+"Expired" is only ever said about a token whose signature verified. FastMCP
+checks the signature before `exp`, so a forged token with an old `exp` counts
+as `invalid`.
 
 On Kubernetes, `auth.*` and `identityMap.*` in the chart's values render the
 variables above into **both** the Deployment and the `registry-lint` hook Job,
