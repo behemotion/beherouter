@@ -20,7 +20,7 @@ dependencies = [
     # FastMCP 3.x: the plan targeted >=2.0.0, but 3.x changed `mount()` to
     # `mount(server, namespace=)` and rejects `**kwargs` tool functions, so the
     # surface builder is written against 3.x only. See docs/FASTMCP-NOTES.md.
-    "fastmcp>=3.0.0",
+    "fastmcp>=3.4,<4",
     # v0.1.1 is the FLOOR, not a preference: v0.1.0 catches only one of the two
     # importable ClickException classes, and this venv has both (FastMCP pulls
     # standalone click in alongside Typer's vendored copy), so under v0.1.0 usage
