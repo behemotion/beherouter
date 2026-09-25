@@ -141,6 +141,20 @@ def resolve_pinned(entry, plugin: "Plugin | None") -> list[str]:
     return list(plugin.spec.pinned) if plugin is not None else []
 
 
+def resolve_aliases(entry, plugin: "Plugin | None") -> dict[str, tuple[str, ...]]:
+    """A surface's search vocabulary: the plugin's, UNION the entry's additions.
+
+    Additive, unlike `pinned`: a tested vocabulary cannot be lost by an operator
+    adding one word. Order-preserving and de-duplicated.
+    """
+    merged = {
+        k: tuple(v) for k, v in (plugin.spec.search_aliases if plugin else {}).items()
+    }
+    for tool, words in (entry.search_aliases or {}).items():
+        merged[tool] = tuple(dict.fromkeys([*merged.get(tool, ()), *words]))
+    return merged
+
+
 from . import (  # noqa: F401  (imported for their registration side effect)
     gcal,
     m365,

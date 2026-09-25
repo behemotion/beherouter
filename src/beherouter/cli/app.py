@@ -260,7 +260,7 @@ def search(tool: str, query: str, limit: int = 5) -> None:
         raise NotFound(f"no attached tool '{tool}'")
     backend = _load(entry)
     hits = search_hits(
-        build_index(backend.descriptors, getattr(backend, "search_aliases", None)),
+        build_index(backend.descriptors, backend.search_aliases),
         {d.name: d for d in backend.descriptors},
         query,
         limit,

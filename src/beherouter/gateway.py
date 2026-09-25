@@ -33,7 +33,7 @@ async def load_backend(entry: RegistryEntry):
     Only the final `build` may perform I/O; everything before it is validation
     against inert data.
     """
-    from .plugins import get, resolve_pinned
+    from .plugins import get, resolve_aliases, resolve_pinned
     from .plugins.spec import PluginContext
     from .plugins.validate import validate_config
 
@@ -63,6 +63,8 @@ async def load_backend(entry: RegistryEntry):
         if entry.catalogue_ttl_ms is not None
         else plugin.spec.catalogue_ttl_ms
     )
+    # Same reasoning as ttl_ms: vocabulary is a search concern, not a backend's.
+    backend.search_aliases = resolve_aliases(entry, plugin)
     return backend
 
 

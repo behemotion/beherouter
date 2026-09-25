@@ -6,6 +6,7 @@ makes "attach performs no network I/O" mechanically enforceable rather than a
 convention: a plugin CANNOT phone home from its spec, only from build().
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 BACKINGS = ("native", "http", "stdio", "cli")
@@ -74,6 +75,11 @@ class PluginSpec:
     catalogue_ttl_ms: int = 300_000
     # Whether this plugin may carry a per-request identity; see identity.py.
     identity: IdentitySupport = IdentitySupport()
+    # Extra search words per tool name: words an agent would TYPE that the
+    # backend's own description does not contain (Plane says `cycle`, agents
+    # say "sprint"). A tested default; a registry entry may ADD to it, never
+    # replace it. See docs/PLUGINS.md § Search vocabulary.
+    search_aliases: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

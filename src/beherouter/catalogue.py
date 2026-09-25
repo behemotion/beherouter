@@ -26,7 +26,7 @@ fails loudly and predictably instead.
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from .indexing import build_index
@@ -72,8 +72,12 @@ class Catalogue:
         ttl_ms: int | None = None,
         clock: Callable[[], float] = time.monotonic,
         name: str = "",
+        aliases: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         self._descriptors = list(descriptors)
+        # Search vocabulary, applied on EVERY index rebuild so it survives a
+        # refresh -- the words belong to the surface, not to one catalogue.
+        self._aliases = dict(aliases or {})
         self._relist = relist
         self._ttl_ms = ttl_ms
         self._clock = clock
@@ -108,7 +112,7 @@ class Catalogue:
     @property
     def index(self) -> ToolIndex:
         if self._index is None:
-            self._index = build_index(self._descriptors)
+            self._index = build_index(self._descriptors, self._aliases)
         return self._index
 
     @property

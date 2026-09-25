@@ -241,3 +241,16 @@ async def test_a_concurrent_refresh_relists_once_and_keeps_the_drift():
     assert calls == [1]
     assert cat.status == STATUS_DRIFT
     assert cat.drift.added == ("new_one",)
+
+
+async def test_aliases_survive_a_refresh():
+    async def relist():
+        return [_d("cycle"), _d("module")]
+
+    clock = _Clock()
+    cat = Catalogue([_d("cycle")], relist=relist, ttl_ms=1000, clock=clock,
+                    aliases={"cycle": ("sprint",)})
+    assert cat.index.search("sprint") == ["cycle"]
+    clock.advance(2.0)
+    await cat.ensure_fresh()
+    assert cat.index.search("sprint") == ["cycle"]
