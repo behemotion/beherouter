@@ -1,0 +1,23 @@
+# plane-mcp-bearer: upstream plane-mcp-server plus a bearer-forwarding mount.
+# See README.md. Build from this directory:
+#   podman build -t plane-mcp-bearer -f Containerfile .
+FROM python:3.12-slim
+
+# EXACT pin, and a resolution date: the wrapper relies on plane-mcp-server's
+# private auth_method routing (see plane_mcp_bearer.py), and the ~80 transitive
+# dependencies must not re-resolve under it between two builds.
+ARG PLANE_MCP_VERSION=0.3.2
+ARG EXCLUDE_NEWER=2026-09-24T00:00:00Z
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN uv venv /opt/plane-mcp-bearer \
+ && uv pip install --python /opt/plane-mcp-bearer/bin/python \
+      --exclude-newer "${EXCLUDE_NEWER}" "plane-mcp-server==${PLANE_MCP_VERSION}"
+COPY plane_mcp_bearer.py /opt/plane-mcp-bearer/app/plane_mcp_bearer.py
+
+ENV PATH="/opt/plane-mcp-bearer/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1
+USER 1000:1000
+WORKDIR /opt/plane-mcp-bearer/app
+EXPOSE 8211
+CMD ["python", "plane_mcp_bearer.py"]

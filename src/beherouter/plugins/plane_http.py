@@ -8,28 +8,39 @@ registry entry would move that decision to attach time, which is precisely the
 decision this codebase refuses to make late. Two plugins, one vocabulary: the
 pin list and the probe are imported from `plane.py`, not copied.
 
-⚠️ THE URL IS THE `/http` MOUNT, NEVER `/http/api-key`. plane-mcp-server serves
-both (`__main__.py` mounts `<prefix>/http/api-key` before `<prefix>/http`) and
-they are different auth schemes:
+⚠️ UPSTREAM plane-mcp-server CANNOT SERVE THIS PLUGIN, AND NO DEFAULT URL
+PRETENDS OTHERWISE. This plugin forwards the caller's own IdP token as
+`Authorization: Bearer`. plane-mcp-server 0.3.2 serves two HTTP mounts and
+neither carries one:
 
-  - `/http/api-key` takes a per-request `x-api-key` + `x-workspace-slug`. That
-    is a per-request PLANE PAT — a second shared-secret scheme with more secrets
-    in it, not an identity. A bearer sent there is ignored, so a surface
-    configured per-user would attribute every write to whatever PAT the client
-    sent. `validate` refuses that URL for exactly this reason.
-  - `/http` verifies the bearer by calling `GET <PLANE_BASE_URL>/api/v1/users/me/`
-    with it and builds `PlaneClient(access_token=...)`, so the token continues to
-    Plane as `Authorization: Bearer`. THIS is the mount that makes a caller act
-    as themselves.
+  - `/http` is a FastMCP OAuth PROXY. `load_access_token` first calls
+    `jwt_issuer.verify_token`, which accepts only a JWT that proxy minted itself
+    (a `jti` in its own store), so a forwarded Keycloak/Entra token is 401'd on
+    its first line — before Plane is ever called. Measured in `tests/e2e/`
+    (2026-09-22) and again by a production deployment (2026-09-24).
+  - `/http/api-key` sends the credential downstream as `x-api-key`, i.e. treats
+    it as a Plane PAT. A forwarded JWT arrives there as an unknown PAT.
+    That mount is `plane-http-apikey`'s, with mode `client`.
 
-⚠️ NO `workspace_slug` CONFIG, unlike the stdio plugin. On this mount the
-workspace comes from the verified token's own app installation
-(`plane_mcp/client.py` reads `workspace_slug` out of the AccessToken claims), so
-a configured one would be a value nothing reads.
+An earlier version of this docstring claimed `/http` "verifies the bearer by
+calling /api/v1/users/me/ with it". It does not, and the default `base_url`
+pointed at it; a surface built from both attached green and 401'd every user
+call. `docs/IDENTITY.md` §6b had it right all along.
+
+WHAT THIS PLUGIN NEEDS is a backend that (a) accepts a forwarded bearer and
+(b) hands it to Plane as `Authorization: Bearer`, plus a Plane that verifies
+your IdP's tokens. For (a)+(b) in front of upstream plane-mcp-server,
+`contrib/plane-mcp-bearer/` is a small wrapper built from upstream's own
+importable pieces — pinned to exactly one plane-mcp-server version, because it
+relies on upstream's private `auth_method` routing (`plane_mcp/client.py`). So
+`base_url` is REQUIRED, and `validate` refuses upstream's `/http/mcp` and
+`/http/api-key` mounts offline.
 
 ⚠️ THE DEPLOYMENT TOKEN IS STILL REQUIRED, and it is not decoration: every
-request to `/http` is authenticated, `tools/list` included, so the ATTACH needs
-a credential of its own. It is what lists the catalogue and what `health --deep`
+request to the backend is authenticated, `tools/list` included, so the ATTACH
+needs a credential of its own. An IdP token would expire under a long-lived
+gateway, so against `contrib/plane-mcp-bearer` it is a Plane PAT, which the
+wrapper recognises by shape and sends as `X-Api-Key`. It is what lists the catalogue and what `health --deep`
 probes with — per-call identity material overrides the header for that one call.
 A green probe therefore proves the deployment token and says nothing about any
 user's, exactly as `docs/IDENTITY.md` §1 states.
@@ -46,11 +57,19 @@ from ..backends.backing import McpBacking
 from ..backends.mcp import load_mcp_backend
 from ..errors import UsageError
 from . import register
-from .plane import PINNED, PROBE, PROBE_ARGS
+from .plane import (
+    EDITION_FIELD,
+    PINNED,
+    PROBE,
+    PROBE_ARGS,
+    edition_backing_options,
+    validate_edition,
+)
 from .spec import ConfigField, EnvVar, IdentitySupport, PluginContext, PluginSpec
 
-# The mount, spelled once. `/http` + FastMCP's own default `/mcp` path.
-BEARER_MOUNT = "/http/mcp"
+# Upstream plane-mcp-server's two HTTP mounts, spelled once so `validate` can
+# refuse both: `/http` + FastMCP's default `/mcp` is the OAuth proxy.
+OAUTH_PROXY_MOUNT = "/http/mcp"
 API_KEY_MOUNT = "/http/api-key"
 
 SPEC = PluginSpec(
@@ -67,20 +86,24 @@ SPEC = PluginSpec(
         ConfigField(
             name="base_url",
             type=str,
-            default=f"http://plane-mcp:8211{BEARER_MOUNT}",
+            required=True,
             doc=(
-                "plane-mcp-server's BEARER mount, by network alias. Must be the "
-                f"'{BEARER_MOUNT}' endpoint — never '{API_KEY_MOUNT}/mcp'."
+                "MCP endpoint of a backend that forwards the caller's bearer to "
+                "Plane, e.g. contrib/plane-mcp-bearer's "
+                "'http://plane-mcp-bearer:8211/bearer/mcp'. Upstream "
+                "plane-mcp-server's own mounts cannot."
             ),
         ),
+        EDITION_FIELD,
     ),
     env=(
         EnvVar(
             name="access_token",
             doc=(
-                "Plane access token used for ATTACH and the probe only; sent as "
-                "Authorization: Bearer. A per-request identity overrides it per "
-                "call. NOT named `token`: that would make the backend variable "
+                "Deployment credential for ATTACH and the probe only; sent as "
+                "Authorization: Bearer. Against contrib/plane-mcp-bearer, a "
+                "Plane PAT. A per-request identity overrides it per call. NOT "
+                "named `token`: that would make the backend variable "
                 "BEHEROUTER_<SURFACE>_TOKEN, the name reserved for the client's "
                 "own gateway bearer."
             ),
@@ -100,13 +123,14 @@ SPEC = PluginSpec(
 
 
 def validate(config: dict) -> None:
-    """Refuse a URL that is not the bearer mount. Offline, no I/O.
+    """Refuse upstream's mounts, and any URL that is not an MCP endpoint.
 
-    Both failures below attach *cleanly* and misbehave later, which is the class
-    of mistake this repo spends its lint budget on: the api-key mount answers
-    every call with the PAT the client sent (or none), and a non-`/mcp` path
-    404s only when the first tool is called.
+    Every failure below attaches *cleanly* and misbehaves later, which is the
+    class of mistake this repo spends its lint budget on: the api-key mount
+    treats the forwarded token as a PAT, the OAuth proxy 401s it before Plane
+    is consulted, and a non-`/mcp` path 404s only when the first tool is called.
     """
+    validate_edition("plane-http", config)
     base_url = config.get("base_url")
     if not base_url:
         return
@@ -114,14 +138,24 @@ def validate(config: dict) -> None:
     if path.startswith(API_KEY_MOUNT) or f"{API_KEY_MOUNT}/" in f"{path}/":
         raise UsageError(
             f"plane-http: base_url points at '{API_KEY_MOUNT}', which takes a "
-            f"per-request x-api-key (a Plane PAT), not a bearer. A per-user "
-            f"surface there would attribute every write to that PAT. Use the "
-            f"'{BEARER_MOUNT}' mount."
+            f"per-request Plane PAT as x-api-key, not a bearer. For per-user "
+            f"PATs use the `plane-http-apikey` plugin with identity mode "
+            f"'client'; to forward an IdP token, point at a bearer-forwarding "
+            f"backend such as contrib/plane-mcp-bearer."
+        )
+    if path.endswith(OAUTH_PROXY_MOUNT):
+        raise UsageError(
+            f"plane-http: base_url points at '{OAUTH_PROXY_MOUNT}', upstream "
+            f"plane-mcp-server's OAuth proxy. It accepts only tokens it minted "
+            f"itself and 401s a forwarded one before Plane is called, so every "
+            f"user call would fail after a green attach. Point at a "
+            f"bearer-forwarding backend instead — contrib/plane-mcp-bearer "
+            f"serves one at '/bearer/mcp'."
         )
     if not path.endswith("/mcp"):
         raise UsageError(
             f"plane-http: base_url '{base_url}' is not an MCP endpoint; it must "
-            f"end in '/mcp' (the bearer mount is '{BEARER_MOUNT}')"
+            f"end in '/mcp'"
         )
 
 
@@ -138,6 +172,7 @@ async def build(ctx: PluginContext):
             # beside it as a second header.
             env={"authorization": f"Bearer {ctx.env['access_token']}"},
             pinned=ctx.pinned,
+            **edition_backing_options(ctx.config),
         )
     )
 
