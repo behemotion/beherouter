@@ -431,3 +431,20 @@ async def test_relist_keeps_declining_the_output_schema(annotated_server):
         )
         fresh = await b.relist()
     assert all(x.output_schema is None for x in fresh)
+
+
+async def test_a_missing_stdio_binary_is_refused_by_name_with_the_override():
+    """The `plane` plugin's default `cmd` assumes an image that ships
+    plane-mcp-server. On one that does not, the old failure was an OSError
+    wrapped in "could not attach", naming neither the file nor the way out."""
+    from beherouter.backends.mcp import load_mcp_backend
+
+    backing = McpBacking(
+        name="plane", transport="stdio", cmd="/opt/nowhere/bin/plane-mcp-server stdio"
+    )
+    with pytest.raises(UsageError) as e:
+        await load_mcp_backend(backing)
+    msg = str(e.value)
+    assert "/opt/nowhere/bin/plane-mcp-server" in msg
+    assert "[plane.config]" in msg and "`cmd`" in msg
+

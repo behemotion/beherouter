@@ -29,9 +29,21 @@ suite passes on the tagged revision, and refuses a tag that disagrees with the
 `pyproject.toml` version or the chart's `appVersion` — the tag, the image and
 the chart default cannot drift apart.
 
+The image runs as **UID 1000** (`USER` in the Containerfile), so it is
+non-root without any `securityContext`. It also ships **`plane-mcp-server`
+0.3.2** in a venv of its own at `/opt/plane-mcp`, which is where the in-tree
+`plane` plugin's default `cmd` points. Build with
+`--build-arg PLANE_MCP_VERSION=` to leave it out.
+
 Build it yourself only if you need to: a registry mirror, or an extended image
-(a stdio backend's binary must be **inside** the image — see the chart's
-caveats). The Containerfile builds from a plain checkout of that tag.
+(any other stdio backend's binary must be **inside** the image). The
+Containerfile builds from a plain checkout of that tag.
+
+⚠️ **Podman with a writable bind mount:** the repo's `podman-compose.yml` sets
+`userns_mode: keep-id:uid=1000,gid=1000`, so a host directory you own stays
+writable to UID 1000. A deployment of your own that mounts files the gateway
+must read (the registry, an identity map) needs them readable by UID 1000:
+mode `0644`, or the same `keep-id` mapping.
 
 
 ## Configuration
@@ -236,10 +248,10 @@ kubectl exec deploy/beherouter -- beherouter health --deep --json   # exit 6 == 
 
 ### Materialising a `stdio` backend at pod start (a `cmd` override)
 
-The published image carries the **gateway only**. A `stdio` plugin whose server
-is not in the image — `plane`, whose default `cmd` points at a path the homelab
-image bakes in — can be materialised at start-up by overriding `cmd` in the
-registry entry:
+The published image ships `plane-mcp-server` for the `plane` plugin, so this is
+no longer needed for it. For any **other** stdio server that is not in the
+image, you can materialise it at start-up by overriding `cmd` in the registry
+entry. Shown here with Plane, the case it was first measured on:
 
 ```toml
 [plane]

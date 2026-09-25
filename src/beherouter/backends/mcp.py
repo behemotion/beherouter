@@ -9,6 +9,7 @@ chosen by the upstream server, and rewriting them would break `call_tool`.
 """
 
 import shlex
+import shutil
 
 from fastmcp import Client
 from fastmcp.client.transports import ClientTransport, StdioTransport, StreamableHttpTransport
@@ -178,6 +179,24 @@ def _with_note(description: str, note: str | None) -> str:
     return f"{description.rstrip()}\n\n{note}" if description else note
 
 
+def _require_command(backing: McpBacking) -> None:
+    """Refuse a stdio backing whose command is not installed, by name.
+
+    Without this, a missing binary surfaces as an OSError from deep inside the
+    stdio client, wrapped in "could not attach", which names neither the
+    missing file nor the way out. A plugin's default `cmd` assumes an image
+    that has the binary; the override is the operator's escape hatch.
+    """
+    argv = shlex.split(backing.cmd or "")
+    if argv and shutil.which(argv[0]) is None:
+        raise UsageError(
+            f"'{backing.name}': stdio command '{argv[0]}' is not installed in "
+            f"this image (not found, or not executable, on PATH). Use an image "
+            f"that ships it, or override the plugin's `cmd` in "
+            f"[{backing.name}.config] to point at one that exists."
+        )
+
+
 def _annotations(tool) -> dict | None:
     """The backend's tool annotations as a plain dict, or None if it sent none.
 
@@ -268,6 +287,8 @@ async def load_mcp_backend(
 ) -> Backend:
     """Connect, list the upstream catalogue, and return a Backend for the gateway."""
     transport = build_transport(backing, headers)
+    if backing.transport == "stdio":
+        _require_command(backing)
     try:
         async with Client(transport) as client:
             backend = await backend_from_client(

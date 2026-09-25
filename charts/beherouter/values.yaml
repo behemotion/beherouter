@@ -76,6 +76,8 @@ registry: ""
 #       [plane.env]
 #       api_key = "${BEHEROUTER_PLANE_API_KEY}"
 #
+# (`plane` is a stdio plugin; the published image ships its plane-mcp-server.)
+#
 # ⚠️ BEHEROUTER_PLANE_API_KEY, not BEHEROUTER_PLANE_TOKEN. The first is the
 # BACKEND credential (`beherouter plugin-config` emits exactly this name); the
 # second is what `beherouter client-config` builds for a CLIENT's gateway
