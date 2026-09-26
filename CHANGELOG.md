@@ -21,6 +21,13 @@ auto-generated contributor appendix is appended below it). Releases before
   refuse boot.
 - **FastMCP is capped below 4** (`fastmcp>=3.4,<4`); 4.0 moved modules
   plugins build on.
+- ⚠️ **`sonarqube`'s credential is renamed `token` → `api_key`.** `token`
+  derived `BEHEROUTER_<SURFACE>_TOKEN`, the name `client-config` gives the
+  client's gateway bearer — two unrelated secrets under one name. A registry
+  still setting `[<surface>.env] token = …` is refused at `registry-lint` and
+  at boot, naming `api_key`; rename the key (the `${VAR}` it points at may
+  stay, though `BEHEROUTER_<SURFACE>_API_KEY` is the name `plugin-config`
+  emits).
 
 ### Added
 
