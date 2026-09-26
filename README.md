@@ -142,6 +142,7 @@ plugin = "gcal"
 | `plane-http-apikey` | `client` | each caller's Plane PAT. Works against stock `plane-mcp-server` |
 | `plane-http` | `bearer` | each caller's **IdP token**, through [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md). Plane itself must verify it |
 | `gcal`, `m365` | `lookup` | each caller's OAuth refresh token, from the identity map |
+| `openapi` | `bearer`, `claims`, `client`, `lookup` | each caller's material, on the upstream REST request |
 
 A plugin that declares no identity support **can't** be configured for per-user use.
 Your own plugins declare their modes the same way (see [`docs/PLUGINS.md`](docs/PLUGINS.md)).
@@ -291,7 +292,7 @@ names, identity support, search vocabulary, backing) plus one
 anything**, and it makes "attach performs no network I/O" mechanically enforceable: a
 plugin *can't* phone home from its spec, only from `build`.
 
-Four backings:
+Five backings:
 
 | Backing | What it is | Per-user identity |
 |---|---|---|
@@ -299,6 +300,7 @@ Four backings:
 | `stdio` | An MCP server run as a subprocess. Costs a process, not a container | **never** (refused) |
 | `cli` | A beheaxi CLI, described and invoked as tools | subprocess environment |
 | `native` | In-process Python. No sidecar, no extra runtime | per-user credential provider |
+| `inproc` | An in-process FastMCP server: the `openapi` source and decorator plugins | per-call headers on the upstream request |
 
 Plugins don't have to live in this tree. A package that advertises the
 `beherouter.plugins` entry point is picked up at startup, so a team with an internal
@@ -332,7 +334,7 @@ knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 | Document | What it covers |
 |---|---|
 | [`docs/IDENTITY.md`](docs/IDENTITY.md) | Per-user identity: OIDC next to the shared token, the four modes, the identity map, role and audience gates, user probes, every refusal rule |
-| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Writing a plugin: the contract, the four backings, pins and probes, identity support, out-of-tree plugins, testing |
+| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Writing a plugin: the contract, the five backings, pins and probes, identity support, out-of-tree plugins, testing |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deploying, verifying, upgrading, rolling back |
 | [`tests/e2e/`](tests/e2e/README.md) | The local end-to-end stack that proves per-user identity against a real `plane-mcp-server` |
 | [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md) | The Plane mount that forwards a caller's IdP token |
