@@ -74,3 +74,24 @@ def test_importing_plugins_opens_no_socket():
     )
     r = subprocess.run([sys.executable, "-c", guard], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
+
+
+def test_requires_entry_refuses_an_entry_without_the_named_keys():
+    from beherouter.errors import UsageError
+    from beherouter.plugins import PLUGINS, register
+    from beherouter.plugins.spec import PluginSpec
+    from beherouter.registry import RegistryEntry, validate_entry
+
+    async def build(ctx):
+        raise AssertionError
+
+    register(PluginSpec(name="t-req", summary="t", backing="inproc",
+                        requires_entry=("probe", "pinned")), build)
+    try:
+        with pytest.raises(UsageError, match=r"'s'.*t-req.*probe"):
+            validate_entry(RegistryEntry(name="s", plugin="t-req", pinned=["a"]))
+        with pytest.raises(UsageError, match=r"'s'.*t-req.*pinned"):
+            validate_entry(RegistryEntry(name="s", plugin="t-req", probe="a", pinned=[]))
+        validate_entry(RegistryEntry(name="s", plugin="t-req", probe="a", pinned=["a"]))
+    finally:
+        PLUGINS.pop("t-req", None)

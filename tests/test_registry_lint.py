@@ -300,3 +300,23 @@ def test_lint_is_quiet_for_an_alias_on_a_pinned_tool(tmp_path, capsys):
     assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert not [w for w in out["warnings"] if "search_aliases" in w]
+
+
+def test_a_plugin_warning_reaches_the_lint_output(tmp_path, capsys):
+    from beherouter.cli.app import app
+    from beherouter.plugins import PLUGINS, register
+    from beherouter.plugins.spec import PluginSpec
+
+    async def build(ctx):
+        raise AssertionError
+
+    register(PluginSpec(name="t-warn", summary="t", backing="inproc"), build,
+             warn=lambda config: ["publishes 812 tools"])
+    try:
+        path = _write(tmp_path, '[w]\nplugin = "t-warn"\n')
+        assert app.main(["registry-lint", "--path", path, "--json"]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert "'w': publishes 812 tools" in out["warnings"]
+    finally:
+        PLUGINS.pop("t-warn", None)
