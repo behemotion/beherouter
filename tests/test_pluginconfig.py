@@ -44,3 +44,16 @@ def test_unknown_plugin_raises():
 def test_surface_name_with_a_slash_is_rejected():
     with pytest.raises(UsageError, match="surface"):
         render("a/b", "office-mcp")
+
+
+def test_openapi_fragment_parses_with_the_right_shapes():
+    """A plugin whose `probe`/`pinned` are mandatory (`requires_entry`) and
+    whose config holds a list must get a block with those keys, typed as the
+    lint expects — not `include = ""`, which lint refuses as a string."""
+    import tomllib
+
+    block = render("crm", "openapi")["registry"].split("\n", 1)[1]
+    crm = tomllib.loads(block)["crm"]
+    assert crm["pinned"] == [] and crm["probe"] == ""
+    assert crm["config"]["include"] == []
+    assert crm["config"]["spec"] == ""

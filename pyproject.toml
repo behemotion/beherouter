@@ -34,6 +34,8 @@ dependencies = [
     "rapidfuzz>=3.9.0",
     "jsonschema>=4.0.0",
     "httpx>=0.27.0",
+    # OpenAPI documents are YAML as often as JSON (the openapi plugin).
+    "pyyaml>=6",
     "uvicorn>=0.30.0",
 ]
 

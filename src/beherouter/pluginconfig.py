@@ -55,6 +55,10 @@ def collision_warning(surface: str, credential: str, value: str) -> str | None:
     )
 
 
+# An empty placeholder per RegistryEntry key, typed as the entry field is.
+_ENTRY_EMPTY = {"pinned": "[]", "probe": '""'}
+
+
 def render(surface: str, plugin_name: str) -> dict:
     """Return {'registry': str, 'caddy': str, 'env': str}."""
     if not _SURFACE.match(surface):
@@ -65,11 +69,18 @@ def render(surface: str, plugin_name: str) -> dict:
     spec = get(plugin_name).spec
 
     lines = [f"[{surface}]", f'plugin = "{plugin_name}"']
+    # Keys with no tested default (`requires_entry`) must be emitted too, and
+    # every placeholder typed as lint expects it: a block that `registry-lint`
+    # refuses as generated is the disagreement this command exists to prevent.
+    for key in spec.requires_entry:
+        empty = _ENTRY_EMPTY.get(key, '""')
+        lines.append(f"{key} = {empty}    # required: no tested default")
     required = [f for f in spec.config if f.required]
     if required:
         lines.append(f"  [{surface}.config]")
         for f in required:
-            lines.append(f'  {f.name} = ""    # {f.doc or "required"}')
+            empty = "[]" if f.type is list else '""'
+            lines.append(f"  {f.name} = {empty}    # {f.doc or 'required'}")
     if spec.env:
         lines.append(f"  [{surface}.env]")
         for v in spec.env:

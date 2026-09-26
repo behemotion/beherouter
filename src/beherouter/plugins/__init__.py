@@ -178,6 +178,7 @@ from . import (  # noqa: F401  (imported for their registration side effect)
     gcal,
     m365,
     office_mcp,
+    openapi,
     plane,
     plane_http,
     plane_http_apikey,
