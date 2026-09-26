@@ -26,6 +26,23 @@ auto-generated contributor appendix is appended below it). Releases before
 
 - **`beherouter.plugin_api`**, the supported import surface for plugin
   authors, and `PluginSpec.api` (plugin API v1), which `register()` checks.
+- **`openapi` plugin**: attach a REST API from its OpenAPI document — `include`
+  lists the operations, schemas are closed, a per-user identity lands on the
+  upstream request, and each call is isolated from the gateway caller's own
+  request headers (FastMCP copies them by default). Lint checks the operation
+  names offline.
+- **`inproc` backing** and `plugin_api.load_inproc_backend` / `identity_client`:
+  a plugin can hand the gateway an in-process FastMCP server ("some decorated
+  functions") in about 15 lines.
+- **`PluginSpec.requires_entry`**: a generic source can make `probe`/`pinned`
+  mandatory, and `plugin-config` emits them. A plugin's `warn()` findings reach
+  `registry-lint`'s `warnings`.
+
+### Fixed
+
+- `beherouter attach`/`detach` no longer corrupt nested registry tables: a
+  `[surface.identity.map]` was being rewritten as a string, silently
+  breaking per-user identity on every other surface.
 
 ## [0.2.4] - 2026-09-25
 
