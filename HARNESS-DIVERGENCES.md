@@ -263,16 +263,14 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
 1. ~~**No surfaces are attached at all.**~~ Resolved — see the section directly above.
    *(Slot kept so items 2–5 keep their numbers; `AGENTS.md` cites §5.)*
 
-   The residual worth naming: **two surfaces on one gateway is also two ways to take
-   the gateway down.** An attach failure crash-loops the process, so `plane`'s backend
-   — a subprocess holding a revocable PAT, pinned to `PLANE_MCP_VERSION` — can now take
-   `/office/mcp` and `/healthz` with it. `/healthz` going dark says *something* broke,
-   never *which* backend; that is `podman logs beherouter`, every time.
-
-   Still uncontracted: nothing here bounds a backend's blast radius on the surfaces
-   beside it. An empty registry remains a supported state (`serve` no longer refuses
-   one) and `/healthz` stays up for it, so *emptying* the gateway does not read as an
-   outage — but *one bad entry* still does.
+   ~~The residual worth naming: **two surfaces on one gateway is also two ways to take
+   the gateway down.**~~ **Closed in code 2026-09-25 (Plugin sources Phase 0),
+   unreleased** — the live 0.2.4 gateway still crash-loops until the next `/deploy`.
+   A surface whose attach fails or exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` is served as
+   `503` and retried with backoff; `/healthz` stays up and names it under `failed`, so
+   it now says *which* backend broke. What `registry-lint` can see (unknown plugin,
+   bad config, unset `${VAR}`) still refuses boot, deliberately. Held by
+   `tests/test_gateway_isolation.py`.
 2. **Pins are now tested knowledge; nothing still validates them against the LIVE
    catalogue.** Partly closed 2026-09-09 by Plugins Phase 1.
 
