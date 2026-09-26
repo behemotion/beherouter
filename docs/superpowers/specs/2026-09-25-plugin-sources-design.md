@@ -391,9 +391,11 @@ differ.
    - a root that is missing or not a directory;
    - any entry in `failed_files`, naming the file and the error;
    - zero tools;
-   - two **distinct** tool objects under one name, naming both files. Identity,
-     not name: `extract_components` scans `dir(module)`, so a tool imported
-     from a sibling module is reported under both files, and that is not a
+   - two **distinct** functions published under one name, naming both files.
+     Compared by the wrapped function (`tool.fn`), not by name and not by the
+     `Tool` object: `extract_components` scans `dir(module)`, so a tool imported
+     from a sibling module is reported under both files, and it builds a fresh
+     `Tool` each time (measured: same `fn`, different `Tool`). That is not a
      duplicate.
    Resources, templates and prompts are dropped with a warning; the gateway
    surfaces tools only.
@@ -409,7 +411,11 @@ differ.
    (bare, called, or as an attribute such as `fastmcp.tools.tool`); the name is
    the `name=` keyword, else a positional string, else the function name; names
    starting `_` are skipped, as `extract_components` does. `pinned` and `probe`
-   must be among them. A path that does not exist on the linting machine is a
+   must be among them, through a generic `Plugin.published(config) -> set[str]
+   | None` hook that `validate_entry` checks `pinned` and `probe` against; the
+   `openapi`-specific `include` block in `validate_entry` moves onto the same
+   hook (which also starts refusing an `openapi` probe outside `include`). A
+   path that does not exist on the linting machine is a
    **warning**, not a failure. The static list is best-effort; the attach-time
    checks in (1) are authoritative.
 4. **Calls** reuse the `inproc` executor unchanged, including its error
