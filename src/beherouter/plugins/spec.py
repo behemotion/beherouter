@@ -9,7 +9,7 @@ convention: a plugin CANNOT phone home from its spec, only from build().
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-BACKINGS = ("native", "http", "stdio", "cli")
+BACKINGS = ("native", "http", "stdio", "cli", "inproc")
 
 # The plugin contract's version. Bump ONLY on a change an existing plugin
 # cannot survive (a removed or re-typed PluginSpec/PluginContext field, a

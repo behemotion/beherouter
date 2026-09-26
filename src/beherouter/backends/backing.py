@@ -19,7 +19,7 @@ Guard = Callable[[str, dict], None]
 @dataclass(frozen=True)
 class McpBacking:
     name: str
-    transport: str  # "stdio" | "http"
+    transport: str  # "stdio" | "http" | "inproc"
     cmd: str | None = None
     url: str | None = None
     env: dict[str, str] | None = None
@@ -38,6 +38,9 @@ class McpBacking:
     # AND on every re-list, so the published array and the searchable catalogue
     # say the same thing. For what a model must know before it calls the tool.
     notes: dict[str, str] = field(default_factory=dict)
+    # inproc only: the in-process FastMCP server a plugin's build() constructed.
+    # Typed loosely so this module stays free of FastMCP imports.
+    server: object | None = None
 
 
 @dataclass(frozen=True)
