@@ -375,6 +375,50 @@ two differ.
    declares identity but its source isn't identity-aware, `native` as it is, and
    no identity support for `python-dir`.
 
+### Phase 1b — `python-dir` decisions (brainstorm, 2026-09-26)
+
+Settled after reading FastMCP 3.4.5's `providers/filesystem.py` and
+`filesystem_discovery.py`. They override § `python-dir` above where the two
+differ.
+
+1. **`FileSystemProvider` is not used.** It fails open three ways: a file that
+   fails to import is logged and skipped; a missing root only warns, yielding
+   zero tools; and it is built `on_duplicate="replace"`, so a second file
+   defining the same tool name silently wins. `backends/inproc.py` instead
+   exposes `python_dir_server(path, *, name) -> FastMCP`, which calls
+   `discover_and_import(path)` itself and adds each tool to a fresh `FastMCP`.
+   It raises `UsageError` on:
+   - a root that is missing or not a directory;
+   - any entry in `failed_files`, naming the file and the error;
+   - zero tools;
+   - two **distinct** tool objects under one name, naming both files. Identity,
+     not name: `extract_components` scans `dir(module)`, so a tool imported
+     from a sibling module is reported under both files, and that is not a
+     duplicate.
+   Resources, templates and prompts are dropped with a warning; the gateway
+   surfaces tools only.
+2. **The plugin** (`plugins/python_dir.py`, no FastMCP import): backing
+   `inproc`; one config field, `path`, absolute; `requires_entry =
+   ("probe", "pinned")`; no `IdentitySupport`, so `[surface.identity]` is
+   refused at lint. Its summary states that it runs operator code in the
+   gateway process.
+3. **Lint is static and never executes operator code.** `ast.parse` each
+   `.py` file under `path` (same walk as `discover_files`: recursive, skipping
+   `__init__.py` and `__pycache__`). A syntax error fails, naming the file and
+   line. Tool names are collected from top-level functions decorated `tool`
+   (bare, called, or as an attribute such as `fastmcp.tools.tool`); the name is
+   the `name=` keyword, else a positional string, else the function name; names
+   starting `_` are skipped, as `extract_components` does. `pinned` and `probe`
+   must be among them. A path that does not exist on the linting machine is a
+   **warning**, not a failure. The static list is best-effort; the attach-time
+   checks in (1) are authoritative.
+4. **Calls** reuse the `inproc` executor unchanged, including its error
+   classification.
+5. **Out of scope for 1b:** hot reload; identity for directory functions; chart
+   packaging of the directory (`extraVolumes` / `extraVolumeMounts` already
+   cover it); an e2e surface (unit plus gateway tests suffice for a source with
+   no network side).
+
 ### Phase 2 — generic `mcp-http` and `mcp-stdio`
 
 `url`/`cmd` left `registry.toml` because `gitea-home` attached with no probe and
