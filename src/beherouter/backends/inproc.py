@@ -54,6 +54,27 @@ CURRENT_IDENTITY_HEADERS: contextvars.ContextVar[Mapping[str, str]] = contextvar
 IDENTITY_MARKER = "_beherouter_identity_aware"
 
 
+def identity_client(**httpx_kwargs) -> httpx.AsyncClient:
+    """An httpx client that puts the current call's identity headers OVER its
+    attach-time headers — per request, never mutating shared state.
+
+    Runs as a request event hook, i.e. after FastMCP has merged its own
+    headers, so the identity wins over both the attach-time default and anything
+    FastMCP copied. Marked so the gateway can tell an identity-aware source from
+    one that would silently call as the deployment.
+    """
+
+    async def _apply(request: httpx.Request) -> None:
+        for name, value in CURRENT_IDENTITY_HEADERS.get().items():
+            request.headers[name] = value
+
+    hooks = dict(httpx_kwargs.pop("event_hooks", None) or {})
+    hooks["request"] = [*hooks.get("request", []), _apply]
+    client = httpx.AsyncClient(event_hooks=hooks, **httpx_kwargs)
+    setattr(client, IDENTITY_MARKER, True)
+    return client
+
+
 def _server(backing: McpBacking) -> FastMCP:
     if not isinstance(backing.server, FastMCP):
         raise UsageError(

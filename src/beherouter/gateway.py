@@ -133,6 +133,15 @@ async def _attach_one(name: str, entry: RegistryEntry, auth: object | None) -> F
         raise Unavailable(f"'{name}': attach timed out after {timeout:g}s") from e
     plugin = PLUGINS.get(entry.plugin)
     policy = policy_from_entry(entry, plugin.spec) if plugin else None
+    # The stdio rule restated for inproc: a surface configured per-user whose
+    # in-process source cannot put the identity on its upstream request would
+    # silently call as the deployment. Refused, never served.
+    if policy is not None and policy.mode and getattr(backend.executor, "identity_aware", None) is False:
+        raise UsageError(
+            f"'{name}': declares identity mode '{policy.mode}', but its inproc "
+            f"source cannot apply one — build its HTTP client with "
+            f"`identity_client` (beherouter.plugin_api)"
+        )
     surface = build_surface(backend, auth=auth, policy=policy)
     try:
         surface.instructions = instructions_line(await surface_cost(surface, backend), name)
