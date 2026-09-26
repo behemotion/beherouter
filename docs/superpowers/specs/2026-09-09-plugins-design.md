@@ -385,6 +385,10 @@ calendar entry is simply absent from the registry until its credentials exist.
 1. Does `get_freebusy` need the broad `calendar` scope, or does `calendar.events`
    suffice? Upstream documents neither.
 2. Exact `list_events` page sizes either provider enforces before paginating.
-3. Whether `save_registry` should round-trip a `config` table containing nested
-   tables, or reject them. Flat typed scalars are required either way — `_toml_str`
+3. ~~Whether `save_registry` should round-trip a `config` table containing nested
+   tables, or reject them.~~ **Settled 2026-09-25: both.** Nested tables of
+   any depth round-trip (`[x.identity.map]` was being written as a repr string
+   by `attach`/`detach`); a value TOML-by-hand cannot hold (an array of tables)
+   raises `UsageError` before the file is touched. Comments are still not
+   preserved. Flat typed scalars are required either way — `_toml_str`
    currently serializes strings only, which would silently write `50` as `"50"`.

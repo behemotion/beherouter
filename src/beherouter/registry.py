@@ -1,5 +1,6 @@
 """registry.toml — the only beherouter state (foundation §6: no DB)."""
 
+import re
 import tomllib
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -138,46 +139,73 @@ def load_registry(path: Path) -> dict[str, RegistryEntry]:
     return out
 
 
-def _toml_value(value) -> str:
-    """Render a TOML scalar. bool BEFORE int — bool is a subclass of int.
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _toml_key(key: str) -> str:
+    """A bare key where TOML allows one, else a quoted one.
+
+    Emitting `a.b = 1` bare would be a DOTTED key — a table `a` holding `b` —
+    not one key named 'a.b'.
+    """
+    return key if _BARE_KEY.fullmatch(key) else _toml_string(key)
+
+
+def _toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _toml_value(value, where: str) -> str:
+    """Render a TOML scalar or an array of scalars. bool BEFORE int — bool is a
+    subclass of int.
 
     Hand-rolled to avoid a tomli-w dependency. A plugin's config table carries
     typed scalars, so serializing everything as a string would silently write
-    50 as "50" and fail the plugin's own type check on the next load.
+    50 as "50" and fail the plugin's own type check on the next load. Anything
+    else is REFUSED rather than `str()`-ed: `attach`/`detach` rewrite the whole
+    file, and a repr string that parses is a silently changed entry.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return repr(value)
-    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    if isinstance(value, str):
+        return _toml_string(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x, where) for x in value) + "]"
+    raise UsageError(
+        f"'{where}': cannot write a {type(value).__name__} to registry.toml; "
+        f"edit this entry by hand"
+    )
+
+
+def _toml_table(header: str, table: dict, lines: list[str]) -> None:
+    """Emit `[header]`, its own keys, then each sub-table under a longer header.
+
+    Keys before sub-tables: TOML binds every bare key that follows a
+    `[header.sub]` line to THAT sub-table, so emitting a sub-table early would
+    silently reparent the keys after it.
+    """
+    lines.append(f"[{header}]")
+    subs = {k: v for k, v in table.items() if isinstance(v, dict)}
+    for k, v in table.items():
+        if not isinstance(v, dict):
+            lines.append(f"{_toml_key(k)} = {_toml_value(v, header)}")
+    for k, sub in subs.items():
+        lines.append("")
+        _toml_table(f"{header}.{_toml_key(k)}", sub, lines)
 
 
 def save_registry(path: Path, entries: dict[str, RegistryEntry]) -> None:
+    """Write the registry, or raise before touching the file.
+
+    ⚠️ Comments in the file are not preserved: this regenerates it from the
+    parsed entries.
+    """
     lines: list[str] = []
     for name, e in entries.items():
-        lines.append(f"[{name}]")
         body = {k: v for k, v in asdict(e).items() if k != "name" and v is not None}
-        # Scalars and lists first: TOML binds every bare key that follows a
-        # `[name.env]` header to THAT sub-table, so emitting a sub-table early
-        # would silently reparent the keys after it.
-        tables = {k: v for k, v in body.items() if isinstance(v, dict)}
-        for k, v in body.items():
-            if isinstance(v, dict):
-                continue
-            if isinstance(v, list):
-                inner = ", ".join(_toml_value(x) for x in v)
-                lines.append(f"{k} = [{inner}]")
-            else:
-                lines.append(f"{k} = {_toml_value(v)}")
-        for k, table in tables.items():
-            lines.append("")
-            lines.append(f"[{name}.{k}]")
-            for tk, tv in table.items():
-                if isinstance(tv, (list, tuple)):
-                    inner = ", ".join(_toml_value(x) for x in tv)
-                    lines.append(f"{tk} = [{inner}]")
-                else:
-                    lines.append(f"{tk} = {_toml_value(tv)}")
+        _toml_table(_toml_key(name), body, lines)
         lines.append("")
     Path(path).write_text("\n".join(lines))

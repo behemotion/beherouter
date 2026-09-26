@@ -100,6 +100,26 @@ def test_attach_then_detach_roundtrip(tmp_path, fake_cli_cmd):
     assert "faketool" not in s.stdout
 
 
+def test_detach_leaves_another_surfaces_identity_map_intact(tmp_path):
+    """`detach` rewrites the whole file. It used to write every OTHER surface's
+    `[x.identity.map]` back as a repr string — a per-user surface silently
+    broken by an operator removing an unrelated one."""
+    from beherouter.registry import load_registry
+
+    reg = tmp_path / "registry.toml"
+    reg.write_text(
+        '[wiki]\nplugin = "office-mcp"\n\n[wiki.identity]\nmode = "claims"\n\n'
+        '[wiki.identity.map]\n"x-remote-user" = "email"\n\n'
+        '[gone]\nplugin = "office-mcp"\n'
+    )
+    r = _run(["detach", "gone"], env=_env(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert load_registry(reg)["wiki"].identity == {
+        "mode": "claims",
+        "map": {"x-remote-user": "email"},
+    }
+
+
 def test_search_finds_long_tail(tmp_path, fake_cli_cmd):
     env = _env(tmp_path)
     _run(

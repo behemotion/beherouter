@@ -223,6 +223,42 @@ def test_search_aliases_round_trip(tmp_path):
     assert load_registry(p)["t"].search_aliases == {"discover": ["find", "look up"]}
 
 
+def test_a_nested_identity_map_round_trips_as_a_table(tmp_path):
+    """`attach`/`detach` rewrite the whole file, so every entry must survive.
+
+    `[surface.identity.map]` sits one level deeper than `[surface.identity]`;
+    the writer used to `str()` it, turning the per-user header map into the
+    literal string "{'x-remote-user': 'email'}" — a surface that silently
+    stopped being per-user after an unrelated `attach`.
+    """
+    p = tmp_path / "registry.toml"
+    identity = {
+        "mode": "claims",
+        "map": {"x-remote-user": "email", "x-remote-id": "sub"},
+    }
+    save_registry(p, {"wiki": RegistryEntry(name="wiki", plugin="office-mcp", identity=identity)})
+    assert load_registry(p)["wiki"].identity == identity
+
+
+def test_a_key_that_is_not_a_bare_toml_key_is_quoted(tmp_path):
+    """A bare `a.b = ...` is a DOTTED key in TOML: it would reparent the value
+    under a new table `a` instead of keeping one key named 'a.b'."""
+    p = tmp_path / "registry.toml"
+    aliases = {"github.search": ["find code"], "look up": ["lookup"]}
+    save_registry(p, {"t": RegistryEntry(name="t", plugin="office-mcp", search_aliases=aliases)})
+    assert load_registry(p)["t"].search_aliases == aliases
+
+
+def test_a_value_the_writer_cannot_represent_is_refused_not_mangled(tmp_path):
+    """Refusing loses nothing; writing a repr string loses the entry silently."""
+    p = tmp_path / "registry.toml"
+    p.write_text("sentinel")
+    entry = RegistryEntry(name="t", plugin="office-mcp", probe_args={"rows": [{"a": 1}]})
+    with pytest.raises(UsageError, match="probe_args"):
+        save_registry(p, {"t": entry})
+    assert p.read_text() == "sentinel"  # nothing half-written
+
+
 @pytest.mark.parametrize("bad", ["sprint", {"cycle": "sprint"}, {"cycle": [1]}])
 def test_malformed_search_aliases_are_refused(bad):
     with pytest.raises(UsageError, match="search_aliases"):
