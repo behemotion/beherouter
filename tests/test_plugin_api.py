@@ -14,7 +14,7 @@ EXPORTS = {
     "API_VERSION", "AuthError", "Backend", "CliBacking", "ConfigField", "EnvVar",
     "IdentitySupport", "McpBacking", "PluginContext", "PluginSpec", "ToolDescriptor",
     "Unavailable", "UsageError", "identity_client", "load_cli_backend",
-    "load_inproc_backend", "load_mcp_backend", "register",
+    "load_inproc_backend", "load_mcp_backend", "mark_identity_aware", "register",
 }
 
 

@@ -8,7 +8,12 @@ import pytest
 from fastmcp import FastMCP
 
 from beherouter.backends.backing import McpBacking
-from beherouter.backends.inproc import IDENTITY_MARKER, identity_client, load_inproc_backend
+from beherouter.backends.inproc import (
+    IDENTITY_MARKER,
+    identity_client,
+    load_inproc_backend,
+    mark_identity_aware,
+)
 from beherouter.errors import Unavailable, UsageError
 from beherouter.plugins.spec import BACKINGS
 
@@ -251,6 +256,33 @@ async def test_the_identity_does_not_outlive_a_failed_call():
 async def test_a_server_without_an_identity_client_is_not_identity_aware():
     backend = await load_inproc_backend(_backing(_server()))
     assert backend.executor.identity_aware is False
+
+
+async def test_mark_identity_aware_makes_a_decorated_server_per_user():
+    _seen, transport = _upstream()
+    client = identity_client(base_url="https://up", transport=transport)
+    mcp = FastMCP("up")
+
+    @mcp.tool
+    async def whoami() -> dict:
+        """Ask the upstream who we are."""
+        return (await client.get("/me")).json()
+
+    assert mark_identity_aware(mcp, client) is mcp
+    backend = await load_inproc_backend(_backing(mcp))
+    assert backend.executor.identity_aware is True
+    out = await backend.executor.run("whoami", {}, identity=_ident(authorization="Bearer alice"))
+    assert out["result"] == {"auth": "Bearer alice"}
+
+
+async def test_mark_identity_aware_refuses_a_client_that_cannot_apply_the_identity():
+    """A marker without the hook behind it is the 'believed per-user, actually
+    shared' state; refuse it at build rather than serve as the deployment."""
+    mcp = FastMCP("up")
+    async with httpx.AsyncClient() as plain:
+        with pytest.raises(UsageError, match="identity_client"):
+            mark_identity_aware(mcp, plain)
+    assert getattr(mcp, IDENTITY_MARKER, False) is False
 
 
 async def test_the_gateway_refuses_identity_on_a_source_that_cannot_apply_it(monkeypatch):

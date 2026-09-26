@@ -51,7 +51,7 @@ CURRENT_IDENTITY_HEADERS: contextvars.ContextVar[Mapping[str, str]] = contextvar
 )
 
 # Set on an httpx client by `identity_client`, and carried onto the server by
-# `openapi_server`. `load_inproc_backend` reads it off the server.
+# `mark_identity_aware` (which `openapi_server` calls). `load_inproc_backend` reads it off the server.
 IDENTITY_MARKER = "_beherouter_identity_aware"
 
 
@@ -74,6 +74,24 @@ def identity_client(**httpx_kwargs) -> httpx.AsyncClient:
     client = httpx.AsyncClient(event_hooks=hooks, **httpx_kwargs)
     setattr(client, IDENTITY_MARKER, True)
     return client
+
+
+def mark_identity_aware(server: FastMCP, client: httpx.AsyncClient) -> FastMCP:
+    """Mark `server` as applying the caller's identity through `client`.
+
+    The public way for a decorator-path plugin to be per-user: its tools call
+    out through `client`, which must come from `identity_client`. Any other
+    client is refused, because a marked server whose client ignores
+    CURRENT_IDENTITY_HEADERS would be believed per-user and call as the
+    deployment. Returns `server` for chaining.
+    """
+    if not getattr(client, IDENTITY_MARKER, False):
+        raise UsageError(
+            "mark_identity_aware needs a client built by identity_client(); "
+            "any other client would call as the deployment"
+        )
+    setattr(server, IDENTITY_MARKER, True)
+    return server
 
 
 def _server(backing: McpBacking) -> FastMCP:
@@ -223,5 +241,6 @@ async def openapi_server(
     open_ = sorted(n for n, t in tools.items() if t.parameters.get("additionalProperties") is not False)
     if open_:
         raise UsageError(f"OpenAPI tool schema(s) not closed: {open_}")
-    setattr(server, IDENTITY_MARKER, bool(getattr(client, IDENTITY_MARKER, False)))
+    if getattr(client, IDENTITY_MARKER, False):
+        mark_identity_aware(server, client)
     return server

@@ -80,7 +80,7 @@ you the value belongs in `config` or in `build`.
 | `stdio` | An MCP server run as a subprocess | You would otherwise add a container for it — a subprocess costs a process instead. Also sidesteps remote transports that 401 an un-credentialed probe, which some clients misread as "this server wants OAuth" |
 | `cli` | A beheaxi CLI, described and invoked as tools | The backend is a command-line tool following the harness CLI contract |
 | `native` | In-process Python | No sidecar, no extra runtime, no writable state — the calendar plugins are these |
-| `inproc` | An in-process **FastMCP server** the plugin builds, listed through the same MCP pipeline as `http`/`stdio` and called directly (`server.call_tool`) | You have "some decorated Python functions", or a REST API with an OpenAPI document (the `openapi` source below). Identity target `header`, through `identity_client` |
+| `inproc` | An in-process **FastMCP server** the plugin builds, listed through the same MCP pipeline as `http`/`stdio` and called directly (`server.call_tool`) | You have "some decorated Python functions", or a REST API with an OpenAPI document (the `openapi` source below). Identity target `header`, through `identity_client` + `mark_identity_aware` |
 
 Three things `inproc` does that the other MCP backings do not have to:
 
@@ -184,14 +184,19 @@ register(SPEC, build)
 Ship it as an out-of-tree plugin (below) and name it in `registry.toml`. Two
 things to know:
 
-- ⚠️ **A decorated server can't be configured per-user yet.** Per-user needs
-  two things. Its outbound HTTP client must come from `identity_client(...)`, an
-  `httpx.AsyncClient` that puts the caller's identity headers over its own, per
-  request. The server must also be marked identity-aware. `openapi_server` does
-  both for the `openapi` source, but `plugin_api` has no public way to mark a
-  server yet. A surface that declares `[surface.identity]` on an unmarked
-  source is **refused at attach**, never served as the deployment: the stdio
-  rule, restated for `inproc`.
+- **Per-user needs two things.** The tools' outbound HTTP client must come
+  from `identity_client(...)`, an `httpx.AsyncClient` that puts the caller's
+  identity headers over its own, per request. And the server must be marked
+  with `mark_identity_aware(server, client)`, which **refuses** any client
+  `identity_client` did not build. `openapi_server` does both for the
+  `openapi` source. A surface that declares `[surface.identity]` on an
+  unmarked source is **refused at attach**, never served as the deployment:
+  the stdio rule, restated for `inproc`.
+
+  ```python
+  client = identity_client(base_url="https://orders.internal")
+  mcp = mark_identity_aware(FastMCP("acme"), client)
+  ```
 - Pre-validation applies to **non-function tools only**. Function tools validate
   and coerce with pydantic, as they would over a session.
 
@@ -563,7 +568,8 @@ and the rest stay importable and promise nothing. It exports exactly:
 `API_VERSION`, `AuthError`, `Backend`, `CliBacking`, `ConfigField`, `EnvVar`,
 `IdentitySupport`, `McpBacking`, `PluginContext`, `PluginSpec`,
 `ToolDescriptor`, `Unavailable`, `UsageError`, `identity_client`,
-`load_cli_backend`, `load_inproc_backend`, `load_mcp_backend`, `register`.
+`load_cli_backend`, `load_inproc_backend`, `load_mcp_backend`,
+`mark_identity_aware`, `register`.
 
 `PluginSpec.api` defaults to the current `API_VERSION` (**1**), so a plugin
 states nothing to be current. The number moves only on a change an existing
