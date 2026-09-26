@@ -115,7 +115,7 @@ SPEC = PluginSpec(
     ),
     env=(
         EnvVar(
-            name="token",
+            name="api_key",
             doc=(
                 "SonarQube USER token (squ_…) used for attach, probe and every "
                 "call. A GLOBAL_ANALYSIS_TOKEN (sqa_…) attaches and then 403s "
@@ -158,7 +158,7 @@ async def build(ctx: PluginContext):
             url=ctx.config["base_url"],
             # For an http backing, `env` IS the attach-time header set.
             # Per-call identity material is merged OVER these, key by key.
-            env={AUTH_HEADER: f"Bearer {ctx.env['token']}"},
+            env={AUTH_HEADER: f"Bearer {ctx.env['api_key']}"},
             pinned=ctx.pinned,
             republish_output_schema=False,
         )

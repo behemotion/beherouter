@@ -67,13 +67,10 @@ def test_no_plugin_credential_derives_the_gateway_bearer_name():
     from beherouter.pluginconfig import token_var
     from beherouter.plugins import PLUGINS
 
-    # Grandfathered: renaming a shipped credential breaks every registry that
-    # sets it. Lint's collision warning covers it; do not add to this set.
-    known = {("sonarqube", "token")}
     clashing = {
         (name, v.name)
         for name, p in PLUGINS.items()
         for v in p.spec.env
         if token_var("s", v.name) == client_token_var("s")
     }
-    assert clashing - known == set()
+    assert clashing == set()

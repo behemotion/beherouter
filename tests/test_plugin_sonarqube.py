@@ -33,8 +33,18 @@ def test_probe_takes_no_required_arguments():
     assert spec.probe_args == {"pageSize": 1}
 
 
-def test_declares_the_user_token():
-    assert [e.name for e in get(PLUGIN).spec.env] == ["token"]
+def test_declares_the_user_token_as_api_key():
+    # `token` would derive BEHEROUTER_<SURFACE>_TOKEN, the client's gateway
+    # bearer: two unrelated secrets under one name.
+    assert [e.name for e in get(PLUGIN).spec.env] == ["api_key"]
+
+
+def test_a_registry_still_naming_token_is_refused_toward_api_key():
+    from beherouter.registry import RegistryEntry, validate_entry
+
+    entry = RegistryEntry(name="sonar", plugin=PLUGIN, env={"token": "${BEHEROUTER_SONAR_TOKEN}"})
+    with pytest.raises(UsageError, match=r"declares no credential.*'token'.*api_key"):
+        validate_entry(entry)
 
 
 def test_base_url_defaults_to_the_shared_network_alias():
@@ -69,7 +79,7 @@ async def test_build_declines_the_backends_output_schema(monkeypatch):
         surface="sonarqube",
         config={"base_url": "http://sonarqube-mcp:8080/mcp"},
         pinned=["search_my_sonarqube_projects"],
-        env={"token": "squ_test"},
+        env={"api_key": "squ_test"},
     )
     assert await get(PLUGIN).build(ctx) == "backend"
     b = seen["backing"]
