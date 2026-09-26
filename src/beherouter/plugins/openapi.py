@@ -58,7 +58,7 @@ SPEC = PluginSpec(
                     doc="header carrying the deployment token"),
         ConfigField("auth_prefix", str, default="Bearer ", doc="prefix before the token"),
     ),
-    env=(EnvVar("token", doc="deployment credential for attach, the probe and shared "
+    env=(EnvVar("api_key", doc="deployment credential for attach, the probe and shared "
                              "callers; required until Phase 2 adds optional credentials"),),
     identity=IdentitySupport(
         modes=("bearer", "claims", "client", "lookup"),
@@ -179,7 +179,7 @@ async def build(ctx: PluginContext):
     check_document(f"'{ctx.surface}':", doc, cfg["include"], ctx.pinned)
     client = identity_client(
         base_url=cfg["base_url"],
-        headers={cfg["auth_header"]: f"{cfg['auth_prefix']}{ctx.env['token']}"},
+        headers={cfg["auth_header"]: f"{cfg['auth_prefix']}{ctx.env['api_key']}"},
         timeout=30,
     )
     server = await openapi_server(
