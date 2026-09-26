@@ -32,6 +32,7 @@ _EXPORTS: dict[str, str] = {
     "load_mcp_backend": "beherouter.backends.mcp",
     "load_inproc_backend": "beherouter.backends.inproc",
     "identity_client": "beherouter.backends.inproc",
+    "mark_identity_aware": "beherouter.backends.inproc",
     "load_cli_backend": "beherouter.backends.cli",
     "Backend": "beherouter.models",
     "ToolDescriptor": "beherouter.models",
@@ -61,6 +62,7 @@ __all__ = [
     "load_cli_backend",
     "load_inproc_backend",
     "load_mcp_backend",
+    "mark_identity_aware",
     "register",
 ]
 
@@ -82,7 +84,7 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:  # for type checkers and IDEs only; never executed
     from .backends.backing import CliBacking, McpBacking
     from .backends.cli import load_cli_backend
-    from .backends.inproc import identity_client, load_inproc_backend
+    from .backends.inproc import identity_client, load_inproc_backend, mark_identity_aware
     from .backends.mcp import load_mcp_backend
     from .errors import AuthError, Unavailable, UsageError
     from .models import Backend, ToolDescriptor

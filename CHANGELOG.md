@@ -31,9 +31,10 @@ auto-generated contributor appendix is appended below it). Releases before
   upstream request, and each call is isolated from the gateway caller's own
   request headers (FastMCP copies them by default). Lint checks the operation
   names offline.
-- **`inproc` backing** and `plugin_api.load_inproc_backend` / `identity_client`:
-  a plugin can hand the gateway an in-process FastMCP server ("some decorated
-  functions") in about 15 lines.
+- **`inproc` backing** and `plugin_api.load_inproc_backend` / `identity_client`
+  / `mark_identity_aware`: a plugin can hand the gateway an in-process FastMCP
+  server ("some decorated functions") in about 15 lines, and make it per-user
+  by marking it with the `identity_client` its tools call out through.
 - **`PluginSpec.requires_entry`**: a generic source can make `probe`/`pinned`
   mandatory, and `plugin-config` emits them. A plugin's `warn()` findings reach
   `registry-lint`'s `warnings`.
