@@ -49,6 +49,21 @@ def validate_entry(e: RegistryEntry) -> None:
     config = validate_config(e.name, plugin.spec, e.config)
     if plugin.validate is not None:
         plugin.validate(config)
+    for key in plugin.spec.requires_entry:
+        if not getattr(e, key, None):
+            raise UsageError(
+                f"'{e.name}': plugin '{e.plugin}' has no tested default for "
+                f"'{key}'; set `{key}` in [{e.name}]"
+            )
+    # A generic source publishes only what its config selects; a pin outside
+    # that set would attach green and then fail the pin check at health.
+    selected = config.get("include")
+    if plugin.spec.requires_entry and isinstance(selected, list) and selected != ["*"]:
+        outside = sorted(set(e.pinned or []) - set(selected))
+        if outside:
+            raise UsageError(
+                f"'{e.name}': pinned names {outside}, which include does not publish"
+            )
     from .identity import validate_authz, validate_identity
 
     validate_identity(e.name, plugin.spec, e.identity)
