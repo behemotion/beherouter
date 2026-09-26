@@ -57,3 +57,23 @@ def test_openapi_fragment_parses_with_the_right_shapes():
     assert crm["pinned"] == [] and crm["probe"] == ""
     assert crm["config"]["include"] == []
     assert crm["config"]["spec"] == ""
+
+
+def test_no_plugin_credential_derives_the_gateway_bearer_name():
+    """A credential named `token` makes `plugin-config` emit
+    BEHEROUTER_<SURFACE>_TOKEN, the client's gateway-bearer variable: two
+    secrets, one name. Found twice (plane-http, 2026-09-22; openapi, 2026-09-26)."""
+    from beherouter.clientconfig import token_var as client_token_var
+    from beherouter.pluginconfig import token_var
+    from beherouter.plugins import PLUGINS
+
+    # Grandfathered: renaming a shipped credential breaks every registry that
+    # sets it. Lint's collision warning covers it; do not add to this set.
+    known = {("sonarqube", "token")}
+    clashing = {
+        (name, v.name)
+        for name, p in PLUGINS.items()
+        for v in p.spec.env
+        if token_var("s", v.name) == client_token_var("s")
+    }
+    assert clashing - known == set()

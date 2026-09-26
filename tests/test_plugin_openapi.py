@@ -41,12 +41,12 @@ def _entry(tmp_path, monkeypatch, *, doc=DOC, suffix=".json", **over) -> Registr
         import yaml
 
         path.write_text(yaml.safe_dump(doc))
-    monkeypatch.setenv("BEHEROUTER_CRM_TOKEN", "deploy")
+    monkeypatch.setenv("BEHEROUTER_CRM_API_KEY", "deploy")
     config = {"spec": str(path), "base_url": "https://crm.internal",
               "include": ["get_customer", "search_customers"]}
     config.update(over.pop("config", {}))
     fields = {"name": "crm", "plugin": "openapi", "config": config,
-              "env": {"token": "${BEHEROUTER_CRM_TOKEN}"},
+              "env": {"api_key": "${BEHEROUTER_CRM_API_KEY}"},
               "pinned": ["get_customer"], "probe": "get_customer", "probe_args": {"id": 1}}
     fields.update(over)
     return RegistryEntry(**fields)
