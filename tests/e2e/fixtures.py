@@ -9,6 +9,8 @@ Routes:
   GET /jwks.json                 the gateway's OIDC key set
   GET /api/v1/users/me/          the identity the presented bearer resolves to
   GET /auth/o/app-installation/  what plane-mcp-server's OAuth provider needs
+  GET /crm/openapi.json          the CRM stub's OpenAPI document
+  GET /crm/me                    who the presented credential resolves to
   GET /_calls                    every request seen, with its Authorization
   POST /_calls/reset             clear the record
 """
@@ -24,6 +26,18 @@ JWKS = json.loads(os.environ["E2E_JWKS"])
 DEPLOYMENT_TOKEN = os.environ["E2E_DEPLOYMENT_TOKEN"]
 
 CALLS: list[dict] = []
+
+# A REST API with no MCP server, attached through the `openapi` plugin. It
+# shares `_identity` with the fake Plane, so a PAT resolves the same way.
+CRM_DOC = {
+    "openapi": "3.0.3",
+    "info": {"title": "crm", "version": "1"},
+    "paths": {"/crm/me": {"get": {
+        "operationId": "crm_whoami",
+        "summary": "Who the CRM thinks you are.",
+        "responses": {"200": {"description": "ok"}},
+    }}},
+}
 
 
 def _identity(token: str) -> dict | None:
@@ -107,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, JWKS)
         if path.rstrip("/") == "/_calls":
             return self._send(200, {"calls": CALLS})
+        if path == "/crm/openapi.json":
+            return self._send(200, CRM_DOC)
 
         scheme, token = self._credential()
         who = _identity(token)
@@ -117,8 +133,18 @@ class Handler(BaseHTTPRequestHandler):
                 "credential_prefix": token[:24],
                 "workspace_slug": self.headers.get("x-workspace-slug", ""),
                 "resolved": (who or {}).get("id"),
+                # Headers a gateway CALLER sent that must never reach an
+                # upstream: FastMCP's OpenAPI tool copies inbound headers.
+                "leaked": sorted(
+                    h for h in ("x-plane-pat", "x-crm-token", "cookie", "mcp-session-id")
+                    if self.headers.get(h)
+                ),
             }
         )
+        if path.rstrip("/") == "/crm/me":
+            if who is None:
+                return self._send(401, {"detail": "unauthorized"})
+            return self._send(200, {"id": who["id"]})
         if path.rstrip("/") == "/api/v1/users/me":
             if who is None:
                 return self._send(401, {"detail": "Authentication credentials were not provided."})

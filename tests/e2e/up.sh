@@ -89,6 +89,8 @@ echo "== beherouter (the build under test) =="
 #   plane  — the caller's own Plane PAT, taken from a client header (`client`),
 #            through REAL plane-mcp-server to a REAL Plane REST call.
 #   echo   — the caller's own verified JWT, forwarded (`bearer`).
+#   crm    — a REST API with NO MCP server (`openapi`, in-process), its spec
+#            fetched by URL at attach; the caller's PAT from a header (`client`).
 # `plane` also carries a role gate, so the refusal path is exercised too.
 cat > "$HERE/registry.toml" <<'TOML'
 [plane]
@@ -135,6 +137,22 @@ plugin = "plane"
   workspace_slug = "e2e"
   [plane-stdio.env]
   api_key = "${BEHEROUTER_PLANE_PAT}"
+
+[crm]
+plugin = "openapi"
+pinned = ["crm_whoami"]
+probe = "crm_whoami"
+probe_args = {}
+  [crm.config]
+  spec = "http://e2e-fixtures:8000/crm/openapi.json"
+  base_url = "http://e2e-fixtures:8000"
+  include = ["crm_whoami"]
+  [crm.env]
+  api_key = "${BEHEROUTER_CRM_API_KEY}"
+  [crm.identity]
+  mode = "client"
+    [crm.identity.map]
+    authorization = "x-crm-token"
 TOML
 
 podman run -d --name beherouter --network "$NET" \
@@ -147,6 +165,7 @@ podman run -d --name beherouter --network "$NET" \
   -e BEHEROUTER_OIDC_ROLES_CLAIM="realm_access.roles" \
   -e BEHEROUTER_PLANE_PAT="$DEPLOYMENT_PAT" \
   -e BEHEROUTER_ECHO_ACCESS_TOKEN="$ECHO_TOKEN" \
+  -e BEHEROUTER_CRM_API_KEY="$DEPLOYMENT_PAT" \
   -p 47100:47100 \
   localhost/beherouter:e2e >/dev/null
 

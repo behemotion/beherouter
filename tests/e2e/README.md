@@ -12,7 +12,7 @@ podman build -t localhost/beherouter:e2e -f Containerfile .
 podman build -t localhost/plane-mcp:e2e -f tests/e2e/Containerfile.plane-mcp tests/e2e
 podman build -t localhost/plane-mcp-bearer:e2e -f contrib/plane-mcp-bearer/Containerfile contrib/plane-mcp-bearer
 bash tests/e2e/up.sh                                # → {"status":"ok","surfaces":[...]}
-uv run python tests/e2e/e2e.py                      # → 24/24 checks passed
+uv run python tests/e2e/e2e.py                      # → 27/27 checks passed
 podman rm -f beherouter plane-mcp plane-mcp-bearer echo-mcp e2e-fixtures
 ```
 
@@ -20,13 +20,19 @@ podman rm -f beherouter plane-mcp plane-mcp-bearer echo-mcp e2e-fixtures
 
 | Container | What it is | Why it is here |
 |---|---|---|
-| `e2e-fixtures` | stdlib HTTP: a fake Plane REST API + the IdP's JWKS | The two things a laptop lacks. It records **which credential arrived**, which is the whole evidence base |
+| `e2e-fixtures` | stdlib HTTP: a fake Plane REST API + the IdP's JWKS, and a CRM stub (`/crm/*`) with its OpenAPI document | The two things a laptop lacks. It records **which credential arrived**, and which caller headers leaked, which is the whole evidence base |
 | `plane-mcp` | **real** `plane-mcp-server==0.3.2`, HTTP mode | A mock of the backend would prove nothing about the backend's auth |
 | `echo-mcp` | an MCP server reporting its own `Authorization` | mode `bearer` needs a backend that ACCEPTS a forwarded bearer — see below |
 | `beherouter` | the image built from this repo | the thing under test |
 
-Two surfaces, two identity modes: `plane` (`client` — the caller's own Plane
-PAT, plus a role gate) and `echo` (`bearer` — the caller's own verified JWT).
+Surfaces: `plane` (`client` — the caller's own Plane PAT, plus a role gate),
+`echo` (`bearer` — the caller's own verified JWT), `plane-bearer`, `plane-stdio`,
+and `crm` (`openapi`, in-process — a REST API with no MCP server, its spec
+fetched by URL at attach; `client` — the caller's own CRM PAT).
+
+| Surface | Plugin | Backend | Identity |
+|---|---|---|---|
+| `crm` | `openapi` (`inproc`) | the fixtures' `/crm/*` REST stub, no MCP server | `client`: `x-crm-token` → `authorization` |
 
 ## ⚠️ The finding that shaped the plugins
 
@@ -63,6 +69,13 @@ ok and each surface's identity mode with `probe_scope` ·
 13. `registry-lint` passes the live registry **inside the serving image** ·
 14. the same registry under `BEHEROUTER_AUTH_MODE=shared` is **refused by the
 lint**, not by the gateway at boot.
+
+The last three checks cover `crm`: two callers reach the REST upstream as
+themselves; the upstream never sees the deployment credential on a user call;
+and **no header the caller sent the gateway** (`x-plane-pat`, `cookie`,
+`mcp-session-id`) reaches the upstream request, which FastMCP's OpenAPI tool
+would otherwise copy across. `registry-lint` expects exactly one warning, for
+`crm`'s URL spec, which lint (offline) cannot check.
 
 ⚠️ Check 11 once passed vacuously — an `all()` over an empty list, because the
 records live under `backends` and the assertion read `surfaces`. It now asserts
