@@ -30,12 +30,18 @@
 > refuse, while remote hosts answer 200. Expect older docs to claim the
 > opposite.
 >
-> ⚠️ **An attach failure crash-loops the whole gateway**, taking every other
-> surface and `/healthz` with it. Read `podman logs beherouter` after any
-> registry change.
+> ⚠️ **On the LIVE gateway (0.2.4), an attach failure still crash-loops the
+> whole process**, taking every other surface and `/healthz` with it. Read
+> `podman logs beherouter` after any registry change. **Fixed on `main`,
+> unreleased (Plugin sources Phase 0, 2026-09-25):** a surface that fails to
+> attach, or exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` (30 s), answers `503` and is
+> retried; `/healthz` stays 200 with `"status": "degraded"` and a `failed` list.
+> Registry mistakes `registry-lint` can see still refuse boot. Once deployed,
+> anything matching `"status":"ok"` (the homelab blackbox probe, `helm test`)
+> fails on a degraded gateway — intended, but check the probe alerts on it.
 >
-> 748 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
-> per-user identity against a REAL `plane-mcp-server`: 24/24 — two callers acting
+> 821 tests pass, plus a **local end-to-end stack** (`tests/e2e/`) that proves a
+> per-user identity against a REAL `plane-mcp-server`: 27/27 — two callers acting
 > as themselves in Plane by PAT, an IdP JWT reaching Plane as `Bearer` through
 > `contrib/plane-mcp-bearer`, the stdio `plane` plugin attaching on its default
 > `cmd` inside the published image, `health --deep --bearer-file` proving a
@@ -46,7 +52,8 @@
 > Design background: **`docs/DESIGN.md`**; the plugin seam:
 > **`docs/superpowers/specs/2026-09-09-plugins-design.md`**; FastMCP 3.x API notes:
 > **`docs/FASTMCP-NOTES.md`**; the 2026-07-30 audit and its four fixes:
-> **`docs/superpowers/specs/2026-07-30-beherouter-cleanup-design.md`**.
+> **`docs/superpowers/specs/2026-07-30-beherouter-cleanup-design.md`**; per-user
+> identity (the corporate half of the pitch): **`docs/IDENTITY.md`**.
 
 ## Harness standard (read before any interface work)
 
@@ -86,6 +93,18 @@ The first face has existed since 2026-07-28. The second landed 2026-09-09 as
 **Plugins Phase 1** (`docs/superpowers/specs/2026-09-09-plugins-design.md`). The
 context-control mechanism is unchanged and still lexical (BM25, *no embeddings*).
 
+**The problem it solves has two halves, and the README leads with both.** Every
+advertised tool definition costs context, which the pinned + search split handles.
+Every call through a shared service credential is made **as one account**, so the
+backend's permissions don't apply and the audit trail says "the bot did it". The
+identity work (2026-09-21 onward, `docs/IDENTITY.md`) handles that: the gateway
+**verifies the caller** (an OIDC JWT, beside or instead of the shared token) and
+**forwards that caller's identity** to each backend in the form it expects. That
+second half is what makes the gateway usable in a company rather than only a
+homelab, so treat it as part of the mission, not an add-on. It is **opt-in per
+surface**: with no auth mode and no `[surface.identity]`, behaviour is exactly the
+shared-token gateway.
+
 **Why "router" and not "mcp":** the layer is growing a second mode — a CLI
 router alongside the MCP gateway. That capability is *not yet designed or
 built*; it has its own brainstorm → spec → plan cycle. The 2026-08-02 rename
@@ -102,8 +121,13 @@ is an MCP **server** to clients and an MCP **client** to backends. Each backend 
 (`search.py`: field-weighted BM25 + prefix/fuzzy expansion, no embeddings; FastMCP's
 `BM25SearchTransform` was evaluated and rejected — see docs/DESIGN.md § Search design) as
 `search_tools`/`describe_tool`/`run_tool`/`context_cost` for everything else and for the
-surface's own context cost. Per-user credentials are forwarded per-session (FastMCP forwards arbitrary
-headers — so a backend needing two or more per-user headers is handled). Plugin-driven: adding a
+surface's own context cost. Identity is two halves: **in** is gateway-wide
+(`BEHEROUTER_AUTH_MODE` = `shared` | `oidc` | `both`, a JWKS-checked JWT), **out** is per
+surface (`[surface.identity]` mode `bearer` | `claims` | `client` | `lookup`, landing as
+per-call headers for `http`, subprocess env for `cli`, a per-identity credential provider for
+`native`; refused for `stdio`), plus an optional `[surface.authz]` role/audience gate. Header
+passthrough is arbitrary-width, so a backend needing two or more per-user headers is handled.
+Plugin-driven: adding a
 service = **a plugin** (an inert `PluginSpec` plus an `async build`) and one line in
 `registry.toml`, **not** a new bespoke wrapper file and **not** operator knowledge that
 lives only in a comment.
@@ -133,6 +157,18 @@ own middleware. Full scorecard + landscape in `docs/DESIGN.md`.
   MCP tools); and it mis-reads a 401 as "OAuth required" → keep the "anonymous probe → 200, inject
   placeholder Authorization" trick. Also list each surface host in
   `mcpSettings.allowedDomains`.
+- **Identity stays opt-in, and a surface is per-user or it isn't.** No auth mode and no
+  `[surface.identity]` must keep meaning the pre-identity gateway. Don't add an
+  "optional identity" boolean: it invites the state the feature exists to prevent, a
+  surface believed per-user and actually shared.
+- **`stdio` can never be per-user.** A kept-alive subprocess can't carry per-request
+  material. It is refused at lint, at `validate_entry` and in `build_transport`. Never
+  loosen one of the three.
+- **Attach does no identity resolution and no identity-map read.** Both happen on the call
+  path, so a bad map degrades one surface's calls instead of crash-looping the gateway.
+- **Never log or echo an identity value.** Logs carry the subject, the mode and the *names*
+  of the applied material; refusals name the claim or expected audience, never the
+  caller's value.
 
 ## Plugins
 
@@ -169,8 +205,10 @@ declaration inert is load-bearing: it is what lets `plugin-config`,
 it makes "attach performs no network I/O" mechanically enforceable — a plugin
 *cannot* phone home from its spec, only from `build`.
 
-**Four backings:** `http` and `stdio` (an MCP server, over HTTP or as a
-subprocess), `cli` (a beheaxi CLI), `native` (in-process Python; Phase 2).
+**Five backings:** `http` and `stdio` (an MCP server, over HTTP or as a
+subprocess), `cli` (a beheaxi CLI), `native` (in-process Python; Phase 2),
+`inproc` (an in-process FastMCP server; the `openapi` source and decorator
+plugins).
 
 **A plugin no longer has to live in this tree.** A distribution advertising the
 `beherouter.plugins` entry-point group is imported at startup and registers the
@@ -217,6 +255,29 @@ included. Entry and secret ship in the same playbook run, or not at all.
 | `beherouter plugin-config <surface> <plugin>` | emits all three plumbing fragments — registry block, Caddy `not` clause, `beherouter-env.j2` line — from one spec, so they cannot disagree. Never emits a credential, only a placeholder |
 | `beherouter registry-lint [--path P]` | validates a registry offline: no network, no attach. Turns a production-outage-shaped feedback loop into a local one |
 | `beherouter context-cost [--surface S] [--context-window N]` | attaches each backend and reports what its published tools cost a client's context; reports per surface rather than raising, so one dead backend does not hide the rest |
+
+### Per-user identity
+
+A plugin declares which identity modes it honours (`IdentitySupport` on its
+`PluginSpec`), and `registry-lint` refuses any other mode offline. A plugin that
+declares nothing can't be configured for per-user use at all. Today:
+
+| Plugin | Modes | What each caller brings |
+|---|---|---|
+| `office-mcp` | `bearer`, `claims`, `client` | their JWT, asserted claims, or named headers |
+| `plane-http-apikey` | `client` | their own Plane PAT; works against stock `plane-mcp-server` |
+| `plane-http` | `bearer` | their IdP token, through `contrib/plane-mcp-bearer`; Plane must verify it |
+| `gcal`, `m365` | `lookup` | nothing; their refresh token is read from the identity map |
+| `openapi` | `bearer`, `claims`, `client`, `lookup` | their material, on the upstream REST request |
+| `plane`, `sonarqube` | — | shared credential only (`plane` is stdio, so it never can be) |
+
+Proving it: a green `health --deep` proves only the **deployment** credential (its
+output says `probe_scope: "deployment-credential"`).
+`health --deep --bearer-file -` repeats the probe **as a user** and reports
+`matches_caller`; `mismatch` is the incident this exists to catch. The e2e stack
+(`tests/e2e/`) is the reference proof. Refusal rules, the identity map, the gates
+and the operator signals: **`docs/IDENTITY.md`**. When the README and this file
+describe identity, they describe the same table; update both together.
 
 ### The live surfaces
 
@@ -292,14 +353,20 @@ pin list names a tool the backend no longer serves (`catalogue:
 ⚠️ **Every write through `plane` is attributed to one Plane identity** (the PAT
 minted as `beherouter-mcp`). Making the connection universal did not make it
 per-user — and `plane` *cannot* be made per-user as attached: it is a `stdio`
-backing, which can never carry a per-request identity (an `http` backing for the
-plugin is the prerequisite). A surface **with** a `[surface.identity]` table does
-forward the caller's own credential; see **`docs/IDENTITY.md`**. Neither live
-surface has one.
+backing, which can never carry a per-request identity. The way to per-user Plane is
+switching the surface to `plane-http-apikey` (mode `client`) or `plane-http` (mode
+`bearer`), both proven in `tests/e2e/` (see § Per-user identity). A surface **with** a
+`[surface.identity]` table does forward the caller's own credential; see
+**`docs/IDENTITY.md`**. No live surface has one yet.
 
-⚠️ **An attach failure crash-loops the whole gateway**, taking every other surface
-and `/healthz` with it. `registry-lint` is the pre-deploy guard; `podman logs
-beherouter` is how you find out which backend did it.
+⚠️ **An attach failure is isolated to its surface on `main`, but still crash-loops
+the live 0.2.4 gateway** until the next `/deploy`. On `main`, the failed surface
+answers RFC 9457 `503` (naming the surface, never the error), is retried with
+backoff (5 s → 300 s) and swapped in once on success; `/healthz` reports
+`degraded`. `registry-lint` is still the pre-deploy guard for what it can see
+(unknown plugin, bad config, unset `${VAR}` — those still refuse boot); `podman
+logs beherouter` is how you find out which backend failed. See
+`docs/PLUGINS.md` § Four warnings.
 
 ### The calendar surfaces — built, NOT attached
 
