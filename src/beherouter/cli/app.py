@@ -160,19 +160,23 @@ def registry_lint(path: str = "") -> None:
     from ..errors import UsageError
     from ..identity import DEFAULT_MAP_VAR, SecretMap, gates_on_caller
     from ..pluginconfig import collision_warning
+    from ..plugins import get as get_plugin
+    from ..plugins.validate import validate_config
 
     target = Path(path) if path else _registry_path()
     reg = load_registry(target)
     warnings: list[str] = []
     for entry in reg.values():
         validate_entry(entry)
+        lint_plugin = get_plugin(entry.plugin)
+        if lint_plugin.warn is not None:
+            config = validate_config(entry.name, lint_plugin.spec, entry.config)
+            warnings.extend(f"'{entry.name}': {w}" for w in lint_plugin.warn(config))
         if entry.search_aliases:
             # A WARNING: lint never attaches, so the full catalogue is unknown
             # here -- only the pins and the plugin's own vocabulary are.
             # `health --deep` checks the words against the live catalogue.
-            from ..plugins import get as get_plugin
-
-            spec = get_plugin(entry.plugin).spec
+            spec = lint_plugin.spec
             known = set(spec.pinned) | set(spec.search_aliases) | set(entry.pinned or [])
             for tool in sorted(set(entry.search_aliases) - known):
                 warnings.append(

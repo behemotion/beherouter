@@ -24,7 +24,7 @@ class ConfigField:
     """One key in a plugin's `[surface.config]` table."""
 
     name: str
-    type: type  # str | int | bool | float
+    type: type  # str | int | bool | float | list
     required: bool = False
     default: object = None
     doc: str = ""
@@ -87,6 +87,10 @@ class PluginSpec:
     # say "sprint"). A tested default; a registry entry may ADD to it, never
     # replace it. See docs/PLUGINS.md § Search vocabulary.
     search_aliases: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Registry-entry keys that are MANDATORY for this plugin: the one place
+    # `probe`/`pinned` stop being overrides, because there is no tested
+    # default to fall back to (a generic source like `openapi`).
+    requires_entry: tuple[str, ...] = ()
     # Which plugin contract this spec was written against; `register()`
     # refuses one this gateway does not serve. See API_VERSION.
     api: int = API_VERSION
