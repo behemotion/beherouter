@@ -36,6 +36,7 @@ import jsonschema
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import FastMCPTransport
 from fastmcp.exceptions import FastMCPError, NotFoundError, ToolError, ValidationError
+from fastmcp.server.providers.openapi.routing import MCPType
 from fastmcp.tools.function_tool import FunctionTool
 
 from ..errors import Unavailable, UsageError
@@ -176,3 +177,51 @@ async def load_inproc_backend(backing: McpBacking) -> Backend:
 
     backend.relist = _relist
     return backend
+
+
+def _include_filter(include: frozenset[str]):
+    """A TOTAL route filter: no lookup here can raise. It has to be total,
+    because FastMCP swallows an exception from it and publishes the route."""
+
+    def fn(route, route_type):
+        return route_type if route.operation_id in include else MCPType.EXCLUDE
+
+    return fn
+
+
+def _close_schema(route, component) -> None:
+    """additionalProperties: false, so `args.prepare_args` refuses an
+    undeclared argument with a did-you-mean instead of the upstream dropping it."""
+    component.parameters = {**component.parameters, "additionalProperties": False}
+
+
+async def openapi_server(
+    document: dict, *, client: httpx.AsyncClient, include: list[str] | None, name: str = "openapi"
+) -> FastMCP:
+    """A FastMCP server for `include`'s operations (all of them for None).
+
+    ⚠️ Both FastMCP hooks used here FAIL OPEN (3.4.5: an exception in either is
+    logged and ignored), so the result is checked after construction, through
+    the public `list_tools()`: the published names must equal `include`, and
+    every schema must be closed. Async for exactly that reason.
+    """
+    server = FastMCP.from_openapi(
+        document,
+        client=client,
+        name=name,
+        route_map_fn=_include_filter(frozenset(include)) if include is not None else None,
+        mcp_component_fn=_close_schema,
+    )
+    tools = {t.name: t for t in await server.list_tools()}
+    if include is not None and set(tools) != set(include):
+        missing = sorted(set(include) - set(tools))
+        extra = sorted(set(tools) - set(include))
+        raise UsageError(
+            f"OpenAPI include does not match what was published: "
+            f"missing {missing}, unexpected {extra}"
+        )
+    open_ = sorted(n for n, t in tools.items() if t.parameters.get("additionalProperties") is not False)
+    if open_:
+        raise UsageError(f"OpenAPI tool schema(s) not closed: {open_}")
+    setattr(server, IDENTITY_MARKER, bool(getattr(client, IDENTITY_MARKER, False)))
+    return server
