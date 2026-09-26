@@ -13,7 +13,8 @@ from beherouter.plugins.spec import API_VERSION, PluginSpec
 EXPORTS = {
     "API_VERSION", "AuthError", "Backend", "CliBacking", "ConfigField", "EnvVar",
     "IdentitySupport", "McpBacking", "PluginContext", "PluginSpec", "ToolDescriptor",
-    "Unavailable", "UsageError", "load_cli_backend", "load_mcp_backend", "register",
+    "Unavailable", "UsageError", "identity_client", "load_cli_backend",
+    "load_inproc_backend", "load_mcp_backend", "register",
 }
 
 
@@ -107,3 +108,49 @@ def test_an_external_plugin_for_another_api_is_skipped_with_a_reason(tmp_path):
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "False"
     assert "acme-demo" in r.stderr and "v2" in r.stderr
+
+
+_DECORATOR_PLUGIN = """
+    import asyncio
+    from fastmcp import FastMCP
+    from beherouter.plugin_api import McpBacking, PluginSpec, load_inproc_backend, register
+
+    mcp = FastMCP("acme")
+
+    @mcp.tool
+    def lookup_order(order_id: str) -> dict:
+        \"\"\"Fetch one order.\"\"\"
+        return {"order_id": order_id}
+
+    SPEC = PluginSpec(name="acme-orders", summary="orders", backing="inproc",
+                      pinned=("lookup_order",), probe="lookup_order",
+                      probe_args={"order_id": "probe"})
+
+    async def build(ctx):
+        return await load_inproc_backend(McpBacking(name=ctx.surface, transport="inproc",
+                                                    server=mcp, pinned=ctx.pinned))
+
+    register(SPEC, build)
+"""
+
+
+def test_the_decorator_path_attaches_as_an_external_plugin(tmp_path):
+    (tmp_path / "acme_orders.py").write_text(textwrap.dedent(_DECORATOR_PLUGIN))
+    info = tmp_path / "acme_orders-0.1.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: acme-orders\nVersion: 0.1\n")
+    (info / "entry_points.txt").write_text("[beherouter.plugins]\nacme-orders = acme_orders\n")
+    r = _run(
+        tmp_path,
+        "import asyncio\n"
+        "from beherouter.gateway import load_backend\n"
+        "from beherouter.registry import RegistryEntry\n"
+        "b = asyncio.run(load_backend(RegistryEntry(name='orders', plugin='acme-orders')))\n"
+        "print(b.kind, [d.name for d in b.pinned])\n"
+        "print(asyncio.run(b.executor.run('lookup_order', {'order_id': 'o-1'})))",
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines() == [
+        "inproc ['lookup_order']",
+        "{'result': {'order_id': 'o-1'}}",
+    ]

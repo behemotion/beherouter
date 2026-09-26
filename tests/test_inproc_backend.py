@@ -323,3 +323,25 @@ async def test_the_gateway_callers_headers_never_reach_the_upstream():
     assert up["authorization"] == "Bearer alice"
     assert "x-api-key" not in up and "cookie" not in up
     assert not [k for k in up if k.startswith("mcp-")]
+
+
+async def test_inproc_descriptors_equal_the_http_pipelines():
+    """One pipeline, proven: the same server listed in-process and over
+    streamable HTTP yields identical descriptors."""
+    from fastmcp import Client as McpClient
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    from beherouter.backends.mcp import backend_from_client
+
+    server = _server()
+    inproc = await load_inproc_backend(_backing(server, pinned=["lookup_order"]))
+    app = server.http_app(path="/mcp")
+    async with app.router.lifespan_context(app):
+        asgi = httpx.ASGITransport(app=app)
+        t = StreamableHttpTransport(
+            "http://up/mcp",
+            httpx_client_factory=lambda **kw: httpx.AsyncClient(transport=asgi, **kw),
+        )
+        async with McpClient(t) as c:
+            over_http = await backend_from_client("acme", c, ["lookup_order"])
+    assert inproc.descriptors == over_http.descriptors

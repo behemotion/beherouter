@@ -1,6 +1,6 @@
 """The supported import surface for writing a beherouter plugin.
 
-    from beherouter.plugin_api import PluginSpec, McpBacking, load_mcp_backend, register
+    from beherouter.plugin_api import PluginSpec, McpBacking, load_mcp_backend, load_inproc_backend, register
 
 Everything a plugin needs is here, and ONLY what is here carries a
 compatibility promise: the names below keep working across patch and minor
@@ -30,6 +30,8 @@ _EXPORTS: dict[str, str] = {
     "McpBacking": "beherouter.backends.backing",
     "CliBacking": "beherouter.backends.backing",
     "load_mcp_backend": "beherouter.backends.mcp",
+    "load_inproc_backend": "beherouter.backends.inproc",
+    "identity_client": "beherouter.backends.inproc",
     "load_cli_backend": "beherouter.backends.cli",
     "Backend": "beherouter.models",
     "ToolDescriptor": "beherouter.models",
@@ -55,7 +57,9 @@ __all__ = [
     "ToolDescriptor",
     "Unavailable",
     "UsageError",
+    "identity_client",
     "load_cli_backend",
+    "load_inproc_backend",
     "load_mcp_backend",
     "register",
 ]
@@ -78,6 +82,7 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:  # for type checkers and IDEs only; never executed
     from .backends.backing import CliBacking, McpBacking
     from .backends.cli import load_cli_backend
+    from .backends.inproc import identity_client, load_inproc_backend
     from .backends.mcp import load_mcp_backend
     from .errors import AuthError, Unavailable, UsageError
     from .models import Backend, ToolDescriptor
