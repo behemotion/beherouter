@@ -22,7 +22,7 @@ TOKENS = MATERIAL["tokens"]
 GATEWAY = "http://localhost:47100"
 FIXTURES = "http://localhost:18000"
 SHARED_TOKEN = "e2e-shared-gateway-token"
-SURFACES = ["echo", "plane", "plane-bearer", "plane-stdio"]
+SURFACES = ["crm", "echo", "plane", "plane-bearer", "plane-stdio"]
 
 results: list[tuple[bool, str, str]] = []
 
@@ -192,8 +192,13 @@ async def main() -> int:
         capture_output=True, text=True, check=False,
     )
     payload = json.loads(lint.stdout or "{}")
+    # Exactly one warning is expected, and it is by design: `crm` fetches its
+    # spec by URL at attach, which lint (offline) says it cannot check.
+    warnings = payload.get("warnings")
     check(
-        lint.returncode == 0 and payload.get("ok") is True and payload.get("warnings") == [],
+        lint.returncode == 0 and payload.get("ok") is True
+        and isinstance(warnings, list) and len(warnings) == 1
+        and warnings[0].startswith("'crm': spec is a URL"),
         "registry-lint passes the live registry inside the serving image",
         json.dumps(payload),
     )
@@ -334,6 +339,41 @@ async def main() -> int:
             "a misspelled run_tool arg is refused with a suggestion",
             str(e)[:160],
         )
+
+    # --- 19. openapi (inproc): per-user identity and no header leak -------
+    """Two callers reach a REST upstream as themselves through an in-process
+    OpenAPI source, and nothing a caller sent the GATEWAY leaks onto the
+    upstream request (FastMCP's OpenAPI tool copies inbound headers)."""
+    httpx.post(f"{FIXTURES}/_calls/reset", timeout=10)
+    seen = {}
+    for user in ("alice", "bob"):
+        res = await call(
+            client("crm", jwt=TOKENS[user], extra={
+                "x-crm-token": f"Bearer pat-{user}",
+                "x-plane-pat": "Bearer pat-should-not-leak",
+                "cookie": "session=should-not-leak",
+            }),
+            "crm_whoami",
+            {},
+        )
+        seen[user] = res.structured_content["result"]["id"]
+    check(
+        seen == {"alice": "alice", "bob": "bob"},
+        "openapi: two callers reach the REST upstream as themselves",
+        str(seen),
+    )
+    calls = [c for c in httpx.get(f"{FIXTURES}/_calls", timeout=10).json()["calls"]
+             if c["path"] == "/crm/me"]
+    check(
+        len(calls) == 2 and all(c["resolved"] in ("alice", "bob") for c in calls),
+        "openapi: the upstream never saw the deployment credential on a user call",
+        str([c["resolved"] for c in calls]),
+    )
+    check(
+        len(calls) == 2 and not any(c["leaked"] for c in calls),
+        "openapi: no gateway-caller header leaks onto the upstream request",
+        str([c["leaked"] for c in calls]),
+    )
 
     failed = [name for ok, name, _ in results if not ok]
     print("\n" + "=" * 72)
