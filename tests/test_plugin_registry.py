@@ -95,3 +95,35 @@ def test_requires_entry_refuses_an_entry_without_the_named_keys():
         validate_entry(RegistryEntry(name="s", plugin="t-req", probe="a", pinned=["a"]))
     finally:
         PLUGINS.pop("t-req", None)
+
+
+def test_published_bounds_pinned_and_probe():
+    from beherouter.registry import RegistryEntry, validate_entry
+
+    async def build(ctx):
+        raise AssertionError
+
+    register(PluginSpec(name="t-pub", summary="t", backing="inproc"), build,
+             published=lambda config: {"a", "b"})
+    try:
+        validate_entry(RegistryEntry(name="s", plugin="t-pub", pinned=["a"], probe="b"))
+        with pytest.raises(UsageError, match=r"'s'.*pinned.*'c'.*does not publish"):
+            validate_entry(RegistryEntry(name="s", plugin="t-pub", pinned=["a", "c"]))
+        with pytest.raises(UsageError, match=r"'s'.*probe 'c'.*does not publish"):
+            validate_entry(RegistryEntry(name="s", plugin="t-pub", probe="c"))
+    finally:
+        PLUGINS.pop("t-pub", None)
+
+
+def test_published_none_means_unknown_and_checks_nothing():
+    from beherouter.registry import RegistryEntry, validate_entry
+
+    async def build(ctx):
+        raise AssertionError
+
+    register(PluginSpec(name="t-pub-none", summary="t", backing="inproc"), build,
+             published=lambda config: None)
+    try:
+        validate_entry(RegistryEntry(name="s", plugin="t-pub-none", pinned=["x"], probe="y"))
+    finally:
+        PLUGINS.pop("t-pub-none", None)

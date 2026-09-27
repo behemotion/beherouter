@@ -193,4 +193,9 @@ async def build(ctx: PluginContext):
     )
 
 
-register(SPEC, build, validate=validate, warn=warn)
+def published(config: dict) -> set[str] | None:
+    include = config.get("include")
+    return None if include == ["*"] else set(include)
+
+
+register(SPEC, build, validate=validate, warn=warn, published=published)

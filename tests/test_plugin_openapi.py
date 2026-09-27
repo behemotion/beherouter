@@ -83,8 +83,14 @@ def test_star_refuses_an_operation_without_an_id_by_method_and_path(tmp_path, mo
 
 
 def test_a_pin_outside_include_is_refused(tmp_path, monkeypatch):
-    with pytest.raises(UsageError, match=r"pinned.*create_note.*include"):
+    with pytest.raises(UsageError, match=r"pinned.*create_note.*does not publish"):
         validate_entry(_entry(tmp_path, monkeypatch, pinned=["create_note"]))
+
+
+def test_a_probe_outside_include_is_refused(tmp_path, monkeypatch):
+    with pytest.raises(UsageError, match=r"probe 'search_customers'.*does not publish"):
+        validate_entry(_entry(tmp_path, monkeypatch, config={"include": ["get_customer"]},
+                              probe="search_customers"))
 
 
 def test_probe_and_pinned_are_required(tmp_path, monkeypatch):

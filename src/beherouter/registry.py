@@ -56,14 +56,20 @@ def validate_entry(e: RegistryEntry) -> None:
                 f"'{e.name}': plugin '{e.plugin}' has no tested default for "
                 f"'{key}'; set `{key}` in [{e.name}]"
             )
-    # A generic source publishes only what its config selects; a pin outside
-    # that set would attach green and then fail the pin check at health.
-    selected = config.get("include")
-    if plugin.spec.requires_entry and isinstance(selected, list) and selected != ["*"]:
-        outside = sorted(set(e.pinned or []) - set(selected))
+    # A generic source publishes only what its config selects; a pin or probe
+    # outside that set would attach green and then fail at health.
+    published = plugin.published(config) if plugin.published is not None else None
+    if published is not None:
+        outside = sorted(set(e.pinned or []) - published)
         if outside:
             raise UsageError(
-                f"'{e.name}': pinned names {outside}, which include does not publish"
+                f"'{e.name}': pinned names {outside}, which plugin '{e.plugin}' "
+                f"does not publish from this config"
+            )
+        if e.probe and e.probe not in published:
+            raise UsageError(
+                f"'{e.name}': probe '{e.probe}' is a tool plugin '{e.plugin}' "
+                f"does not publish from this config"
             )
     from .identity import validate_authz, validate_identity
 

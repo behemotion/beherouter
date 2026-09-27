@@ -71,12 +71,16 @@ class Plugin:
     # Legal-but-a-trap findings for `registry-lint`, from the effective config.
     # Never raises for a valid config; warnings never fail the lint.
     warn: Callable[[dict], list[str]] | None = None
+    # The tool names this plugin's EFFECTIVE CONFIG publishes, computed offline;
+    # None when that cannot be known here (a URL spec, a directory absent on
+    # the linting machine). `validate_entry` holds `pinned` and `probe` to it.
+    published: Callable[[dict], set[str] | None] | None = None
 
 
 PLUGINS: dict[str, Plugin] = {}
 
 
-def register(spec: PluginSpec, build: BuildFn, validate=None, warn=None) -> None:
+def register(spec: PluginSpec, build: BuildFn, validate=None, warn=None, published=None) -> None:
     """Add a plugin. Duplicate names are a programming error, not a config one."""
     if spec.api not in SUPPORTED_API_VERSIONS:
         served = ", ".join(f"v{v}" for v in SUPPORTED_API_VERSIONS)
@@ -91,7 +95,9 @@ def register(spec: PluginSpec, build: BuildFn, validate=None, warn=None) -> None
         )
     if spec.name in PLUGINS:
         raise UsageError(f"plugin '{spec.name}' is already registered")
-    PLUGINS[spec.name] = Plugin(spec=spec, build=build, validate=validate, warn=warn)
+    PLUGINS[spec.name] = Plugin(
+        spec=spec, build=build, validate=validate, warn=warn, published=published
+    )
 
 
 def load_entry_point_plugins(eps=None) -> list[str]:
