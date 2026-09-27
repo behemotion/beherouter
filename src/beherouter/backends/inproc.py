@@ -146,7 +146,25 @@ class InprocExecutor:
             raise UsageError(f"backend rejected '{verb}': {e}") from e
         except Exception as e:
             raise Unavailable(f"backend call '{verb}' failed: {e}") from e
-        return {"result": _payload(res)}
+        return {"result": _unwrapped(res)}
+
+
+def _unwrapped(res):
+    """The call's value, with FastMCP's envelope for a non-object return removed.
+
+    A tool returning `str`/`int`/`list` is sent as structured `{"result": v}`
+    and marked `meta.fastmcp.wrap_result`; the Client session unwraps it, so an
+    http/stdio backend yields `v`. Calling the server directly skips that, and
+    this backing then wrapped once more: `{"result": {"result": v}}` (found by
+    python-dir, whose functions mostly return plain values). Keyed on the
+    marker, never on the shape, so a tool that really returns `{"result": …}`
+    keeps it.
+    """
+    structured = getattr(res, "structured_content", None)
+    wrapped = ((getattr(res, "meta", None) or {}).get("fastmcp") or {}).get("wrap_result")
+    if wrapped and isinstance(structured, dict) and "result" in structured:
+        return structured["result"]
+    return _payload(res)
 
 
 def _is_outage(e: Exception) -> bool:

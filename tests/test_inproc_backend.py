@@ -82,6 +82,33 @@ async def test_a_call_returns_the_payload():
     assert out == {"result": {"order_id": "o-1", "count": 1}}
 
 
+async def test_a_primitive_return_is_not_double_wrapped():
+    """FastMCP wraps a non-object return as {"result": v} and marks it; the
+    Client session unwraps it, so every http/stdio backend returns v. Calling
+    the server directly must match, not hand agents {"result": {"result": v}}."""
+    server = FastMCP("t")
+
+    @server.tool
+    def greet(name: str) -> str:
+        """Greet."""
+        return f"hi {name}"
+
+    @server.tool
+    def evens() -> list[int]:
+        """Evens."""
+        return [0, 2]
+
+    @server.tool
+    def envelope() -> dict:
+        """Returns an object that merely LOOKS like FastMCP's envelope."""
+        return {"result": 1}
+
+    backend = await load_inproc_backend(_backing(server))
+    assert await backend.executor.run("greet", {"name": "w"}) == {"result": "hi w"}
+    assert await backend.executor.run("evens", {}) == {"result": [0, 2]}
+    assert await backend.executor.run("envelope", {}) == {"result": {"result": 1}}
+
+
 async def test_a_function_tool_still_coerces_like_the_session_path():
     """Measured 2026-09-26: pydantic accepts "3" for an int on both FastMCP
     paths. Pre-validating function tools with jsonschema would refuse it."""

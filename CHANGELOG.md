@@ -41,7 +41,9 @@ auto-generated contributor appendix is appended below it). Releases before
 - **`inproc` backing** and `plugin_api.load_inproc_backend` / `identity_client`
   / `mark_identity_aware`: a plugin can hand the gateway an in-process FastMCP
   server ("some decorated functions") in about 15 lines, and make it per-user
-  by marking it with the `identity_client` its tools call out through.
+  by marking it with the `identity_client` its tools call out through. A call
+  returns the tool's value exactly as an http/stdio backend would (a plain
+  `str`/`list` return is not double-wrapped in FastMCP's `{"result": …}`).
 - **`PluginSpec.requires_entry`**: a generic source can make `probe`/`pinned`
   mandatory, and `plugin-config` emits them. A plugin's `warn()` findings reach
   `registry-lint`'s `warnings`.
