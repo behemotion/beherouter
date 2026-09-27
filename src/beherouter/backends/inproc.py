@@ -1,8 +1,8 @@
 """inproc backend: an in-process FastMCP server behind the MCP pipeline.
 
 ⚠️ THE ONLY MODULE THAT IMPORTS FASTMCP FOR THIS BACKING (and for the `openapi`
-source). FastMCP 4.0 moved the modules below, so keeping every name here makes
-the 4.x port one file.
+and `python-dir` sources). FastMCP 4.0 moved the modules below, so keeping
+every name here makes the 4.x port one file.
 
 Listing reuses `backend_from_client` over an in-memory transport, so an
 in-process tool gets exactly the pipeline every MCP backend has. Calls go
@@ -28,7 +28,9 @@ the spec's § Measured 2026-09-26):
 
 import asyncio
 import contextvars
+import logging
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
 
 import httpx
@@ -36,13 +38,17 @@ import jsonschema
 from fastmcp import Client, FastMCP
 from fastmcp.client.transports import FastMCPTransport
 from fastmcp.exceptions import FastMCPError, NotFoundError, ToolError, ValidationError
+from fastmcp.server.providers.filesystem_discovery import discover_and_import
 from fastmcp.server.providers.openapi.routing import MCPType
+from fastmcp.tools import Tool
 from fastmcp.tools.function_tool import FunctionTool
 
 from ..errors import Unavailable, UsageError
 from ..models import Backend, ToolDescriptor
 from .backing import McpBacking
 from .mcp import _payload, backend_from_client
+
+logger = logging.getLogger(__name__)
 
 # The current call's identity headers. Set ONLY inside the blank context an
 # InprocExecutor call runs in, so it can never leak between callers.
@@ -243,4 +249,55 @@ async def openapi_server(
         raise UsageError(f"OpenAPI tool schema(s) not closed: {open_}")
     if getattr(client, IDENTITY_MARKER, False):
         mark_identity_aware(server, client)
+    return server
+
+
+def python_dir_server(path: str | Path, *, name: str) -> FastMCP:
+    """A FastMCP server for the `@tool` functions in the `.py` files under `path`.
+
+    ⚠️ Deliberately NOT `FileSystemProvider`, which fails open three ways
+    (FastMCP 3.4.5): a file that fails to import is logged and skipped, a
+    missing root only warns, and it is built `on_duplicate="replace"`, so a
+    second file defining the same tool silently wins. Each of those is a
+    surface that attaches green and serves something other than what the
+    operator wrote. This runs the same discovery and refuses all three.
+
+    Duplicates are compared by the wrapped FUNCTION: discovery scans each
+    module's namespace and builds a fresh `Tool` per sighting, so a tool one
+    file imports from another is seen twice, and that is not a conflict.
+    """
+    root = Path(path)
+    if not root.is_dir():
+        raise UsageError(f"'{name}': python-dir path '{root}' is not a directory")
+    result = discover_and_import(root)
+    if result.failed_files:
+        failures = "; ".join(f"{p}: {err}" for p, err in sorted(result.failed_files.items()))
+        raise UsageError(f"'{name}': python-dir could not import {failures}")
+    server = FastMCP(name)
+    seen: dict[str, tuple[object, Path]] = {}
+    dropped: list[str] = []
+    for file, component in result.components:
+        if not isinstance(component, Tool):
+            dropped.append(f"{file}: {component.name}")
+            continue
+        fn = getattr(component, "fn", component)
+        prior = seen.get(component.name)
+        if prior is not None:
+            if prior[0] is not fn:
+                raise UsageError(
+                    f"'{name}': tool '{component.name}' is defined in both "
+                    f"{prior[1]} and {file}; rename one"
+                )
+            continue
+        seen[component.name] = (fn, file)
+        server.add_tool(component)
+    if dropped:
+        logger.warning(
+            "'%s': python-dir surfaces tools only; ignoring %s", name, ", ".join(dropped)
+        )
+    if not seen:
+        raise UsageError(
+            f"'{name}': python-dir path '{root}' defines no tools; decorate "
+            f"functions with @tool (from fastmcp.tools import tool)"
+        )
     return server
