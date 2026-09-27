@@ -47,6 +47,13 @@ auto-generated contributor appendix is appended below it). Releases before
 - **`PluginSpec.requires_entry`**: a generic source can make `probe`/`pinned`
   mandatory, and `plugin-config` emits them. A plugin's `warn()` findings reach
   `registry-lint`'s `warnings`.
+- **`python-dir` plugin**: a directory of `@tool`-decorated Python functions
+  becomes a surface. It runs operator code in the gateway process. An import
+  failure, a duplicate tool name or an empty directory is refused by file name,
+  never skipped. `registry-lint` parses the files without importing them.
+- **`register(..., published=)`**: a source reports the tool names its config
+  publishes, and `validate_entry` refuses a `pinned` or `probe` outside them.
+  `openapi` now also refuses a `probe` outside `include`.
 
 ### Fixed
 

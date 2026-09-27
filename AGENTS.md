@@ -207,8 +207,9 @@ it makes "attach performs no network I/O" mechanically enforceable — a plugin
 
 **Five backings:** `http` and `stdio` (an MCP server, over HTTP or as a
 subprocess), `cli` (a beheaxi CLI), `native` (in-process Python; Phase 2),
-`inproc` (an in-process FastMCP server; the `openapi` source and decorator
-plugins).
+`inproc` (an in-process FastMCP server; the `openapi` and `python-dir` sources
+and decorator plugins). ⚠️ `python-dir` runs operator code in the gateway
+process; lint only parses it.
 
 **A plugin no longer has to live in this tree.** A distribution advertising the
 `beherouter.plugins` entry-point group is imported at startup and registers the
@@ -269,7 +270,7 @@ declares nothing can't be configured for per-user use at all. Today:
 | `plane-http` | `bearer` | their IdP token, through `contrib/plane-mcp-bearer`; Plane must verify it |
 | `gcal`, `m365` | `lookup` | nothing; their refresh token is read from the identity map |
 | `openapi` | `bearer`, `claims`, `client`, `lookup` | their material, on the upstream REST request |
-| `plane`, `sonarqube` | — | shared credential only (`plane` is stdio, so it never can be) |
+| `plane`, `sonarqube`, `python-dir` | — | shared credential only (`plane` is stdio, so it never can be; `python-dir` functions have nowhere stable to read the caller from yet) |
 
 Proving it: a green `health --deep` proves only the **deployment** credential (its
 output says `probe_scope: "deployment-credential"`).

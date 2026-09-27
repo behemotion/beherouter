@@ -300,7 +300,7 @@ Five backings:
 | `stdio` | An MCP server run as a subprocess. Costs a process, not a container | **never** (refused) |
 | `cli` | A beheaxi CLI, described and invoked as tools | subprocess environment |
 | `native` | In-process Python. No sidecar, no extra runtime | per-user credential provider |
-| `inproc` | An in-process FastMCP server: the `openapi` source and decorator plugins | per-call headers on the upstream request |
+| `inproc` | An in-process FastMCP server: the `openapi` and `python-dir` sources and decorator plugins | per-call headers on the upstream request |
 
 Plugins don't have to live in this tree. A package that advertises the
 `beherouter.plugins` entry point is picked up at startup, so a team with an internal

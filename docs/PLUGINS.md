@@ -54,8 +54,11 @@ That is a complete, production plugin (`src/beherouter/plugins/office_mcp.py`).
 
 - **`SPEC`** — a frozen `PluginSpec` dataclass. Pure data. No behaviour, no I/O.
 - **`build(ctx)`** — one `async` function returning a `Backend`.
-- **`register(spec, build, validate=None)`** — adds it to the registry. A duplicate name is
-  a programming error and raises.
+- **`register(spec, build, validate=None, warn=None, published=None)`** — adds it to the
+  registry. A duplicate name is a programming error and raises. `validate` refuses a bad
+  config (below); `warn` returns legal-but-a-trap findings for `registry-lint`; `published`
+  returns the tool names this config publishes, computed offline, or `None` when unknowable
+  at lint — `validate_entry` refuses a `pinned` or `probe` outside it.
 
 ## Why the spec must stay inert
 
@@ -80,7 +83,7 @@ you the value belongs in `config` or in `build`.
 | `stdio` | An MCP server run as a subprocess | You would otherwise add a container for it — a subprocess costs a process instead. Also sidesteps remote transports that 401 an un-credentialed probe, which some clients misread as "this server wants OAuth" |
 | `cli` | A beheaxi CLI, described and invoked as tools | The backend is a command-line tool following the harness CLI contract |
 | `native` | In-process Python | No sidecar, no extra runtime, no writable state — the calendar plugins are these |
-| `inproc` | An in-process **FastMCP server** the plugin builds, listed through the same MCP pipeline as `http`/`stdio` and called directly (`server.call_tool`) | You have "some decorated Python functions", or a REST API with an OpenAPI document (the `openapi` source below). Identity target `header`, through `identity_client` + `mark_identity_aware` |
+| `inproc` | An in-process **FastMCP server** the plugin builds, listed through the same MCP pipeline as `http`/`stdio` and called directly (`server.call_tool`) | You have "some decorated Python functions" (a decorator plugin, or the `python-dir` source below), or a REST API with an OpenAPI document (the `openapi` source below). Identity target `header`, through `identity_client` + `mark_identity_aware` |
 
 Three things `inproc` does that the other MCP backings do not have to:
 
@@ -199,6 +202,51 @@ things to know:
   ```
 - Pre-validation applies to **non-function tools only**. Function tools validate
   and coerce with pydantic, as they would over a session.
+
+## `python-dir` — drop a file, get tools
+
+```toml
+[ops]
+plugin = "python-dir"
+pinned = ["restart"]
+probe = "ping"
+probe_args = {}
+  [ops.config]
+  path = "/etc/beherouter/tools/ops"
+```
+
+```python
+# /etc/beherouter/tools/ops/workers.py
+from fastmcp.tools import tool
+
+@tool(name="restart")
+def restart_worker(name: str) -> str:
+    """Restart one queue worker by name."""
+    ...
+```
+
+Every top-level `@tool` function in every `.py` file under `path` (recursive;
+`__init__.py` and `_private` names skipped) becomes a tool.
+
+- ⚠️ **This runs operator code inside the gateway process** — the same trust as
+  installing a plugin package. Mount the directory read-only.
+- **A surface attaches with exactly what you wrote, or not at all.** A file
+  that fails to import, two functions under one tool name, or a directory with
+  no tools is refused by file name. FastMCP's own directory provider skips or
+  silently replaces in all three cases; `python-dir` does not use it.
+- **`registry-lint` parses the files and never imports them.** It catches
+  syntax errors and pins or probes that name no `@tool` function. A missing
+  import is caught only at attach. If `path` is absent on the machine running
+  lint, it warns instead of failing.
+- **No per-user identity.** `[ops.identity]` is refused.
+- ⚠️ Module names are process-wide: two `python-dir` directories must not
+  both ship a helper module of the same name that siblings import (the second
+  directory would get the first's). Give helper modules distinct names.
+- No hot reload: the published tools array is frozen per process by design.
+  Restart the gateway to pick up a changed file.
+- On Kubernetes, mount the directory with the chart's `extraVolumes` /
+  `extraVolumeMounts`; a module's third-party imports must be installed in the
+  image (`plugins.install`).
 
 ## `PluginSpec`, field by field
 
