@@ -111,7 +111,9 @@ async def surface_cost(
     the payload self-contradictory: a fresh count next to a stale cost.
     """
     fresh = backend.descriptors if descriptors is None else descriptors
-    published = await mcp.list_tools()
+    # Without middleware: what is PUBLISHED is a deployment property, and this
+    # runs at attach and from the CLI with no caller for a listing gate to read.
+    published = await mcp.list_tools(run_middleware=False)
     meta = sum(tool_tokens(t) for t in published if t.name in META_TOOL_NAMES)
     pinned = sum(tool_tokens(t) for t in published if t.name not in META_TOOL_NAMES)
     naive = await naive_tokens(replace(backend, descriptors=fresh))

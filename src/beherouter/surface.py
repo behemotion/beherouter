@@ -11,10 +11,11 @@ import logging
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
 
 from .args import NO_DEFAULT, normalize_args, prepare_args
 from .catalogue import Catalogue
-from .errors import NotFound
+from .errors import AuthError, AxiError, NotFound
 from .indexing import search_hits
 from .models import Backend, ToolDescriptor
 from .search import DEFAULT_LIMIT, suggest
@@ -136,6 +137,44 @@ def register_pinned(
     )(_make_pinned_tool(d, backend, runner))
 
 
+class _GateListing(Middleware):
+    """Hide a gated surface's tools from a caller its gate refuses.
+
+    `tools/call` is still the real gate; this keeps a host from putting tools
+    in front of a model that can only ever be refused. Three rules:
+
+    - FILTER, NEVER RAISE: an error in `tools/list` makes most hosts mark the
+      whole server failed, so any refusal — a misconfiguration included —
+      lists nothing (fail closed) instead of propagating.
+    - GATE, NEVER MATERIALISE: `policy.guard()`, exactly as the meta-tools do,
+      so a `lookup` surface with an unreadable map still lists for a holder.
+    - Hosts cache the list: a role granted mid-session appears on reconnect.
+
+    ⚠️ `FastMCP.list_tools()` runs middleware by default, so an in-process
+    measurement with no request in hand would see `[]`. `costing.surface_cost`
+    lists with `run_middleware=False` for that reason.
+    """
+
+    def __init__(self, policy: Any) -> None:
+        self.policy = policy
+
+    async def on_list_tools(self, context, call_next):
+        try:
+            self.policy.guard()
+        except AuthError:
+            return []
+        except AxiError as e:
+            # Not a caller's fault: a gate that cannot be evaluated. Logged,
+            # because unlike a role miss it is not routine.
+            logger.warning(
+                "tools/list hidden on surface=%s: gate misconfigured: %s",
+                self.policy.surface,
+                e,
+            )
+            return []
+        return await call_next(context)
+
+
 def build_surface(
     backend: Backend, auth: Any | None = None, policy: Any | None = None
 ) -> FastMCP:
@@ -152,6 +191,8 @@ def build_surface(
     """
     mcp = FastMCP(backend.name, auth=auth)
     enabled = policy is not None and policy.enabled
+    if enabled and policy.hides_listing:
+        mcp.add_middleware(_GateListing(policy))
 
     async def dispatch(verb: str, args: dict) -> dict:
         """The ONE call path. Identity is resolved here, per call, and nowhere
@@ -183,8 +224,9 @@ def build_surface(
         It gates without materialising: the catalogue is read with the
         deployment credential by design, so a `lookup` surface with an
         unreadable map must still answer a search for a caller who holds the
-        role. ⚠️ The FROZEN published `tools` array is captured at attach and
-        is NOT gated — a host sees it at connect time, before any of this runs.
+        role. The FROZEN published `tools` array is captured at attach; on a
+        role- or audience-gated surface `_GateListing` hides it from a refused
+        caller, but it is the same array for everyone who passes.
         """
         if enabled:
             policy.guard()

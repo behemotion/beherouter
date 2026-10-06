@@ -101,6 +101,9 @@ class IdentityPolicy:
     # From [surface.authz] audience: the token's `aud` must name at least one.
     # Checked IN ADDITION to the gateway-wide audience, never instead of it.
     audiences: tuple[str, ...] = ()
+    # From [surface.authz] hide_tools: a caller who fails the gate gets an
+    # empty `tools/list`. Default on; only meaningful beside a gate.
+    hide_tools: bool = True
 
     @property
     def enabled(self) -> bool:
@@ -110,6 +113,17 @@ class IdentityPolicy:
         refuses a shared-token caller, it simply forwards nothing afterwards.
         """
         return bool(self.mode) or bool(self.require_roles) or bool(self.audiences)
+
+    @property
+    def hides_listing(self) -> bool:
+        """Whether a refused caller's `tools/list` comes back empty.
+
+        A role or audience gate only — never a mode alone. A mode says WHOSE
+        credential a call carries, not WHO MAY call; hiding a mode-only
+        surface from a shared-token caller would turn "connect with a user
+        token" into an empty server with nothing to say why.
+        """
+        return self.hide_tools and bool(self.require_roles or self.audiences)
 
     @property
     def wanted_headers(self) -> tuple[str, ...]:
@@ -534,7 +548,7 @@ def validate_identity(surface: str, spec, raw: dict | None) -> None:
             )
 
 
-_AUTHZ_KEYS = ("require_roles", "audience")
+_AUTHZ_KEYS = ("require_roles", "audience", "hide_tools")
 
 
 def validate_authz(surface: str, raw: dict | None) -> None:
@@ -562,6 +576,16 @@ def validate_authz(surface: str, raw: dict | None) -> None:
         raise UsageError(
             f"'{surface}': authz audience must be a non-empty string or a "
             f"non-empty array of them, got {audience!r}"
+        )
+    hide = raw.get("hide_tools", True)
+    if not isinstance(hide, bool):
+        raise UsageError(
+            f"'{surface}': authz hide_tools must be true or false, got {hide!r}"
+        )
+    if "hide_tools" in raw and not (raw.get("require_roles") or audience):
+        raise UsageError(
+            f"'{surface}': authz hide_tools needs require_roles or audience "
+            f"beside it; without a gate there is no caller to hide the tools from"
         )
     roles = raw.get("require_roles")
     if roles is None:
@@ -614,6 +638,7 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
         mode = ""
     gate = tuple((entry.authz or {}).get("require_roles") or ())
     audiences = audiences_of((entry.authz or {}).get("audience"))
+    hide = (entry.authz or {}).get("hide_tools", True)
     # Read once, at attach: os.environ is not I/O, and an inert policy is what
     # lets health and lint describe a surface without a request in hand.
     claim = roles_claim()
@@ -623,6 +648,7 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
             require_roles=gate,
             roles_claim=claim,
             audiences=audiences,
+            hide_tools=hide,
         )
     return IdentityPolicy(
         surface=entry.name,
@@ -636,6 +662,7 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
         require_roles=gate,
         roles_claim=claim,
         audiences=audiences,
+        hide_tools=hide,
     )
 
 
@@ -654,6 +681,7 @@ def identity_report(policy: IdentityPolicy) -> dict:
         report = {"mode": "none", "require_roles": list(policy.require_roles)}
         if policy.audiences:
             report["audience"] = list(policy.audiences)
+        report["hide_tools"] = policy.hides_listing
         return report
     # `probe_scope` is the machine-readable half of the warning above: an
     # operator reading `health --deep --json` sees what the green probe covers
@@ -663,6 +691,8 @@ def identity_report(policy: IdentityPolicy) -> dict:
         report["require_roles"] = list(policy.require_roles)
     if policy.audiences:
         report["audience"] = list(policy.audiences)
+    if policy.require_roles or policy.audiences:
+        report["hide_tools"] = policy.hides_listing
     if policy.mode == "lookup":
         try:
             report["map"] = secret_map(policy._map_path()).status()

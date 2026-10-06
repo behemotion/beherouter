@@ -320,3 +320,14 @@ def test_a_plugin_warning_reaches_the_lint_output(tmp_path, capsys):
         assert "'w': publishes 812 tools" in out["warnings"]
     finally:
         PLUGINS.pop("t-warn", None)
+
+
+def test_lint_refuses_a_quoted_hide_tools(tmp_path):
+    """`hide_tools = "false"` is a TOML string, and a truthy one: accepting it
+    would hide the tools from an operator who asked to show them."""
+    body = (
+        '[office]\nplugin = "office-mcp"\n  [office.authz]\n'
+        '  require_roles = ["a"]\n  hide_tools = "false"\n'
+    )
+    with pytest.raises(UsageError, match="hide_tools must be true or false"):
+        registry_lint(path=_write(tmp_path, body))
