@@ -156,7 +156,9 @@ Your own plugins declare their modes the same way (see [`docs/PLUGINS.md`](docs/
   tokens from being accepted by another team's surfaces on a shared gateway.
 
 Both gates apply to the search meta-tools as well as to calls, so a surface that refuses
-your calls also refuses to list itself for you. Both are checked before the backend is
+your calls also refuses to list itself for you — and a caller either gate refuses gets an
+empty `tools/list`, so their host never shows the model tools it can only be refused
+(`hide_tools = false` turns that off). Both are checked before the backend is
 contacted, so an excluded caller can't drive traffic to it. They turn an opaque backend
 `401` into a sentence that names the surface. **They are ergonomics, not the control:**
 the backend's own verification of the forwarded identity is what enforces access.
@@ -199,8 +201,9 @@ Plan around these limits:
 - **The catalogue isn't per-user.** Attaching a backend, listing its searchable
   catalogue and running `health --deep` all use the deployment credential. Only the
   *calls* are per-user. A tool a user can't use in their own backend may still be listed.
-- **The published tool list isn't private.** The frozen `tools` array is served to
-  anyone the gateway authenticates, even a caller the gates would refuse.
+- **The published tool list is hidden, not private.** A gated surface lists nothing to
+  a caller its gate refuses; an ungated one serves its frozen `tools` array to anyone
+  the gateway authenticates. A host caches the list, so a role change shows on reconnect.
 - **It isn't your authorization layer.** The gates only catch refusals early. The
   backend decides.
 

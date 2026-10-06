@@ -12,6 +12,16 @@ auto-generated contributor appendix is appended below it). Releases before
 
 ### Changed
 
+- **A role- or audience-gated surface hides its tools from a caller it
+  refuses.** `tools/list` returns `{"tools": []}` to a caller who fails
+  `[surface.authz]` `require_roles` or `audience`, a shared-token caller under
+  `BEHEROUTER_AUTH_MODE=both` included, so an MCP host no longer offers its
+  model tools that can only be refused. `initialize` and `tools/call` are
+  unchanged: the call is still the gate and still names the missing role. The
+  listing never errors and never materialises an identity. On by default;
+  `[surface.authz] hide_tools = false` restores the old listing. Hosts cache
+  the list, so a role granted mid-session shows after a reconnect.
+
 - **One backend can no longer take the gateway down.** A surface whose attach
   fails, or exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` (default 30 s), is served as
   an RFC 9457 `503` and retried in the background (5 s doubling to 300 s); on

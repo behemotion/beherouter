@@ -250,13 +250,14 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
 5. **Modes `client` and `lookup` have no external consumer asking for them.** The
    requesting team wants `bearer` only. They were chosen deliberately and are
    tested; they are nonetheless unexercised by any stated need.
-6. **A gated surface is still *listable*.** `search_tools`, `describe_tool`,
-   `run_tool` and `context_cost` now refuse a caller the surface would not serve
-   (and refuse before re-listing the backend), but the FROZEN published `tools`
-   array is captured at attach and served to every authenticated caller. Closing
-   that means a FastMCP `on_list_tools` middleware and a decision about what a
-   host should be shown when it may call nothing — unbuilt, and deliberately so:
-   the gate carries no security weight, the backend's own verification does.
+6. ~~**A gated surface is still *listable*.**~~ Resolved 2026-10-06, at a
+   production deployment's request (a role-gated DWH surface listed to ~2100
+   LibreChat users, few of whom held the role): an `on_list_tools` middleware
+   returns `{"tools": []}` to a caller a role or audience gate refuses, and
+   `initialize` and `tools/call` are unchanged. `[surface.authz] hide_tools =
+   false` opts out. Still not a security control: the call is the gate, and the
+   backend's own verification is the control. A mode-only surface is still
+   listable by design (`docs/IDENTITY.md` §6, *Hiding the tool list*).
 
 ## Open
 

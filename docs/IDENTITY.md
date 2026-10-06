@@ -27,10 +27,11 @@ surface. Four surfaces can run four different modes on one gateway.
   `identity.probe_scope: "deployment-credential"` — so an operator reading the
   JSON does not have to have read this page. Only a real per-user call proves a
   per-user credential.
-- **A private tool list.** A surface's *calls* are gated, and so are its
-  read-only meta-tools (§6), but the **frozen published `tools` array** is
-  captured at attach and served to anyone the gateway authenticates. A caller
-  who may invoke nothing on a surface can still see what it publishes.
+- **A private tool list on an ungated surface.** On a surface with a role or
+  audience gate (§6), a caller the gate refuses gets an empty `tools/list`. A
+  surface with only an identity mode, or with `hide_tools = false`, serves its
+  frozen published `tools` array to anyone the gateway authenticates. And the
+  list is hidden, not secret: a host that already cached it keeps it.
 - **Authorization.** A role gate (§6) exists, and it is ergonomics. The control
   is the backend's own verification.
 
@@ -216,8 +217,9 @@ surface, at the edge, before the call is made.
   refuses to enumerate itself to you, and refuses *before* re-listing the
   backend, so a caller you excluded cannot drive traffic to it. The gate runs
   without materialising anything, so a `lookup` surface whose map is unreadable
-  still answers a search for a caller who holds the role. ⚠️ The frozen
-  published `tools` array is the exception — see §1.
+  still answers a search for a caller who holds the role. The published
+  `tools` array is hidden from a refused caller too — see *Hiding the tool
+  list* below.
 - It is **separate from `identity`** on purpose: a surface may gate while
   forwarding nothing. That is also why a gate works on a `stdio` surface, which
   can never carry an identity.
@@ -245,6 +247,48 @@ shared-token caller, and it is refused at boot (and at lint, where visible) on
 an `auth.mode: shared` gateway. It needs no `BEHEROUTER_OIDC_ROLES_CLAIM`,
 because `aud` is a standard claim. A refusal names the **expected** audience,
 never the token's.
+
+### Hiding the tool list
+
+```toml
+[plane]
+plugin = "plane"
+  [plane.authz]
+  require_roles = ["ai-plane-access"]
+  hide_tools = true                 # the default; false restores the old listing
+```
+
+An MCP host puts every listed tool in front of the model, for every user. A
+gated surface that lists its tools to a caller it refuses teaches their model
+to offer tools that can only fail, and the user then reads a refusal naming a
+role they cannot request. So on a surface with `require_roles` or `audience`,
+a caller who fails the gate sees an empty server:
+
+| MCP method | Caller refused by the gate | Caller who passes |
+|---|---|---|
+| `initialize` | `200`, unchanged | `200` |
+| `tools/list` | `{"tools": []}` | the published array, unchanged |
+| `tools/call` (pinned or meta-tool) | the refusal naming the missing role, unchanged | the call |
+
+- **The call is still the gate.** Hiding is cosmetic; a client that calls a
+  tool it was never shown gets the same refusal as before.
+- **`tools/list` never errors.** An error there makes most hosts mark the whole
+  server failed. A gate that cannot be evaluated at all (no roles claim
+  configured, which boot refuses anyway) lists nothing and logs a warning.
+- **It gates, it never materialises**, like the meta-tools: a `lookup`
+  surface with an unreadable map still lists for a caller who holds the role.
+- **A shared-token caller** under `BEHEROUTER_AUTH_MODE=both` fails the gate,
+  so it sees an empty list too.
+- **A mode alone hides nothing.** A mode says *whose credential* a call
+  carries, not *who may* call; only a role or audience gate hides.
+- ⚠️ **Hosts cache the list.** LibreChat re-lists at connect and reconnect, not
+  per message. A role granted mid-session appears after a reconnect or a
+  re-login; a role revoked mid-session leaves the tools listed until then, and
+  their calls refused. Neither is a bug.
+- `hide_tools = false` restores the old behaviour, for a host that would
+  rather show the tools and let the call fail. `hide_tools` without
+  `require_roles` or `audience` beside it is refused: there is nothing to gate
+  the listing on. `health --deep --json` reports it under `identity.hide_tools`.
 
 ## 6b. Worked example — per-user Plane
 
@@ -332,6 +376,8 @@ Offline, from `registry-lint` (and from `validate_entry`, so also at boot):
 | A `lookup` map that does not exist, where lint can see it | It would fail every call |
 | `require_roles` that is not a non-empty array of names | Malformed gate |
 | `audience` that is not a non-empty string or array of strings | Malformed gate |
+| `hide_tools` that is not `true` or `false` | Malformed switch |
+| `hide_tools` with neither `require_roles` nor `audience` | Nothing to gate the listing on |
 
 At boot, where the gateway's own environment is authoritative:
 
