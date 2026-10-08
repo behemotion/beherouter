@@ -60,7 +60,7 @@ def build_index(
 
 def search_hits(
     index: ToolIndex,
-    by_name: dict[str, ToolDescriptor],
+    by_name: Mapping[str, ToolDescriptor],
     query: str,
     limit: int,
     published: set[str],

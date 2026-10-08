@@ -50,7 +50,8 @@ SPEC = PluginSpec(
     requires_entry=("probe", "pinned"),
     config=(
         ConfigField("spec", str, required=True,
-                    doc="OpenAPI document: a local .json/.yaml path, or an http(s) URL fetched at attach"),
+                    doc="OpenAPI document: a local .json/.yaml path, or an http(s) URL "
+                        "fetched at attach"),
         ConfigField("base_url", str, required=True, doc="the REST API's base URL"),
         ConfigField("include", list, required=True,
                     doc='operationIds to publish; ["*"] for every operation (warned)'),
@@ -61,7 +62,7 @@ SPEC = PluginSpec(
     env=(EnvVar("api_key", doc="deployment credential for attach, the probe and shared "
                              "callers; required until Phase 2 adds optional credentials"),),
     identity=IdentitySupport(
-        modes=("bearer", "claims", "client", "lookup"),
+        modes=("bearer", "claims", "client", "lookup", "exchange"),
         target="header",
         doc="the caller's material lands on the upstream REST request, over the deployment header",
     ),
@@ -142,7 +143,9 @@ def check_document(where: str, doc: dict, include: list, pinned: list | None) ->
             if op_id not in known:
                 close = process.extractOne(op_id, sorted(known), scorer=fuzz.ratio, score_cutoff=60)
                 hint = f"; did you mean '{close[0]}'?" if close else ""
-                raise UsageError(f"{where} include names '{op_id}', not an operationId in the spec{hint}")
+                raise UsageError(
+                    f"{where} include names '{op_id}', not an operationId in the spec{hint}"
+                )
         selected = list(include)
     for op_id in selected:
         _check_name(where, op_id)
@@ -182,20 +185,28 @@ async def build(ctx: PluginContext):
         headers={cfg["auth_header"]: f"{cfg['auth_prefix']}{ctx.env['api_key']}"},
         timeout=30,
     )
-    server = await openapi_server(
-        doc,
-        client=client,
-        include=None if cfg["include"] == ["*"] else cfg["include"],
-        name=ctx.surface,
-    )
-    return await load_inproc_backend(
-        McpBacking(name=ctx.surface, transport="inproc", server=server, pinned=ctx.pinned)
-    )
+    # ⚠️ From here the client is ours to close until a backend owns it. A
+    # failed attach is retried every few seconds on a degraded gateway, and
+    # each attempt used to strand one connection pool. BaseException, because
+    # the attach timeout arrives as a cancellation.
+    try:
+        server = await openapi_server(
+            doc,
+            client=client,
+            include=None if cfg["include"] == ["*"] else cfg["include"],
+            name=ctx.surface,
+        )
+        return await load_inproc_backend(
+            McpBacking(name=ctx.surface, transport="inproc", server=server, pinned=ctx.pinned)
+        )
+    except BaseException:
+        await client.aclose()
+        raise
 
 
 def published(config: dict) -> set[str] | None:
     include = config.get("include")
-    return None if include == ["*"] else set(include)
+    return None if include == ["*"] else set(include or ())
 
 
 register(SPEC, build, validate=validate, warn=warn, published=published)

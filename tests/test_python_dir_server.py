@@ -100,3 +100,73 @@ async def test_prompts_are_dropped_with_a_warning(tmp_path, caplog):
     server = python_dir_server(tmp_path, name="ops")
     assert [t.name for t in await server.list_tools()] == ["ping"]
     assert "greet" in caplog.text
+
+
+HELPERS_TOOL = """
+    from __future__ import annotations
+
+    import helpers
+    from fastmcp.tools import tool
+
+    @tool
+    def which(n: int) -> str:
+        \"\"\"Which directory's helpers answered.\"\"\"
+        return f"{helpers.VALUE}{n}"
+"""
+
+
+async def test_same_named_files_in_two_directories_do_not_collide(tmp_path):
+    """Two surfaces that each ship a sibling-imported `helpers.py` used to share
+    whichever was imported first: FastMCP keeps the bare name `helpers` in
+    sys.modules, so the second directory's `import helpers` found the first's."""
+    import sys
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, value in ((a, "a"), (b, "b")):
+        _write(root, "helpers.py", f"VALUE = {value!r}\n")
+        _write(root, "tools.py", HELPERS_TOOL)
+    before = set(sys.modules)
+    server_a = python_dir_server(a, name="one")
+    server_b = python_dir_server(b, name="two")
+    assert (await server_a.call_tool("which", {"n": 1})).structured_content == {"result": "a1"}
+    assert (await server_b.call_tool("which", {"n": "2"})).structured_content == {"result": "b2"}
+    leaked = {m for m in set(sys.modules) - before if m in ("helpers", "tools")}
+    assert leaked == set(), "an operator module stayed importable under its bare name"
+
+
+async def test_same_named_packages_in_two_directories_do_not_collide(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, value in ((a, "a"), (b, "b")):
+        _write(root, "lib/__init__.py", "")
+        _write(root, "lib/util.py", f"VALUE = {value!r}\n")
+        _write(root, "tools.py", HELPERS_TOOL.replace(
+            "import helpers", "from lib import util as helpers"))
+    server_a = python_dir_server(a, name="one")
+    server_b = python_dir_server(b, name="two")
+    assert (await server_a.call_tool("which", {"n": 1})).structured_content == {"result": "a1"}
+    assert (await server_b.call_tool("which", {"n": 1})).structured_content == {"result": "b1"}
+
+
+async def test_a_reimport_sees_the_file_as_it_is_now(tmp_path):
+    """A failed attach is retried; fixing the file on disk must heal it."""
+    _write(tmp_path, "helpers.py", "VALUE = 'old'\n")
+    _write(tmp_path, "tools.py", HELPERS_TOOL)
+    python_dir_server(tmp_path, name="ops")
+    _write(
+        tmp_path,
+        "helpers.py",
+        "VALUE = 'fixed'  # a different size: pyc staleness is mtime+size\n",
+    )
+    server = python_dir_server(tmp_path, name="ops")
+    assert (await server.call_tool("which", {"n": 1})).structured_content == {"result": "fixed1"}
+
+
+def test_an_operator_file_never_shadows_an_installed_module(tmp_path):
+    """A file named like a stdlib module is imported privately, and the stdlib
+    module stays what everyone else gets."""
+    import json
+    import sys
+
+    _write(tmp_path, "json.py", PING)
+    python_dir_server(tmp_path, name="ops")
+    assert sys.modules["json"] is json

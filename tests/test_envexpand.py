@@ -32,7 +32,7 @@ def test_empty_variable_raises_usage_error(monkeypatch):
 
 def test_error_names_the_context_and_key(monkeypatch):
     monkeypatch.delenv("MISSING", raising=False)
-    with pytest.raises(UsageError, match="plane.*api_key"):
+    with pytest.raises(UsageError, match=r"plane.*api_key"):
         expand("plane", {"api_key": "${MISSING}"})
 
 

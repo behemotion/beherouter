@@ -55,7 +55,7 @@ def test_estimator_over_counts_rather_than_under_counts():
     """Over-reporting cost is safe; under-reporting invites a host to pin more
     than it can afford. The shipped divisor must not exceed the measured one."""
     data = json.loads(FIXTURE.read_text())
-    assert CHARS_PER_TOKEN <= data["chars_per_token"]
+    assert data["chars_per_token"] >= CHARS_PER_TOKEN
 
 
 def test_estimate_tokens_is_monotonic_and_never_zero_for_content():

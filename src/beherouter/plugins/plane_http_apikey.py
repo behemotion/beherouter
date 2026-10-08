@@ -46,6 +46,9 @@ from ..backends.mcp import load_mcp_backend
 from ..errors import UsageError
 from . import register
 from .plane import (
+    API_KEY_MOUNT,
+    CATALOGUE,
+    E2E,
     EDITION_FIELD,
     PINNED,
     PROBE,
@@ -55,8 +58,6 @@ from .plane import (
     validate_edition,
 )
 from .spec import ConfigField, EnvVar, IdentitySupport, PluginContext, PluginSpec
-
-API_KEY_MOUNT = "/http/api-key"
 
 # The two headers the mount reads. A closed set, so a typo'd target is a lint
 # error rather than a header the backend silently ignores.
@@ -74,6 +75,17 @@ SPEC = PluginSpec(
     probe=PROBE,
     probe_args=PROBE_ARGS,
     search_aliases=SEARCH_ALIASES,
+    # ⚠️ `verified`, not `per-user`, though the e2e stack proves two callers
+    # reach Plane as themselves through this plugin: the tier rule asks for a
+    # check asserting `matches_caller`, and `health --deep --bearer-file`
+    # cannot drive mode `client` (the PAT travels in a client header, not the
+    # bearer). Raising it needs that assertion for a `client` surface.
+    maturity="verified",
+    evidence=(
+        CATALOGUE,
+        E2E + "two callers act as themselves in Plane (per-user identity)",
+        E2E + "Plane itself saw each caller's credential, never the deployment one",
+    ),
     config=(
         ConfigField(
             name="base_url",

@@ -17,6 +17,16 @@ from .errors import UsageError
 from .plugins import get
 
 _SURFACE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Public for `catalog-import`, which emits the same fragments from a server.json.
+SURFACE_PATTERN = _SURFACE
+
+
+def caddy_fragment(surface: str) -> str:
+    """The vhost `not` clause that lets this surface's own token through."""
+    return (
+        f"# --- Caddyfile, inside the beherouter vhost matcher ---\n"
+        f"  not path_regexp {surface} ^/{surface}/mcp/?$"
+    )
 
 
 def token_var(surface: str, credential: str) -> str:
@@ -59,6 +69,21 @@ def collision_warning(surface: str, credential: str, value: str) -> str | None:
 _ENTRY_EMPTY = {"pinned": "[]", "probe": '""'}
 
 
+ENV_HEADER = "# --- the gateway's environment: fill from your secret store, never commit ---"
+
+
+def env_line(var: str, required: bool = True) -> str:
+    """One variable for the gateway's environment, with an EMPTY value.
+
+    Empty, not a sample value: an empty `${VAR}` refuses boot by name, while a
+    plausible placeholder would boot and 401 every call. No templating syntax
+    either: the deployment may be a `.env` file, a Kubernetes Secret or a
+    vault render, and the emitted line must be correct for all of them.
+    Shared with `catalog-import`, so the two cannot drift.
+    """
+    return f"{var}=" if required else f"# {var}=    (optional)"
+
+
 def render(surface: str, plugin_name: str) -> dict:
     """Return {'registry': str, 'caddy': str, 'env': str}."""
     if not _SURFACE.match(surface):
@@ -81,23 +106,23 @@ def render(surface: str, plugin_name: str) -> dict:
         for f in required:
             empty = "[]" if f.type is list else '""'
             lines.append(f"  {f.name} = {empty}    # {f.doc or 'required'}")
+    # An OPTIONAL credential is emitted commented out: the block must pass
+    # `registry-lint` as generated, and an uncommented `${VAR}` that nobody
+    # vaulted is an unset variable — a dead gateway at startup.
     if spec.env:
         lines.append(f"  [{surface}.env]")
         for v in spec.env:
-            lines.append(f'  {v.name} = "${{{token_var(surface, v.name)}}}"')
+            line = f'{v.name} = "${{{token_var(surface, v.name)}}}"'
+            lines.append(f"  {line}" if v.required else f"  # {line}    # optional")
 
-    caddy = (
-        f"# --- Caddyfile, inside the beherouter vhost matcher ---\n"
-        f"  not path_regexp {surface} ^/{surface}/mcp/?$"
-    )
+    caddy = caddy_fragment(surface)
 
     env = ""
     if spec.env:
-        env_lines = ["# --- the gateway's .env (or its template) ---"]
-        for v in spec.env:
-            var = token_var(surface, v.name)
-            env_lines.append(f"{var}={{{{ vault_{var.lower()} }}}}")
-        env = "\n".join(env_lines)
+        env = "\n".join(
+            [ENV_HEADER]
+            + [env_line(token_var(surface, v.name), v.required) for v in spec.env]
+        )
 
     return {
         "registry": "# --- registry.toml ---\n" + "\n".join(lines),

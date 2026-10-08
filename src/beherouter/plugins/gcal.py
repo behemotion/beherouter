@@ -11,7 +11,10 @@ uses a different redirect model and cannot complete the loopback bootstrap.
 ⚠️ EVERY WRITE THROUGH THIS SURFACE IS ATTRIBUTED TO ONE GOOGLE IDENTITY — the
 account that consented. Making the surface available to every LibreChat user did
 not make it per-user, exactly as with the Plane PAT. A second user reads and
-writes the consenting account's calendar.
+writes the consenting account's calendar — unless the entry declares
+[surface.identity] mode "lookup", in which case each caller's own grant comes
+from the identity map, written by `beherouter calendar-consent`
+(plugins/calendar/consent.py).
 
 All six tools are pinned: a six-tool catalogue is small enough that adding a
 search tier would cost more context than it saves.
@@ -45,6 +48,11 @@ SPEC = PluginSpec(
     # than the catalogue. A native plugin's catalogue is static, so nothing else
     # here would ever notice a revoked grant.
     probe="list_calendars",
+    # Native: the catalogue is the shared core's descriptor set, recorded from
+    # this plugin's own build and drift-guarded by tests/test_calendar_catalogue.py.
+    # Raise gcal and m365 TOGETHER — they share one schema set and one file.
+    maturity="catalogued",
+    evidence=("tests/fixtures/catalogues/calendar-0.2.5.json",),
     config=(
         ConfigField(
             name="calendar_id",

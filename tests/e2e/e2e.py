@@ -114,6 +114,30 @@ async def main() -> int:
         f"resolved at the Plane API: {resolved}",
     )
 
+    # --- the audit line names the caller, never the arguments ------------
+    logs = subprocess.run(
+        ["podman", "logs", "beherouter"], capture_output=True, text=True, check=False
+    ).stdout
+    audit_lines = []
+    for raw in logs.splitlines():
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(body, dict) and body.get("event") == "tool_call":
+            audit_lines.append(body)
+    alice_calls = [
+        b for b in audit_lines
+        if b.get("inner_tool") == "member" and b.get("caller", {}).get("sub") == "alice"
+    ]
+    check(
+        bool(alice_calls)
+        and alice_calls[-1]["outcome"] == "ok"
+        and alice_calls[-1]["auth"] == "oidc",
+        "the audit line records alice's call by subject, with its outcome",
+        json.dumps(alice_calls[-1] if alice_calls else audit_lines[-3:]),
+    )
+
     # --- 6. the role gate refuses, by name --------------------------------
     try:
         await call(
@@ -175,7 +199,9 @@ async def main() -> int:
         len(by_name) == len(SURFACES)
         and all(s.get("attach") == "ok" and s.get("probe") == "ok" for s in by_name.values()),
         "health --deep: every surface attaches and probes with the deployment credential",
-        json.dumps({n: {"attach": s.get("attach"), "probe": s.get("probe")} for n, s in by_name.items()}),
+        json.dumps(
+            {n: {"attach": s.get("attach"), "probe": s.get("probe")} for n, s in by_name.items()}
+        ),
     )
     check(
         by_name["plane"]["identity"]["mode"] == "client"
@@ -192,13 +218,16 @@ async def main() -> int:
         capture_output=True, text=True, check=False,
     )
     payload = json.loads(lint.stdout or "{}")
-    # Exactly one warning is expected, and it is by design: `crm` fetches its
-    # spec by URL at attach, which lint (offline) says it cannot check.
+    # Exactly two warnings are expected, both about `crm` and both by design:
+    # its spec is fetched by URL at attach, which lint (offline) cannot check,
+    # and `openapi` is a generic plugin, so its maturity tier is `declared`.
     warnings = payload.get("warnings")
     check(
         lint.returncode == 0 and payload.get("ok") is True
-        and isinstance(warnings, list) and len(warnings) == 1
-        and warnings[0].startswith("'crm': spec is a URL"),
+        and isinstance(warnings, list) and len(warnings) == 2
+        and any(w.startswith("'crm': spec is a URL") for w in warnings)
+        and any(w.startswith("'crm': plugin 'openapi' is maturity 'declared'")
+                for w in warnings),
         "registry-lint passes the live registry inside the serving image",
         json.dumps(payload),
     )
@@ -251,7 +280,8 @@ async def main() -> int:
         me.get("id") == "alice" and bearer_calls
         and all(c["resolved"] == "alice" for c in bearer_calls),
         "plane-http + contrib/plane-mcp-bearer: the caller's JWT reaches Plane as Bearer",
-        f"member/me -> {me.get('id')}; bearer calls resolved {[c['resolved'] for c in bearer_calls]}",
+        f"member/me -> {me.get('id')}; "
+        f"bearer calls resolved {[c['resolved'] for c in bearer_calls]}",
     )
 
     # --- 14. per-surface audience ---------------------------------------

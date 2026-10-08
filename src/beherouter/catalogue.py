@@ -28,6 +28,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from .indexing import build_index
 from .models import ToolDescriptor
@@ -94,6 +95,10 @@ class Catalogue:
         # True while a re-list is in flight. See `ensure_fresh`.
         self._refreshing = False
         self._index: ToolIndex | None = None
+        # Built lazily and dropped with `_index`, at the one place the
+        # descriptors change: describe_tool and run_tool each do one lookup
+        # per call and must not rebuild the whole dict for it.
+        self._by_name: Mapping[str, ToolDescriptor] | None = None
         self._status = STATUS_NONE if not self._enabled else STATUS_OK
         self._drift = Drift()
 
@@ -106,8 +111,11 @@ class Catalogue:
         return self._descriptors
 
     @property
-    def by_name(self) -> dict[str, ToolDescriptor]:
-        return {d.name: d for d in self._descriptors}
+    def by_name(self) -> Mapping[str, ToolDescriptor]:
+        """Name -> descriptor. Read-only, because it is shared between calls."""
+        if self._by_name is None:
+            self._by_name = MappingProxyType({d.name: d for d in self._descriptors})
+        return self._by_name
 
     @property
     def index(self) -> ToolIndex:
@@ -151,15 +159,17 @@ class Catalogue:
         caller would get the fresh list, at the cost of blocking on someone
         else's network call.
         """
-        if not self._enabled:
+        # `_enabled`, unpacked so the type checker sees both are set.
+        relist, ttl_ms = self._relist, self._ttl_ms
+        if relist is None or not ttl_ms:
             return
-        if (self._clock() - self._fetched_at) * 1000 < self._ttl_ms:
+        if (self._clock() - self._fetched_at) * 1000 < ttl_ms:
             return
         if self._refreshing:
             return
         self._refreshing = True
         try:
-            fresh = await self._relist()
+            fresh = await relist()
         except Exception:
             logger.warning(
                 "re-list failed; serving the last good catalogue as stale",
@@ -172,7 +182,8 @@ class Catalogue:
             self._refreshing = False
         self._drift = self._diff(fresh)
         self._descriptors = list(fresh)
-        self._index = None  # rebuilt lazily on next access
+        self._index = None  # both rebuilt lazily on next access
+        self._by_name = None
         self._fetched_at = self._clock()
         self._status = STATUS_DRIFT if self._drift.changed else STATUS_OK
         if self._drift.changed:

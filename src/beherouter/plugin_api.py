@@ -1,6 +1,8 @@
 """The supported import surface for writing a beherouter plugin.
 
-    from beherouter.plugin_api import PluginSpec, McpBacking, load_mcp_backend, load_inproc_backend, register
+    from beherouter.plugin_api import (
+        McpBacking, PluginSpec, load_inproc_backend, load_mcp_backend, register,
+    )
 
 Everything a plugin needs is here, and ONLY what is here carries a
 compatibility promise: the names below keep working across patch and minor

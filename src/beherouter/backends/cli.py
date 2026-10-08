@@ -1,6 +1,7 @@
 """cli backend: derive a surface from `<cmd> describe --json` and run its verbs."""
 
 import asyncio
+import contextlib
 import json
 import os
 import shlex
@@ -25,7 +26,7 @@ def _describe(cmd: str) -> dict:
     """Run `<cmd> describe --json` and parse the manifest."""
     try:
         proc = subprocess.run(
-            shlex.split(cmd) + ["describe", "--json"],
+            [*shlex.split(cmd), "describe", "--json"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -86,7 +87,7 @@ def build_argv(cmd: str, verb: str, schema: dict, args: dict) -> list[str]:
                 flags.append(wire if wire.startswith("-") else f"--{bare}")
         else:
             flags.extend([wire if wire.startswith("-") else f"--{bare}", str(value)])
-    return shlex.split(cmd) + [verb] + positionals + flags
+    return [*shlex.split(cmd), verb, *positionals, *flags]
 
 
 # beheaxi reserves exit codes 0-9 (CONVENTIONS.md); >=10 is the tool's own.
@@ -100,6 +101,16 @@ _RESERVED: dict[int, type[AxiError]] = {
 }
 
 DOMAIN_EXIT_FLOOR = 10
+# How long a killed verb subprocess is given to be reaped. Bounded, so a call
+# that is already being abandoned never hangs on a process that will not die.
+_REAP_S = 5.0
+
+
+async def _kill(proc: asyncio.subprocess.Process) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(proc.wait(), timeout=_REAP_S)
 
 
 def _exit_error(tool: str, verb: str, code: int, stderr: str) -> Exception:
@@ -165,19 +176,25 @@ class CLIExecutor:
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
         except TimeoutError as e:
-            proc.kill()
-            await proc.wait()
             raise Unavailable(
                 f"'{self.tool}': verb '{verb}' exceeded {self.timeout}s"
             ) from e
-        if proc.returncode >= DOMAIN_EXIT_FLOOR:
+        finally:
+            # Also on a cancellation from OUTSIDE (the pipeline's call timeout,
+            # a vanished client): cancelling communicate() does not stop the
+            # process, which would otherwise run on behind the gateway.
+            if proc.returncode is None:
+                await _kill(proc)
+        code = proc.returncode
+        assert code is not None  # set once communicate() has returned
+        if code >= DOMAIN_EXIT_FLOOR:
             return {
-                "exit_code": proc.returncode,
+                "exit_code": code,
                 "stderr": err.decode().strip(),
                 "stdout": out.decode().strip(),
             }
-        if proc.returncode != 0:
-            raise _exit_error(self.tool, verb, proc.returncode, err.decode().strip())
+        if code != 0:
+            raise _exit_error(self.tool, verb, code, err.decode().strip())
         text = out.decode().strip()
         if not text:
             return {}

@@ -48,6 +48,13 @@ def param_name(wire_name: str) -> str:
     return name
 
 
+def _py_type(json_type: Any) -> Any:
+    """The Python type for a schema `type`. Only a plain string maps: a union
+    such as `["string", "null"]` (valid JSON Schema) is unhashable as a dict
+    key and degrades to `Any`, exactly like an unknown name."""
+    return PY_TYPES.get(json_type, Any) if isinstance(json_type, str) else Any
+
+
 def normalize_args(schema: dict) -> list[tuple[str, str, Any, bool, Any]]:
     """Return `(wire_name, param_name, python_type, required, default)`.
 
@@ -61,10 +68,10 @@ def normalize_args(schema: dict) -> list[tuple[str, str, Any, bool, Any]]:
     if is_json_schema(schema):
         properties = schema.get("properties") or {}
         required = set(schema.get("required") or [])
-        raw = [
+        raw: list[tuple[str, Any, bool, Any]] = [
             (
                 name,
-                PY_TYPES.get(prop.get("type"), Any),
+                _py_type(prop.get("type")),
                 name in required,
                 prop.get("default", NO_DEFAULT),
             )
@@ -74,18 +81,19 @@ def normalize_args(schema: dict) -> list[tuple[str, str, Any, bool, Any]]:
     else:
         # beheaxi manifests have no `default` field (the schema is closed).
         raw = [
-            (name, PY_TYPES.get(arg.get("type"), Any), bool(arg.get("required")), NO_DEFAULT)
+            (name, _py_type(arg.get("type")), bool(arg.get("required")), NO_DEFAULT)
             for name, arg in schema.items()
             if isinstance(arg, dict)
         ]
 
-    out, seen = [], set()
-    for wire, py_type, required, default in raw:
+    out: list[tuple[str, str, Any, bool, Any]] = []
+    seen: set[str] = set()
+    for wire, py_type, is_required, default in raw:
         param = param_name(wire)
         while param in seen:  # two wire names can sanitize to the same identifier
             param = f"{param}_"
         seen.add(param)
-        out.append((wire, param, py_type, required, default))
+        out.append((wire, param, py_type, is_required, default))
     return out
 
 
@@ -101,7 +109,8 @@ def _is_closed(schema: dict) -> bool:
 
 
 def _enum(schema: dict, wire: str) -> list:
-    spec = (schema.get("properties") or {}).get(wire) if is_json_schema(schema) else schema.get(wire)
+    props = (schema.get("properties") or {}) if is_json_schema(schema) else schema
+    spec = props.get(wire)
     if not isinstance(spec, dict):
         return []
     for variant in (spec, *(spec.get("anyOf") or []), *(spec.get("oneOf") or [])):
@@ -127,7 +136,7 @@ def prepare_args(d: ToolDescriptor, args: dict) -> dict:
        only, an undeclared one (suggesting the closest name).
     """
     specs = normalize_args(d.schema)
-    to_wire = {}
+    to_wire: dict[str, str] = {}
     for wire, param, _t, _r, _dflt in specs:
         to_wire[wire] = wire
         to_wire.setdefault(param, wire)
@@ -137,13 +146,14 @@ def prepare_args(d: ToolDescriptor, args: dict) -> dict:
     out: dict = {}
     source: dict[str, str] = {}
     for key, value in args.items():
-        wire = to_wire.get(key)
-        if wire is None:
+        mapped = to_wire.get(key)
+        if mapped is None:
             if closed:
                 close = process.extractOne(key, list(to_wire), scorer=fuzz.ratio, score_cutoff=60)
                 hint = f"; did you mean '{to_wire[close[0]]}'?" if close else ""
                 raise UsageError(f"{d.name}: unknown arg '{key}'{hint}")
-            wire = key
+            mapped = key
+        wire = mapped
         if wire in source:
             raise UsageError(
                 f"{d.name}: arg '{wire}' given twice, as '{source[wire]}' and "

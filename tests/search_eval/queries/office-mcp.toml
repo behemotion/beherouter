@@ -1,0 +1,74 @@
+# Agent-style queries against office-mcp 0.1.0 (catalogue office-mcp-0.1.0.json).
+# office-mcp advertises FOUR tools and keeps its 34-tool catalogue behind its own
+# `discover`/`invoke`, so the gateway indexes only those four, all pinned. An
+# agent still searches for the capability it wants ("resize an image"), and the
+# right answer to every such query is `discover` -- the door to the catalogue.
+# `expect` is the tool a competent human would pick after reading the four
+# descriptions. Fix an expectation only if the catalogue proves it wrong.
+
+[[query]]
+q = "find a tool for a task"
+expect = "discover"
+[[query]]
+q = "what tools are available"
+expect = "discover"
+[[query]]
+q = "discovr"
+expect = "discover"
+[[query]]
+q = "resize an image"
+expect = "discover"
+[[query]]
+q = "convert docx to pdf"
+expect = "discover"
+[[query]]
+q = "merge pdfs"
+expect = "discover"
+[[query]]
+q = "ocr a scanned document"
+expect = "discover"
+[[query]]
+q = "extract audio from a video"
+expect = "discover"
+[[query]]
+q = "markdown to word document"
+expect = "discover"
+[[query]]
+q = "screenshot a web page"
+expect = "discover"
+[[query]]
+q = "run a tool"
+expect = "invoke"
+[[query]]
+q = "call a catalog tool with arguments"
+expect = "invoke"
+[[query]]
+q = "download a file from a url"
+expect = "file_from_url"
+[[query]]
+q = "fetch a remote document"
+expect = "file_from_url"
+[[query]]
+q = "get a file handle"
+expect = "file_from_url"
+[[query]]
+q = "check job status"
+expect = "job_status"
+[[query]]
+q = "is my conversion finished"
+expect = "job_status"
+[[query]]
+q = "poll a running job"
+expect = "job_status"
+
+# Negatives: nothing on this surface does these. At most one weak hit allowed.
+[[negative]]
+q = "send an email"
+[[negative]]
+q = "weather forecast"
+[[negative]]
+q = "create a jira ticket"
+[[negative]]
+q = "current sprint"
+[[negative]]
+q = "book a meeting"

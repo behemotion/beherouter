@@ -196,7 +196,7 @@ async def test_a_non_function_tool_is_validated_against_its_schema():
 
 
 async def test_an_inproc_backing_without_a_server_is_refused():
-    with pytest.raises(UsageError, match="acme.*server"):
+    with pytest.raises(UsageError, match=r"acme.*server"):
         await load_inproc_backend(McpBacking(name="acme", transport="inproc"))
 
 
@@ -213,7 +213,9 @@ async def test_an_upstream_http_error_is_classified_by_status(status, expected):
     def fetch() -> str:
         """Calls an upstream that fails."""
         req = httpx.Request("GET", "https://up/x")
-        err = httpx.HTTPStatusError("bad", request=req, response=httpx.Response(status, request=req))
+        err = httpx.HTTPStatusError(
+            "bad", request=req, response=httpx.Response(status, request=req)
+        )
         raise ValueError(f"HTTP error {status}") from err
 
     backend = await load_inproc_backend(_backing(server))
@@ -266,7 +268,10 @@ async def test_concurrent_calls_each_see_only_their_own_identity():
     backend = await load_inproc_backend(_backing(_http_server(client)))
     who = ["alice", "bob", "carol"]
     outs = await asyncio.gather(
-        *(backend.executor.run("whoami", {}, identity=_ident(authorization=f"Bearer {w}")) for w in who)
+        *(
+            backend.executor.run("whoami", {}, identity=_ident(authorization=f"Bearer {w}"))
+            for w in who
+        )
     )
     assert [o["result"]["auth"] for o in outs] == [f"Bearer {w}" for w in who]
 
@@ -337,7 +342,7 @@ async def test_the_gateway_refuses_identity_on_a_source_that_cannot_apply_it(mon
             plugin="t-inproc-blind",
             identity={"mode": "client", "map": {"authorization": "x-token"}},
         )
-        with pytest.raises(UsageError, match="blind.*cannot apply"):
+        with pytest.raises(UsageError, match=r"blind.*cannot apply"):
             await build_surfaces({"blind": entry})
     finally:
         PLUGINS.pop("t-inproc-blind", None)
@@ -366,7 +371,9 @@ async def test_the_gateway_callers_headers_never_reach_the_upstream():
 
     @outer.tool
     async def run_tool() -> dict:
-        return await backend.executor.run("whoami", {}, identity=_ident(authorization="Bearer alice"))
+        return await backend.executor.run(
+            "whoami", {}, identity=_ident(authorization="Bearer alice")
+        )
 
     app = outer.http_app(path="/mcp")
     async with app.router.lifespan_context(app):
@@ -404,3 +411,73 @@ async def test_inproc_descriptors_equal_the_http_pipelines():
         async with McpClient(t) as c:
             over_http = await backend_from_client("acme", c, ["lookup_order"])
     assert inproc.descriptors == over_http.descriptors
+
+
+async def test_a_numeric_string_is_coerced_for_a_non_function_tool():
+    """An OpenAPI integer path parameter given as "7" is what pydantic does
+    for a function tool: coerced, not refused. Only a string that IS the
+    number is touched, and only where the schema does not also allow a string."""
+    from fastmcp.tools import Tool
+    from fastmcp.tools.base import ToolResult
+
+    seen = []
+
+    class RawTool(Tool):
+        async def run(self, arguments):
+            seen.append(arguments)
+            return ToolResult(structured_content={"ok": True})
+
+    server = FastMCP("raw")
+    server.add_tool(
+        RawTool(
+            name="get_customer",
+            description="Get one.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "maximum": 50},
+                    "ratio": {"type": "number"},
+                    "code": {"type": ["string", "integer"]},
+                    "name": {"type": "string"},
+                },
+                "required": ["id"],
+                "additionalProperties": False,
+            },
+        )
+    )
+    backend = await load_inproc_backend(_backing(server))
+    await backend.executor.run(
+        "get_customer", {"id": "7", "ratio": "0.5", "code": "9", "name": "12"}
+    )
+    assert seen == [{"id": 7, "ratio": 0.5, "code": "9", "name": "12"}]
+    # Coercion never widens what the schema accepts.
+    for bad in ({"id": "7.5"}, {"id": "seven"}, {"id": "500"}, {"id": " 7"}, {"id": "1e3"}):
+        with pytest.raises(UsageError, match="get_customer"):
+            await backend.executor.run("get_customer", bad)
+    assert len(seen) == 1
+
+
+async def test_aclose_closes_the_servers_owned_client():
+    """An openapi server's httpx client lives as long as the backend, and
+    `executor.aclose()` is how whoever drops the backend releases it."""
+    _seen, transport = _upstream()
+    client = identity_client(base_url="https://up", transport=transport)
+    doc = {
+        "openapi": "3.0.3",
+        "info": {"title": "t", "version": "1"},
+        "paths": {"/me": {"get": {"operationId": "whoami",
+                                  "responses": {"200": {"description": "ok"}}}}},
+    }
+    from beherouter.backends.inproc import openapi_server
+
+    server = await openapi_server(doc, client=client, include=["whoami"])
+    backend = await load_inproc_backend(_backing(server))
+    assert not client.is_closed
+    await backend.executor.aclose()
+    assert client.is_closed
+    await backend.executor.aclose()  # idempotent
+
+
+async def test_aclose_on_a_server_that_owns_no_client_is_a_no_op():
+    backend = await load_inproc_backend(_backing(_server()))
+    await backend.executor.aclose()

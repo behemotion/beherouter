@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -6,7 +8,8 @@ from fastmcp import Client, FastMCP
 from beherouter.backends.backing import CliBacking
 from beherouter.backends.cli import load_cli_backend
 from beherouter.backends.mcp import backend_from_client
-from beherouter.surface import build_surface
+from beherouter.models import Backend, ToolDescriptor
+from beherouter.surface import build_surface, republished_annotations, wrapped_output_schema
 
 META = {"search_tools", "describe_tool", "run_tool", "context_cost"}
 
@@ -20,7 +23,7 @@ def cli_surface(fake_cli_cmd):
 async def test_surface_registers_pinned_and_meta_tools(cli_surface):
     async with Client(cli_surface) as c:
         names = {t.name for t in await c.list_tools()}
-    assert META <= names
+    assert names >= META
     assert "faketool_search" in names  # pinned flat tool listed
     assert "faketool_shelf_create" not in names  # non-pinned: search only
 
@@ -267,8 +270,6 @@ async def test_unset_optionals_with_defaults_are_not_forwarded():
 # --- Task 3: republish annotations and wrapped output schema ---
 
 
-from beherouter.models import Backend, ToolDescriptor
-from beherouter.surface import republished_annotations, wrapped_output_schema
 
 
 class _Echo:
@@ -636,14 +637,14 @@ async def test_a_failed_re_list_leaves_the_surface_answering_as_stale():
 
 
 async def test_a_costing_failure_crosses_the_boundary_as_an_axi_error(monkeypatch):
-    """CONVENTIONS: every error crossing the gateway boundary is an AxiError.
+    """CONVENTIONS: every error crossing the gateway boundary is an AxiError,
+    returned as a classified error result (not raised).
 
     `context_cost` is deliberately UNGUARDED at the tool level — a failing tool
     call should keep surfacing its error to the caller rather than returning a
     green payload. So the fix is to classify the escape, not to swallow it.
     """
     from beherouter import costing
-    from beherouter.errors import Unavailable
     from beherouter.models import Backend, ToolDescriptor
 
     async def boom(*a, **kw):
@@ -660,13 +661,15 @@ async def test_a_costing_failure_crosses_the_boundary_as_an_axi_error(monkeypatc
     )
     surface = build_surface(backend)
     tool = await surface.get_tool("context_cost")
-    with pytest.raises(Unavailable, match="tokenizer exploded"):
-        await tool.fn()
+    # The pipeline returns the classified error rather than raising it.
+    result = await tool.fn()
+    assert result.is_error
+    assert "tokenizer exploded" in result.content[0].text
+    assert result.meta["io.beherouter/error"]["reason"] == "backend_unavailable"
 
 
 async def test_a_bad_context_window_stays_a_usage_error(monkeypatch):
     """The classifier must not relabel an AxiError that is already correct."""
-    from beherouter.errors import UsageError
     from beherouter.models import Backend, ToolDescriptor
 
     backend = Backend(
@@ -678,8 +681,10 @@ async def test_a_bad_context_window_stays_a_usage_error(monkeypatch):
     )
     surface = build_surface(backend)
     tool = await surface.get_tool("context_cost")
-    with pytest.raises(UsageError, match="context_window"):
-        await tool.fn(context_window=-1)
+    result = await tool.fn(context_window=-1)
+    assert result.is_error
+    assert "context_window" in result.content[0].text
+    assert result.meta["io.beherouter/error"]["reason"] == "bad_arguments"
 
 
 class _NullReplier:
@@ -732,8 +737,6 @@ async def test_the_same_reply_passes_when_no_schema_is_republished():
 
 # --- pinned tools' published schemas are frozen -----------------------------
 
-import json
-from pathlib import Path
 
 GOLDEN = Path(__file__).parent / "fixtures" / "pinned_schemas.golden.json"
 

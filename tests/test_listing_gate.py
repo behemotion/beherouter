@@ -277,9 +277,9 @@ async def test_the_acceptance_table_over_streamable_http():
         for refused in (jwt(["other"]), "s3cret"):
             async with client(refused) as c:  # initialize -> 200
                 assert await c.list_tools() == []
-                with pytest.raises(ToolError, match="you do not have access|verified user"):
+                with pytest.raises(ToolError, match=r"you do not have access|verified user"):
                     await c.call_tool("run_query", {})
-                with pytest.raises(ToolError, match="you do not have access|verified user"):
+                with pytest.raises(ToolError, match=r"you do not have access|verified user"):
                     await c.call_tool("search_tools", {"query": "q"})
 
         async with client(jwt(["ai-dwh-access"])) as c:

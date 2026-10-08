@@ -250,3 +250,112 @@ async def test_no_identity_uses_the_deployment_provider():
 
     ex = CalendarExecutor(DeploymentProvider())
     assert (await ex.run("list_calendars", {}))["who"] == "deployment"
+
+
+# --- eviction closes providers, but never one that is mid-call ---------------
+
+
+class _ClosingProvider:
+    """Records aclose(); list_calendars may be held open on an Event."""
+
+    def __init__(self, token, gate=None):
+        self.token = token
+        self.gate = gate
+        self.closed = 0
+        self.started = None
+
+    async def list_calendars(self):
+        if self.gate is not None:
+            self.started.set()
+            await self.gate.wait()
+        assert not self.closed, "a provider was closed while serving a call"
+        return {"token": self.token}
+
+    async def aclose(self):
+        self.closed += 1
+
+
+def _who(name):
+    from beherouter.identity import CallIdentity
+
+    return CallIdentity(subject=name, credentials={"refresh_token": name}, cache_key=name)
+
+
+async def test_an_evicted_idle_provider_is_closed():
+    """Two httpx clients leak per evicted user unless eviction closes them."""
+    built: dict[str, _ClosingProvider] = {}
+
+    def factory(creds):
+        built[creds["refresh_token"]] = _ClosingProvider(creds["refresh_token"])
+        return built[creds["refresh_token"]]
+
+    ex = CalendarExecutor(_ClosingProvider("d"), provider_factory=factory, cache_size=1)
+    await ex.run("list_calendars", {}, identity=_who("a"))
+    await ex.run("list_calendars", {}, identity=_who("b"))
+    assert built["a"].closed == 1
+    assert built["b"].closed == 0
+
+
+async def test_an_evicted_provider_is_closed_only_after_its_call_finishes():
+    import asyncio
+
+    gate, started = asyncio.Event(), asyncio.Event()
+    built: dict[str, _ClosingProvider] = {}
+
+    def factory(creds):
+        name = creds["refresh_token"]
+        p = _ClosingProvider(name, gate=gate if name == "a" else None)
+        p.started = started
+        built[name] = p
+        return p
+
+    ex = CalendarExecutor(_ClosingProvider("d"), provider_factory=factory, cache_size=1)
+    slow = asyncio.create_task(ex.run("list_calendars", {}, identity=_who("a")))
+    await started.wait()
+    # b evicts a while a's call is still in flight
+    assert (await ex.run("list_calendars", {}, identity=_who("b")))["token"] == "b"
+    assert built["a"].closed == 0
+    gate.set()
+    assert (await slow)["token"] == "a"
+    assert built["a"].closed == 1
+
+
+async def test_a_failing_close_does_not_fail_the_call():
+    class BadClose(_ClosingProvider):
+        async def aclose(self):
+            raise RuntimeError("boom")
+
+    ex = CalendarExecutor(
+        _ClosingProvider("d"),
+        provider_factory=lambda creds: BadClose(creds["refresh_token"]),
+        cache_size=1,
+    )
+    await ex.run("list_calendars", {}, identity=_who("a"))
+    assert (await ex.run("list_calendars", {}, identity=_who("b")))["token"] == "b"
+
+
+async def test_aclose_also_closes_retired_providers():
+    import asyncio
+
+    gate, started = asyncio.Event(), asyncio.Event()
+    built: dict[str, _ClosingProvider] = {}
+
+    def factory(creds):
+        name = creds["refresh_token"]
+        p = _ClosingProvider(name, gate=gate if name == "a" else None)
+        p.started = started
+        built[name] = p
+        return p
+
+    deploy = _ClosingProvider("d")
+    ex = CalendarExecutor(deploy, provider_factory=factory, cache_size=1)
+    slow = asyncio.create_task(ex.run("list_calendars", {}, identity=_who("a")))
+    await started.wait()
+    await ex.run("list_calendars", {}, identity=_who("b"))
+    await ex.aclose()
+    assert (deploy.closed, built["a"].closed, built["b"].closed) == (1, 1, 1)
+    slow.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await slow
+    # the in-flight call's release must not close it a second time
+    assert built["a"].closed == 1

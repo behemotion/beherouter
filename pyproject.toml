@@ -32,11 +32,17 @@ dependencies = [
     # Fuzzy tier for tool search. Lexical edit distance, NOT embeddings — the
     # no-embeddings constraint in AGENTS.md is unaffected.
     "rapidfuzz>=3.9.0",
+    # /metrics: counters, a latency histogram and gauges in the standard
+    # exposition format. Replaces a hand-rolled collections.Counter.
+    "prometheus-client>=0.20",
     "jsonschema>=4.0.0",
     "httpx>=0.27.0",
     # OpenAPI documents are YAML as often as JSON (the openapi plugin).
     "pyyaml>=6",
     "uvicorn>=0.30.0",
+    # `attach`/`detach` rewrite registry.toml; a round-tripping writer keeps the
+    # operator's comments and layout instead of regenerating the file.
+    "tomlkit>=0.13",
 ]
 
 [project.scripts]
@@ -52,11 +58,28 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
+    "mypy>=1.13",
+    "types-PyYAML>=6",
+    "types-jsonschema>=4",
+    "pytest-cov>=5",
+    "pip-audit>=2.7",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+# Beyond ruff's default (E4/E7/E9/F, roughly pyflakes): full pycodestyle incl.
+# E501 so `line-length` is actually enforced, import order, pyupgrade, bugbear,
+# the ruff-specific set, perflint, simplify, and ASYNC + BLE — this codebase is
+# async end to end, and the e2e per-file ignores below name ASYNC/BLE rules.
+select = ["E", "F", "W", "I", "B", "UP", "RUF", "PERF", "SIM", "ASYNC", "BLE"]
+# `×` and `∪` are used deliberately in prose (dimensions, set union).
+allowed-confusables = ["×", "∪"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["beherouter"]
 
 # tests/e2e/ is a deployment DRIVER, not library code. It makes blocking HTTP
 # and `podman exec` calls from one async main on purpose — it scripts a stack
@@ -65,6 +88,43 @@ target-version = "py312"
 # would see, whatever type carried it.
 [tool.ruff.lint.per-file-ignores]
 "tests/e2e/*" = ["ASYNC210", "ASYNC221", "BLE001"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+# Body-checking for every function, annotated or not; the untyped seams
+# (`validate(config: dict)`, `policy_from_entry(entry, spec)`) stay Any-typed
+# at the boundary instead of being forced into `disallow_untyped_defs`.
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+no_implicit_optional = true
+strict_equality = true
+show_error_codes = true
+
+# Untyped third-party packages (no inline types, no stubs).
+[[tool.mypy.overrides]]
+module = ["rank_bm25", "beheaxi", "beheaxi.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["beherouter"]
+branch = true
+omit = ["tests/e2e/*"]
+
+[tool.coverage.report]
+# The ONE coverage floor: CI runs plain `pytest --cov=beherouter` and relies on
+# this. A ratchet set at 2026-10-07's 91.6% rounded down to 5; raise it, never
+# lower it to make a change pass.
+fail_under = 90
+show_missing = false
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

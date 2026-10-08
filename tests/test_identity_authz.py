@@ -96,7 +96,7 @@ def test_a_caller_without_the_role_is_refused_by_name():
 
 
 def test_a_caller_missing_the_claim_entirely_is_refused():
-    with pytest.raises(AuthError, match="realm_access.roles"):
+    with pytest.raises(AuthError, match=r"realm_access.roles"):
         _gate(["ai-plane-access"]).authorise(_user())
 
 

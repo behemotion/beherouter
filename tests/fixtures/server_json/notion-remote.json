@@ -1,0 +1,28 @@
+{
+  "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+    "name": "com.notion/mcp",
+    "description": "Official Notion MCP server",
+    "repository": {},
+    "version": "1.0.1",
+    "remotes": [
+      {
+        "type": "streamable-http",
+        "url": "https://mcp.notion.com/mcp"
+      },
+      {
+        "type": "sse",
+        "url": "https://mcp.notion.com/sse"
+      }
+    ]
+  },
+  "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+      "status": "active",
+      "statusChangedAt": "2025-09-11T22:25:50.737872Z",
+      "publishedAt": "2025-09-11T22:25:50.737872Z",
+      "updatedAt": "2025-09-11T22:25:50.737872Z",
+      "isLatest": true
+    }
+  }
+}

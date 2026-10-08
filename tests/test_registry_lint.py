@@ -331,3 +331,40 @@ def test_lint_refuses_a_quoted_hide_tools(tmp_path):
     )
     with pytest.raises(UsageError, match="hide_tools must be true or false"):
         registry_lint(path=_write(tmp_path, body))
+
+
+def _exchange_body(secret_var: str) -> str:
+    return (
+        '[crm]\nplugin = "mcp-http"\nprobe = "ping"\npinned = ["ping"]\n'
+        '  [crm.config]\n  url = "https://crm.test/mcp"\n'
+        '  [crm.identity]\n  mode = "exchange"\n'
+        '  token_url = "https://idp.test/token"\n  audience = "crm-api"\n'
+        '  client_id = "beherouter"\n'
+        f'  client_secret = "${{{secret_var}}}"\n'
+    )
+
+
+def test_lint_warns_when_an_exchange_secret_is_unset_here(tmp_path, monkeypatch, capsys):
+    """A WARNING: the secret is resolved per exchange, so boot never notices."""
+    monkeypatch.delenv("BEHEROUTER_AUTH_MODE", raising=False)
+    monkeypatch.delenv("CRM_EXCHANGE_SECRET", raising=False)
+    from beherouter.cli.app import app
+
+    path = _write(tmp_path, _exchange_body("CRM_EXCHANGE_SECRET"))
+    assert app.main(["registry-lint", "--path", path, "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    hits = [w for w in out["warnings"] if "client_secret" in w]
+    assert len(hits) == 1 and "${CRM_EXCHANGE_SECRET}" in hits[0] and "'crm'" in hits[0]
+
+
+def test_lint_is_quiet_when_an_exchange_secret_is_set(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("BEHEROUTER_AUTH_MODE", raising=False)
+    monkeypatch.setenv("CRM_EXCHANGE_SECRET", "s3cret-value")
+    from beherouter.cli.app import app
+
+    path = _write(tmp_path, _exchange_body("CRM_EXCHANGE_SECRET"))
+    assert app.main(["registry-lint", "--path", path, "--json"]) == 0
+    out = capsys.readouterr().out
+    assert not any("client_secret" in w for w in json.loads(out)["warnings"])
+    assert "s3cret-value" not in out

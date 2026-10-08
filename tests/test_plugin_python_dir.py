@@ -110,7 +110,9 @@ def test_identity_is_refused(tmp_path):
 
 def test_lint_never_imports_the_code(tmp_path):
     """A module that would blow up on import passes lint: it was only parsed."""
-    d = _dir(tmp_path, textwrap.dedent(TOOLS) + "\nraise SystemExit('lint imported operator code')\n")
+    d = _dir(
+        tmp_path, textwrap.dedent(TOOLS) + "\nraise SystemExit('lint imported operator code')\n"
+    )
     validate_entry(_entry(d))
     get("python-dir").warn({"path": str(d)})
 

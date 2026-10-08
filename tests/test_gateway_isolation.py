@@ -253,3 +253,51 @@ async def test_shutdown_cancels_pending_retries(test_plugin, monkeypatch):
     # leaving the lifespan must not hang or leak a running retry task
     pending = [t for t in asyncio.all_tasks() if "retry" in (t.get_name() or "")]
     assert all(t.done() for t in pending)
+
+
+async def test_surface_up_and_sessions_follow_attach_and_background_reattach(
+    test_plugin, fake_cli_cmd, monkeypatch
+):
+    from beherouter import metrics
+
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    calls = {"n": 0}
+    good = _good(fake_cli_cmd)
+
+    async def flaky(ctx):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise Unavailable("not yet")
+        return await good(ctx)
+
+    test_plugin("t-gauge-ok", good)
+    test_plugin("t-gauge-flaky", flaky)
+    registry = {
+        "gaugeok": RegistryEntry(name="gaugeok", plugin="t-gauge-ok"),
+        "gaugelate": RegistryEntry(name="gaugelate", plugin="t-gauge-flaky"),
+    }
+
+    def up(name):
+        return metrics.REGISTRY.get_sample_value("beherouter_surface_up", {"surface": name})
+
+    def sessions(name):
+        return metrics.REGISTRY.get_sample_value(
+            "beherouter_active_sessions", {"surface": name}
+        )
+
+    app = await build_gateway_app(registry, retry_initial_s=3600)
+    async with app.router.lifespan_context(app):
+        assert up("gaugeok") == 1.0
+        assert up("gaugelate") == 0.0
+        assert sessions("gaugeok") == 0.0
+        assert sessions("gaugelate") is None  # nothing to count until it attaches
+
+    calls["n"] = 0
+    app = await build_gateway_app(registry, retry_initial_s=0.01, retry_max_s=0.05)
+    async with app.router.lifespan_context(app):
+        for _ in range(200):
+            if up("gaugelate") == 1.0:
+                break
+            await asyncio.sleep(0.02)
+        assert up("gaugelate") == 1.0
+        assert sessions("gaugelate") == 0.0

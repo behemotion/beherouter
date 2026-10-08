@@ -99,7 +99,7 @@ def test_probe_and_pinned_are_required(tmp_path, monkeypatch):
 
 
 def test_a_missing_spec_file_is_refused_by_path(tmp_path, monkeypatch):
-    with pytest.raises(UsageError, match="nope.json"):
+    with pytest.raises(UsageError, match=r"nope.json"):
         validate_entry(_entry(tmp_path, monkeypatch, config={"spec": str(tmp_path / "nope.json")}))
 
 
@@ -152,3 +152,79 @@ async def test_build_attaches_and_calls_with_identity(tmp_path, monkeypatch):
     with pytest.raises(UsageError):
         await b.executor.run("get_customer", {"id": "x"})
     assert len(seen) == 1
+
+
+def _capture_client(monkeypatch, plugin, handler):
+    made: list[httpx.AsyncClient] = []
+    real = plugin.identity_client
+
+    def fake(**kw):
+        c = real(transport=httpx.MockTransport(handler), **kw)
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(plugin, "identity_client", fake)
+    return made
+
+
+@pytest.mark.parametrize("where", ["openapi_server", "load_inproc_backend"])
+async def test_a_failed_build_closes_its_client(tmp_path, monkeypatch, where):
+    """The degraded-surface retry loop rebuilds a failing surface every few
+    seconds; each attempt used to leak one httpx client and its pool."""
+    import beherouter.plugins.openapi as plugin
+    from beherouter.gateway import load_backend
+
+    made = _capture_client(monkeypatch, plugin, lambda req: httpx.Response(200, json={}))
+
+    async def boom(*a, **k):
+        raise UsageError("boom")
+
+    monkeypatch.setattr(plugin, where, boom)
+    with pytest.raises(UsageError, match="boom"):
+        await load_backend(_entry(tmp_path, monkeypatch))
+    assert len(made) == 1 and made[0].is_closed
+
+
+async def test_a_cancelled_build_closes_its_client(tmp_path, monkeypatch):
+    """`_attach_one` cancels a build at BEHEROUTER_ATTACH_TIMEOUT_S."""
+    import asyncio
+
+    import beherouter.plugins.openapi as plugin
+    from beherouter.gateway import load_backend
+
+    made = _capture_client(monkeypatch, plugin, lambda req: httpx.Response(200, json={}))
+
+    async def hang(*a, **k):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(plugin, "load_inproc_backend", hang)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(load_backend(_entry(tmp_path, monkeypatch)), 0.05)
+    assert made[0].is_closed
+
+
+async def test_an_attached_backend_releases_its_client_on_aclose(tmp_path, monkeypatch):
+    import beherouter.plugins.openapi as plugin
+    from beherouter.gateway import load_backend
+
+    made = _capture_client(monkeypatch, plugin, lambda req: httpx.Response(200, json={}))
+    b = await load_backend(_entry(tmp_path, monkeypatch))
+    assert not made[0].is_closed
+    await b.executor.aclose()
+    assert made[0].is_closed
+
+
+async def test_an_integer_path_param_given_as_a_string_reaches_the_right_url(tmp_path, monkeypatch):
+    import beherouter.plugins.openapi as plugin
+    from beherouter.gateway import load_backend
+
+    seen: list[httpx.Request] = []
+
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(200, json={"id": 7})
+
+    _capture_client(monkeypatch, plugin, handler)
+    b = await load_backend(_entry(tmp_path, monkeypatch))
+    await b.executor.run("get_customer", {"id": "7"})
+    assert str(seen[-1].url) == "https://crm.internal/customers/7"

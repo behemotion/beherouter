@@ -4,8 +4,9 @@ The marked goal: adding a service to every agent must be one registry block
 plus re-running this, never N hand-edits across N client files.
 
 This NEVER emits a credential. Each surface's real bearer token lives in the
-ansible vault and is checked by Caddy; what goes here is the placeholder the
-operator fills in, so the output is safe to paste anywhere.
+deployment's secret store and is checked by the gateway (or by a reverse proxy
+in front of it); what goes here is the placeholder the operator fills in, so the
+output is safe to paste anywhere.
 
 **Every client speaks a different dialect**, established empirically — the
 first four on 2026-08-04, hermes on 2026-08-08 — by pasting this output

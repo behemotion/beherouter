@@ -126,7 +126,7 @@ def test_plugin_config_emits_all_three_fragments():
     assert 'plugin = "gcal"' in out["registry"]
     assert "${BEHEROUTER_GCAL_REFRESH_TOKEN}" in out["registry"]
     assert "^/gcal/mcp/?$" in out["caddy"]
-    assert "BEHEROUTER_GCAL_REFRESH_TOKEN={{ vault_beherouter_gcal_refresh_token }}" in out["env"]
+    assert "BEHEROUTER_GCAL_REFRESH_TOKEN=" in out["env"]
 
 
 def test_plugin_config_never_emits_a_credential():

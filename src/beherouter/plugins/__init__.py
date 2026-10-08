@@ -6,7 +6,8 @@ point group, which was the LOOKUP-only extension this protocol was designed for
 — `PluginSpec` and `build()` are identical either way, so a third-party backend
 no longer needs a fork of the gateway to attach.
 
-⚠️ A third-party package that fails to import is LOGGED AND SKIPPED, not fatal:
+⚠️ A third-party package that fails to import is RECORDED AND SKIPPED, not fatal
+(logged, and listed in `ENTRY_POINT_FAILURES` for `plugins` and `registry-lint`):
 one broken dependency must not cost the gateway every other plugin, and an entry
 naming the missing plugin still fails loudly and early ("unknown plugin", from
 `registry-lint`, before a deploy). Nothing is ever served by a plugin that did
@@ -23,6 +24,7 @@ from ..errors import UsageError
 from .spec import (
     API_VERSION,
     BACKINGS,
+    MATURITY_TIERS,
     SUPPORTED_API_VERSIONS,
     ConfigField,
     EnvVar,
@@ -33,6 +35,7 @@ from .spec import (
 __all__ = [
     "API_VERSION",
     "BACKINGS",
+    "ENTRY_POINT_FAILURES",
     "ENTRY_POINT_GROUP",
     "PLUGINS",
     "ConfigField",
@@ -44,6 +47,7 @@ __all__ = [
     "load_entry_point_plugins",
     "register",
     "resolve_pinned",
+    "resolve_probe",
 ]
 
 logger = logging.getLogger(__name__)
@@ -79,6 +83,13 @@ class Plugin:
 
 PLUGINS: dict[str, Plugin] = {}
 
+# Entry points that did not yield a plugin, as {entry_point, value, error}.
+# Recorded, not only logged: a log line is invisible to `beherouter plugins`
+# and `registry-lint`, the two places an operator looks before a deploy. The
+# error is the exception's one-line `Type: message`; the traceback stays in
+# the log.
+ENTRY_POINT_FAILURES: list[dict[str, str]] = []
+
 
 def register(spec: PluginSpec, build: BuildFn, validate=None, warn=None, published=None) -> None:
     """Add a plugin. Duplicate names are a programming error, not a config one."""
@@ -92,6 +103,11 @@ def register(spec: PluginSpec, build: BuildFn, validate=None, warn=None, publish
     if spec.backing not in BACKINGS:
         raise UsageError(
             f"plugin '{spec.name}': backing must be one of {BACKINGS}, got '{spec.backing}'"
+        )
+    if spec.maturity not in MATURITY_TIERS:
+        raise UsageError(
+            f"plugin '{spec.name}': maturity must be one of {MATURITY_TIERS}, "
+            f"got '{spec.maturity}'"
         )
     if spec.name in PLUGINS:
         raise UsageError(f"plugin '{spec.name}' is already registered")
@@ -119,7 +135,14 @@ def load_entry_point_plugins(eps=None) -> list[str]:
         before = set(PLUGINS)
         try:
             ep.load()
-        except Exception:
+        except Exception as e:
+            ENTRY_POINT_FAILURES.append(
+                {
+                    "entry_point": str(getattr(ep, "name", "?")),
+                    "value": str(getattr(ep, "value", "?")),
+                    "error": f"{type(e).__name__}: {e}",
+                }
+            )
             # Bare name and value only: a third-party traceback belongs in the
             # log, not in the message an operator reads first.
             logger.warning(
@@ -132,6 +155,14 @@ def load_entry_point_plugins(eps=None) -> list[str]:
             continue
         added = sorted(set(PLUGINS) - before)
         if not added:
+            ENTRY_POINT_FAILURES.append(
+                {
+                    "entry_point": str(ep.name),
+                    "value": str(ep.value),
+                    "error": "registered nothing (no register() call, or a name "
+                    "already taken)",
+                }
+            )
             logger.warning(
                 "plugin entry point %r (%s) registered nothing", ep.name, ep.value
             )
@@ -146,7 +177,19 @@ def get(name: str) -> Plugin:
         return PLUGINS[name]
     except KeyError:
         known = ", ".join(sorted(PLUGINS)) or "(none registered)"
-        raise UsageError(f"unknown plugin '{name}'; known plugins: {known}") from None
+        # The likeliest reason an out-of-tree plugin is unknown is that its
+        # package failed to import at startup; name those rather than leave
+        # the operator to find the warning in a log.
+        hint = (
+            "; plugin entry point(s) that failed to load: "
+            + ", ".join(f"{f['entry_point']} ({f['value']})" for f in ENTRY_POINT_FAILURES)
+            + " (see `beherouter plugins`)"
+            if ENTRY_POINT_FAILURES
+            else ""
+        )
+        raise UsageError(
+            f"unknown plugin '{name}'; known plugins: {known}{hint}"
+        ) from None
 
 
 def resolve_pinned(entry, plugin: "Plugin | None") -> list[str]:
@@ -166,6 +209,22 @@ def resolve_pinned(entry, plugin: "Plugin | None") -> list[str]:
     return list(plugin.spec.pinned) if plugin is not None else []
 
 
+def resolve_probe(entry, plugin: "Plugin | None") -> tuple[str | None, dict | None]:
+    """The (probe, probe_args) pair for a registry entry, resolved as ONE unit.
+
+    ⚠️ Never field by field: an entry's overriding probe with the PLUGIN's
+    arguments calls the right tool with another tool's arguments — `get_me`
+    invoked with {"query": "pdf"} fails on an unexpected keyword and reads like
+    a dead credential. Same plugin-passed-in shape as `resolve_pinned`, for the
+    same reason: `health` tolerates an unknown plugin (→ no probe).
+    """
+    if entry.probe:
+        return entry.probe, entry.probe_args
+    if plugin is not None:
+        return plugin.spec.probe, plugin.spec.probe_args
+    return None, None
+
+
 def resolve_aliases(entry, plugin: "Plugin | None") -> dict[str, tuple[str, ...]]:
     """A surface's search vocabulary: the plugin's, UNION the entry's additions.
 
@@ -180,9 +239,13 @@ def resolve_aliases(entry, plugin: "Plugin | None") -> dict[str, tuple[str, ...]
     return merged
 
 
-from . import (  # noqa: F401  (imported for their registration side effect)
+# Below the registry machinery on purpose: each module calls `register` at import.
+from . import (  # noqa: E402, F401  (imported for their registration side effect)
+    beheaxi_cli,
     gcal,
     m365,
+    mcp_http,
+    mcp_stdio,
     office_mcp,
     openapi,
     plane,
@@ -196,7 +259,8 @@ from . import (  # noqa: F401  (imported for their registration side effect)
 # name, so an external package cannot shadow a plugin that ships here.
 load_entry_point_plugins()
 
-# The `cli` backing ships with no production plugin. Its one caller is a test
-# fixture, kept out of `beherouter plugins` so no agent pays context for it.
+# A test fixture on the `cli` backing with no mandatory probe, which keeps the
+# cli load path cheap to exercise. Kept out of `beherouter plugins` so no agent
+# pays context for it; production uses `beheaxi-cli`.
 if os.environ.get("BEHEROUTER_TEST_PLUGINS") == "1":
     from . import _test_cli  # noqa: F401

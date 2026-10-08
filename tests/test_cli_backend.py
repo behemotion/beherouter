@@ -107,6 +107,31 @@ async def test_cli_executor_timeout_is_unavailable(fake_cli_cmd):
         await ex.run("slow", {})
 
 
+async def test_an_outer_cancellation_leaves_no_live_subprocess(fake_cli_cmd, monkeypatch):
+    """The pipeline's call timeout cancels the executor from OUTSIDE; the verb
+    subprocess must die with it, not run on (and pile up) behind the gateway."""
+    import asyncio
+
+    from beherouter.backends import cli
+
+    spawned = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def capture(*a, **kw):
+        proc = await real_exec(*a, **kw)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(cli.asyncio, "create_subprocess_exec", capture)
+    ex = _executor(fake_cli_cmd, timeout=60)
+    ex.schemas["slow"] = {}
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.5):
+            await ex.run("slow", {})
+    (proc,) = spawned
+    assert proc.returncode is not None  # killed AND reaped before the error left
+
+
 async def test_cli_executor_missing_binary_is_unavailable():
     ex = CLIExecutor("nope", "this-binary-does-not-exist-xyz", {"v": {}})
     with pytest.raises(Unavailable):

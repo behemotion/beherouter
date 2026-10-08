@@ -86,11 +86,35 @@ PINNED = (
     "show_rule",
 )
 
-# Chosen because it takes NO required arguments and still round-trips to SonarQube itself — so it proves the token is live, not merely
-# that the MCP process is up. `pageSize: 1` keeps the probe cheap on an instance
-# with dozens of projects.
+# Chosen because it takes NO required arguments and still round-trips to
+# SonarQube itself — so it proves the token is live, not merely that the MCP
+# process is up. `pageSize: 1` keeps the probe cheap on an instance with dozens
+# of projects.
 PROBE = "search_my_sonarqube_projects"
 PROBE_ARGS = {"pageSize": 1}
+
+# Words agents type that these descriptions lack, measured against the recorded
+# catalogue by tests/test_search_eval.py (tests/search_eval/queries/sonarqube.toml).
+# A registry entry may ADD to these, never remove them.
+SEARCH_ALIASES = {
+    "search_my_sonarqube_projects": ("list projects", "all projects", "repositories"),
+    "search_sonar_issues_in_projects": ("finding", "warning", "defect", "problem"),
+    "change_sonar_issue_status": (
+        "won't fix", "wontfix", "dismiss", "resolve", "triage", "false positive",
+    ),
+    "get_project_quality_gate_status": (
+        "pass", "passed", "fail", "failed", "green", "build status", "release ready",
+    ),
+    "get_component_measures": (
+        "lines of code", "loc", "size", "technical debt", "maintainability",
+        "reliability", "rating", "statistics",
+    ),
+    "search_files_by_coverage": ("untested", "low coverage", "missing tests", "test gaps"),
+    "get_duplications": ("duplicated blocks", "duplicate code"),
+    "search_duplicated_files": ("copy paste", "cpd", "clones", "duplicate"),
+    "search_security_hotspots": ("hotspots",),
+    "analyze_code_snippet": ("static analysis", "scan", "lint", "check code", "review code"),
+}
 
 SPEC = PluginSpec(
     name="sonarqube",
@@ -102,6 +126,12 @@ SPEC = PluginSpec(
     pinned=PINNED,
     probe=PROBE,
     probe_args=PROBE_ARGS,
+    search_aliases=SEARCH_ALIASES,
+    # `catalogued`: every pin, the probe's arguments and every alias key are
+    # held against the recorded 1.27.0.4335 listing. Not `verified`: no e2e
+    # test attaches a sonarqube-mcp in the tree.
+    maturity="catalogued",
+    evidence=("tests/search_eval/catalogues/sonarqube-1.27.0.4335.json",),
     config=(
         ConfigField(
             name="base_url",

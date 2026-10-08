@@ -12,17 +12,20 @@ deployment credential, and a PARTIAL header set is worse than a refusal: it
 asserts an identity the caller does not have.
 """
 
+import functools
 import hashlib
 import os
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from .errors import AuthError, Unavailable, UsageError
+from . import tokenexchange
+from .errors import AuthError, Unavailable, UsageError, tag
+from .tokenexchange import ExchangeConfig
 
-MODES = ("bearer", "claims", "client", "lookup")
+MODES = ("bearer", "claims", "client", "lookup", "exchange")
 TARGETS = ("header", "env", "credential")
 
 # Where a `lookup` surface finds its map when the entry names no path.
@@ -62,6 +65,27 @@ class CallIdentity:
     env: Mapping[str, str] = field(default_factory=dict)
     credentials: Mapping[str, str] = field(default_factory=dict)
     cache_key: str = ""
+    # Mode `exchange` only: the network half, deferred so that `materialise`
+    # stays synchronous and I/O-free. `settle` runs it; a header-applying
+    # executor calls `settle` before building its transport. Hidden from repr
+    # because it closes over the caller's token.
+    pending: Callable[[], Awaitable[Mapping[str, str]]] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+
+async def settle(identity):
+    """Finish a materialised identity: run a pending token exchange, if any.
+
+    Everything else passes through untouched, so an executor may call this on
+    every identity it receives. A failed exchange RAISES — the call is refused,
+    never sent with the attach-time headers.
+    """
+    pending = getattr(identity, "pending", None)
+    if pending is None:
+        return identity
+    headers = await pending()
+    return replace(identity, headers={**identity.headers, **headers}, pending=None)
 
 
 def material_key(subject: str, material: Mapping[str, str]) -> str:
@@ -89,8 +113,9 @@ class IdentityPolicy:
     mode: str = ""  # "" == no per-user identity on this surface
     target: str = ""  # "header" | "env" | "credential"
     map: Mapping[str, str] = field(default_factory=dict)  # target key -> source
-    header: str = "authorization"  # bearer only
-    prefix: str = "Bearer "  # bearer only
+    header: str = "authorization"  # bearer and exchange
+    prefix: str = "Bearer "  # bearer and exchange
+    exchange: ExchangeConfig | None = None  # exchange only
     key: str = "sub"  # lookup only: the claim identifying the caller
     path: str | None = None  # lookup only: the identity map
     # Role gating, from [surface.authz]. Deliberately NOT part of a mode: a
@@ -139,6 +164,8 @@ class IdentityPolicy:
                 f"surface '{self.surface}' requires a per-user identity; this "
                 f"caller presented the shared gateway token or none at all"
             )
+        if self.mode == "exchange":
+            return self._pending_exchange(req)
         material = self._material(req)
         slot = _SLOTS.get(self.target)
         if slot is None:
@@ -149,7 +176,9 @@ class IdentityPolicy:
         ident = CallIdentity(
             subject=req.subject, cache_key=material_key(req.subject, material)
         )
-        return replace(ident, **{slot: material})
+        # `slot` is one of the Mapping[str, str] fields (`_SLOTS`).
+        fields: dict[str, Any] = {slot: material}
+        return replace(ident, **fields)
 
     def gate(self, req: RequestIdentity) -> None:
         """Refuse a caller this surface would not serve. NO materialisation.
@@ -206,10 +235,14 @@ class IdentityPolicy:
         if not held & set(self.audiences):
             # The EXPECTED audience, never the token's: what to request from
             # the IdP is actionable, echoing the token's claims is not.
-            raise AuthError(
-                f"you do not have access to surface '{self.surface}': the "
-                f"token's audience does not include "
-                f"{' or '.join(repr(a) for a in self.audiences)}"
+            raise tag(
+                AuthError(
+                    f"you do not have access to surface '{self.surface}': the "
+                    f"token's audience does not include "
+                    f"{' or '.join(repr(a) for a in self.audiences)}"
+                ),
+                "wrong_audience",
+                expected_audience=list(self.audiences),
             )
 
     def _check_roles(self, req: RequestIdentity) -> None:
@@ -228,9 +261,13 @@ class IdentityPolicy:
             )
         raw = claim_at(req.claims, self.roles_claim)
         if raw is None:
-            raise AuthError(
-                f"surface '{self.surface}': the caller's token carries no "
-                f"{self.roles_claim!r} claim, which this surface gates on"
+            raise tag(
+                AuthError(
+                    f"surface '{self.surface}': the caller's token carries no "
+                    f"{self.roles_claim!r} claim, which this surface gates on"
+                ),
+                "missing_role",
+                required_roles=list(self.require_roles),
             )
         # A space-delimited string is what Entra and several proxies emit; a
         # list is what Keycloak emits. Anything else is a misconfigured path.
@@ -239,21 +276,65 @@ class IdentityPolicy:
         elif isinstance(raw, (list, tuple)):
             held = {str(v) for v in raw}
         else:
-            raise AuthError(
-                f"surface '{self.surface}': claim {self.roles_claim!r} is "
-                f"{type(raw).__name__}, not a list or a space-delimited string"
+            raise tag(
+                AuthError(
+                    f"surface '{self.surface}': claim {self.roles_claim!r} is "
+                    f"{type(raw).__name__}, not a list or a space-delimited string"
+                ),
+                "missing_role",
+                required_roles=list(self.require_roles),
             )
         missing = [role for role in self.require_roles if role not in held]
         if missing:
             # The MISSING role names, never the held ones: what a caller needs
             # to be granted is actionable, what they already have is not, and
             # echoing a token's full role list into an error is gratuitous.
-            raise AuthError(
-                f"you do not have access to surface '{self.surface}': it "
-                f"requires role(s) {missing}"
+            raise tag(
+                AuthError(
+                    f"you do not have access to surface '{self.surface}': it "
+                    f"requires role(s) {missing}"
+                ),
+                "missing_role",
+                required_roles=list(self.require_roles),
+                missing_roles=missing,
             )
 
     # --- modes ------------------------------------------------------------
+
+    def _pending_exchange(self, req: RequestIdentity) -> CallIdentity:
+        """Mode `exchange`: everything but the network call, which `settle`
+        makes. Refused off the `header` target, so a backing that would never
+        settle (cli, native) cannot silently run without the exchanged token.
+        """
+        if self.target != "header":
+            raise UsageError(
+                f"surface '{self.surface}': mode 'exchange' forwards an HTTP "
+                f"bearer and needs identity target 'header', got {self.target!r}"
+            )
+        if self.exchange is None:
+            raise UsageError(
+                f"surface '{self.surface}': mode 'exchange' has no exchange "
+                f"configuration"
+            )
+        if not req.raw_token:
+            raise AuthError(
+                f"surface '{self.surface}': mode 'exchange' trades the caller's "
+                f"own token, and this request carries none"
+            )
+        digest = hashlib.sha256(req.raw_token.encode()).hexdigest()
+        return CallIdentity(
+            subject=req.subject or "",
+            cache_key=material_key(req.subject or "", {"subject_token": digest}),
+            pending=functools.partial(
+                tokenexchange.exchanged_headers,
+                self.surface,
+                self.exchange,
+                req.raw_token,
+                self.header,
+                self.prefix,
+                req.subject or "",
+            ),
+        )
 
     def _material(self, req: RequestIdentity) -> dict[str, str]:
         if self.mode == "bearer":
@@ -446,7 +527,7 @@ def secret_map(path: str | Path) -> SecretMap:
     return _MAPS[key]
 
 
-_IDENTITY_KEYS = ("mode", "header", "prefix", "key", "path", "map")
+_IDENTITY_KEYS = ("mode", "header", "prefix", "key", "path", "map", *tokenexchange.KEYS)
 
 
 def validate_identity(surface: str, spec, raw: dict | None) -> None:
@@ -511,14 +592,33 @@ def validate_identity(surface: str, spec, raw: dict | None) -> None:
             f"{list(support.modes)}, not {mode!r}"
         )
 
-    if mode == "bearer":
-        if "map" in raw:
-            raise UsageError(
-                f"'{surface}': mode 'bearer' takes 'header' and 'prefix', not a map"
-            )
+    stray = sorted(set(raw) & set(tokenexchange.KEYS)) if mode != "exchange" else []
+    if stray:
+        raise UsageError(
+            f"'{surface}': {stray} configure mode 'exchange' and would be "
+            f"silently ignored by mode {mode!r}"
+        )
+    if mode == "exchange" and support.target != "header":
+        raise UsageError(
+            f"'{surface}': mode 'exchange' forwards an HTTP bearer, so it needs "
+            f"a plugin whose identity target is 'header'; plugin '{spec.name}' "
+            f"targets {support.target!r}"
+        )
+
+    if mode in ("bearer", "exchange"):
+        # `bearer` has always refused only a map; `exchange` is new, so it
+        # refuses every key it would ignore.
+        for name in ("map", "key", "path") if mode == "exchange" else ("map",):
+            if name in raw:
+                raise UsageError(
+                    f"'{surface}': mode {mode!r} takes 'header' and 'prefix', "
+                    f"not a {name}"
+                )
         for name in ("header", "prefix"):
             if name in raw and not isinstance(raw[name], str):
                 raise UsageError(f"'{surface}': identity '{name}' must be a string")
+        if mode == "exchange":
+            tokenexchange.validate_table(surface, raw)
     else:
         mapping = raw.get("map")
         if not isinstance(mapping, dict) or not mapping:
@@ -659,6 +759,7 @@ def policy_from_entry(entry, spec) -> IdentityPolicy:
         prefix=raw.get("prefix", "Bearer "),
         key=raw.get("key", "sub"),
         path=raw.get("path"),
+        exchange=ExchangeConfig.from_table(raw) if mode == "exchange" else None,
         require_roles=gate,
         roles_claim=claim,
         audiences=audiences,
@@ -678,7 +779,7 @@ def identity_report(policy: IdentityPolicy) -> dict:
         return {"mode": "none"}
     if not policy.mode:
         # An authz-only surface: gated, but forwarding nothing.
-        report = {"mode": "none", "require_roles": list(policy.require_roles)}
+        report: dict[str, Any] = {"mode": "none", "require_roles": list(policy.require_roles)}
         if policy.audiences:
             report["audience"] = list(policy.audiences)
         report["hide_tools"] = policy.hides_listing
@@ -693,6 +794,20 @@ def identity_report(policy: IdentityPolicy) -> dict:
         report["audience"] = list(policy.audiences)
     if policy.require_roles or policy.audiences:
         report["hide_tools"] = policy.hides_listing
+    if policy.mode == "exchange" and policy.exchange is not None:
+        # The configuration and whether the secret is SET — never its value,
+        # and never anything about a cached token.
+        ex = policy.exchange
+        block: dict = {"token_url": ex.token_url}
+        if ex.audience:
+            block["audience"] = list(ex.audience)
+        if ex.resource:
+            block["resource"] = list(ex.resource)
+        if ex.scope:
+            block["scope"] = ex.scope
+        block["client_auth"] = ex.client_auth
+        block["client_secret"] = ex.secret_state()
+        report["exchange"] = block
     if policy.mode == "lookup":
         try:
             report["map"] = secret_map(policy._map_path()).status()

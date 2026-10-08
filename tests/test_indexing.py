@@ -1,4 +1,4 @@
-from beherouter.indexing import build_index
+from beherouter.indexing import _arg_tokens, build_index, search_hits
 from beherouter.models import ToolDescriptor
 
 
@@ -41,7 +41,6 @@ def test_index_strips_dashes_from_flag_names():
     assert "t_x" in build_index([d]).search("dry run")
 
 
-from beherouter.indexing import _arg_tokens, search_hits
 
 PLANE_LIKE = {
     "type": "object",

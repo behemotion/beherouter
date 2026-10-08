@@ -16,13 +16,15 @@ Each check reports rather than raises: one dead backend must not hide the state
 of the others.
 """
 
+import asyncio
 import json
 import logging
 
 from .costing import surface_cost
 from .errors import AxiError
-from .gateway import load_backend
-from .plugins import PLUGINS, resolve_pinned
+from .gateway import close_backend, load_backend, missing_pins
+from .identity import settle
+from .plugins import PLUGINS, resolve_pinned, resolve_probe
 from .registry import RegistryEntry
 
 logger = logging.getLogger(__name__)
@@ -120,7 +122,10 @@ async def probe_as_user(entry, backend, probe, probe_args, token: str, verifier)
         return {"state": USER_REJECTED, "reason": slot.get("reason", "invalid")}
     req = identity_from_token(access)
     try:
-        ident = policy.authorise(req)
+        # `settle` runs a pending token exchange HERE, so an IdP refusing the
+        # caller reads as `refused` (an identity verdict), not as a backend
+        # `failed` — the two point at different owners.
+        ident = await settle(policy.authorise(req))
     except AxiError as e:
         return {"state": USER_REFUSED, "subject": req.subject, "error": str(e)}
     try:
@@ -151,11 +156,12 @@ async def check_entry(
 
     Attaching fresh makes this a black-box check: it exercises the same load path
     the gateway uses at boot, independently of the running gateway process.
+    The backend is closed once the check is done with it, whatever the verdict.
     """
     try:
         backend = await load(entry)
     except AxiError as e:
-        failed_record = {
+        failed_record: dict[str, object] = {
             "name": entry.name,
             "attach": ATTACH_FAILED,
             "probe": PROBE_SKIPPED,
@@ -164,7 +170,14 @@ async def check_entry(
         if user_token is not None:
             failed_record["user_probe"] = {"state": USER_SKIPPED, "reason": "attach failed"}
         return failed_record
+    try:
+        return await _check_attached(entry, backend, user_token, verifier)
+    finally:
+        await close_backend(backend)
 
+
+async def _check_attached(entry, backend, user_token, verifier) -> dict:
+    """The part of `check_entry` that runs against an attached backend."""
     from .surface import build_surface
 
     record = {"name": entry.name, "attach": ATTACH_OK}
@@ -199,10 +212,9 @@ async def check_entry(
         record["tokens_published"] = cost.tokens_published
     # A pinned tool the backend no longer serves is a broken published tool
     # (AGENTS.md's manual "re-probe the whole pin list" rule, mechanized for
-    # the existence half). `cli` descriptors pin by BARE VERB while their
-    # published name is `flatten(surface, verb)` (see `load_cli_backend`), so
-    # comparing a `cli` pin list against `d.name` would report every healthy
-    # `cli` surface as `pinned_missing` — compare against `d.verb` instead.
+    # the existence half). `gateway.missing_pins` is the one definition of
+    # "served", shared with the gateway's attach-time warning (it carries the
+    # cli verb-vs-name trap).
     #
     # Wrapped for the same reason as the costing block above: it cannot raise
     # today (it holds only because `RegistryEntry.pinned` and
@@ -211,11 +223,7 @@ async def check_entry(
     # fact would be fragile. Degrading leaves `catalogue` unset rather than
     # misreporting a broken check as PROBE_FAILED or as a clean catalogue.
     try:
-        served = {
-            d.verb if backend.kind == "cli" else d.name for d in backend.descriptors
-        }
-        expected = resolve_pinned(entry, PLUGINS.get(entry.plugin))
-        missing = sorted(n for n in expected if n not in served)
+        missing = missing_pins(backend, resolve_pinned(entry, PLUGINS.get(entry.plugin)))
         # Vocabulary for a tool the backend does not serve is dead weight, not
         # an outage: reported, never in _FAILURES. Keyed by published name for
         # every backing (unlike pins, which a cli backend keys by verb).
@@ -247,18 +255,9 @@ async def check_entry(
     # `probe` would report UNKNOWN. Looked up without raising: this function's
     # contract is to report rather than raise, and it accepts an injected
     # loader that need not have gone through plugin dispatch at all.
-    #
-    # A probe and its arguments are ONE unit. Falling back field-by-field would
-    # call an entry's overriding probe with the PLUGIN's arguments, which belong
-    # to a different tool — `get_me` invoked with {"query": "pdf"} fails on an
-    # unexpected keyword and reads like a dead credential.
-    plugin = PLUGINS.get(entry.plugin)
-    if entry.probe:
-        probe, probe_args = entry.probe, entry.probe_args
-    elif plugin:
-        probe, probe_args = plugin.spec.probe, plugin.spec.probe_args
-    else:
-        probe, probe_args = None, None
+    # `resolve_probe` is the one resolver, shared with `gateway.load_backend`;
+    # it keeps a probe and its arguments ONE unit.
+    probe, probe_args = resolve_probe(entry, PLUGINS.get(entry.plugin))
     if not probe:
         record["probe"] = PROBE_NONE
     else:
@@ -281,7 +280,13 @@ async def deep_health(
     user_token: str | None = None,
     verifier=None,
 ) -> list[dict]:
-    """One record per registry entry, in registry order.
+    """One record per registry entry, in registry order, checked CONCURRENTLY.
+
+    Concurrent for the same reason as `gateway.build_surfaces`: each check
+    attaches fresh and calls a tool, so serially a sweep cost the sum of every
+    backend's latency. Every check runs to completion before anything is
+    raised (`check_entry` reports AxiErrors itself; anything else is a bug and
+    the first in registry order propagates), so no check is left orphaned.
 
     With `user_token`, each record also carries `user_probe`: the probe run as
     that token's holder (see `probe_as_user`). `verifier` defaults to the
@@ -291,10 +296,19 @@ async def deep_health(
         from .auth import build_verifier
 
         verifier = build_verifier(strict=False)
-    return [
-        await check_entry(entry, load=load, user_token=user_token, verifier=verifier)
-        for entry in registry.values()
-    ]
+    results = await asyncio.gather(
+        *(
+            check_entry(entry, load=load, user_token=user_token, verifier=verifier)
+            for entry in registry.values()
+        ),
+        return_exceptions=True,
+    )
+    records: list[dict] = []
+    for r in results:
+        if isinstance(r, BaseException):
+            raise r
+        records.append(r)
+    return records
 
 
 def failed(records: list[dict]) -> list[str]:

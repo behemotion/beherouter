@@ -36,7 +36,7 @@ def test_probe_authenticates_rather_than_lists():
 
 def test_declares_bearer_identity_landing_in_a_header():
     support = get(PLUGIN).spec.identity
-    assert support.modes == ("bearer",)
+    assert support.modes == ("bearer", "exchange")
     assert support.target == "header"
 
 
@@ -126,3 +126,18 @@ def test_the_credential_is_not_named_token():
     """`token` would resolve to BEHEROUTER_<SURFACE>_TOKEN — the variable a
     client config uses for the caller's GATEWAY bearer. Two secrets, one name."""
     assert {e.name for e in get(PLUGIN).spec.env} == {"access_token"}
+
+
+def test_the_upstream_mounts_are_spelled_once():
+    """The two HTTP plugins exist to keep these mounts apart; a constant written
+    in both is the one place that could silently drift (audit §2.2)."""
+    import inspect
+
+    import beherouter.plugins.plane_http as http
+    import beherouter.plugins.plane_http_apikey as apikey
+    from beherouter.plugins import plane
+
+    for mod in (http, apikey):
+        src = inspect.getsource(mod)
+        assert "API_KEY_MOUNT = " not in src and "OAUTH_PROXY_MOUNT = " not in src
+    assert http.API_KEY_MOUNT is apikey.API_KEY_MOUNT is plane.API_KEY_MOUNT

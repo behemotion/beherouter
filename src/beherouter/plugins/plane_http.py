@@ -40,8 +40,9 @@ relies on upstream's private `auth_method` routing (`plane_mcp/client.py`). So
 request to the backend is authenticated, `tools/list` included, so the ATTACH
 needs a credential of its own. An IdP token would expire under a long-lived
 gateway, so against `contrib/plane-mcp-bearer` it is a Plane PAT, which the
-wrapper recognises by shape and sends as `X-Api-Key`. It is what lists the catalogue and what `health --deep`
-probes with — per-call identity material overrides the header for that one call.
+wrapper recognises by shape and sends as `X-Api-Key`. It is what lists the
+catalogue and what `health --deep` probes with — per-call identity material
+overrides the header for that one call.
 A green probe therefore proves the deployment token and says nothing about any
 user's, exactly as `docs/IDENTITY.md` §1 states.
 
@@ -58,7 +59,11 @@ from ..backends.mcp import load_mcp_backend
 from ..errors import UsageError
 from . import register
 from .plane import (
+    API_KEY_MOUNT,
+    CATALOGUE,
+    E2E,
     EDITION_FIELD,
+    OAUTH_PROXY_MOUNT,
     PINNED,
     PROBE,
     PROBE_ARGS,
@@ -67,11 +72,6 @@ from .plane import (
     validate_edition,
 )
 from .spec import ConfigField, EnvVar, IdentitySupport, PluginContext, PluginSpec
-
-# Upstream plane-mcp-server's two HTTP mounts, spelled once so `validate` can
-# refuse both: `/http` + FastMCP's default `/mcp` is the OAuth proxy.
-OAUTH_PROXY_MOUNT = "/http/mcp"
-API_KEY_MOUNT = "/http/api-key"
 
 SPEC = PluginSpec(
     name="plane-http",
@@ -84,6 +84,15 @@ SPEC = PluginSpec(
     probe=PROBE,
     probe_args=PROBE_ARGS,
     search_aliases=SEARCH_ALIASES,
+    # The `plane-bearer` surface in tests/e2e/: alice's own JWT reaches Plane
+    # as Bearer through contrib/plane-mcp-bearer, and `health --deep
+    # --bearer-file` reports matches_caller for her.
+    maturity="per-user",
+    evidence=(
+        CATALOGUE,
+        E2E + "plane-http + contrib/plane-mcp-bearer: the caller's JWT reaches Plane as Bearer",
+        E2E + "health --deep --bearer-file proves the user's identity reaches the backend",
+    ),
     config=(
         ConfigField(
             name="base_url",
@@ -112,7 +121,7 @@ SPEC = PluginSpec(
         ),
     ),
     identity=IdentitySupport(
-        modes=("bearer",),
+        modes=("bearer", "exchange"),
         target="header",
         doc=(
             "Forwards the caller's own verified token to Plane, which validates "

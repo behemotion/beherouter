@@ -13,17 +13,17 @@ is one call, always works, and returns the same normalised shape.
 """
 
 from datetime import UTC
-from urllib.parse import quote
-
-import httpx
 
 from ....errors import Unavailable, UsageError
-from ..oauth import RefreshTokenAuth
 from ..times import require_offset_datetime, require_window
-from . import raise_for_status
+from . import HttpCalendarProvider
 
 BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+# DERIVED from TOKEN_URL, never spelled out again: the consent flow and the
+# refresh grant must name the same authority, and a second literal is how one
+# of them drifts back to `common`.
+AUTHORIZE_URL = TOKEN_URL.removesuffix("/token") + "/authorize"
 SCOPE = "offline_access Calendars.ReadWrite"
 
 # Graph's showAs values that actually block a slot. "free" does not, and
@@ -35,51 +35,17 @@ BLOCKING = frozenset({"busy", "oof", "tentative"})
 _FREEBUSY_PAGE = 250
 
 
-class MicrosoftCalendar:
-    def __init__(
-        self,
-        *,
-        auth: RefreshTokenAuth,
-        calendar_id: str | None = None,
-        client: httpx.AsyncClient | None = None,
-    ) -> None:
-        self._auth = auth
-        self._default_calendar = calendar_id
-        self._client = client or httpx.AsyncClient(timeout=30.0)
-
-    # --- plumbing ---------------------------------------------------------
+class MicrosoftCalendar(HttpCalendarProvider):
+    BASE = BASE
 
     async def _headers(self) -> dict:
         return {
-            "Authorization": f"Bearer {await self._auth.access_token()}",
+            **await super()._headers(),
             # Pin the timezone Graph renders times in. Without this the naive
             # dateTime comes back in the mailbox's own zone and normalisation
             # would need a tz-database lookup per event.
             "Prefer": 'outlook.timezone="UTC"',
         }
-
-    async def _request(self, method: str, path: str, *, context: str, **kw) -> dict:
-        try:
-            resp = await self._client.request(
-                method, f"{BASE}{path}", headers=await self._headers(), **kw
-            )
-        except httpx.HTTPError as e:
-            raise Unavailable(f"{context}: {type(e).__name__}") from e
-        raise_for_status(resp, context)
-        if resp.status_code == 204 or not resp.content:
-            return {}
-        return resp.json()
-
-    @staticmethod
-    def _segment(value: str) -> str:
-        """Percent-encode a user-supplied URL path segment.
-
-        ⚠️ Graph calendar and event ids are long base64-ish strings that can
-        carry '/' and '='; an id is also whatever the agent passes. Unquoted, a
-        '../' segment escapes the six-verb surface into the rest of Graph under
-        the same Calendars.ReadWrite grant.
-        """
-        return quote(value, safe="")
 
     def _view_path(self, calendar_id: str | None) -> str:
         cal = calendar_id or self._default_calendar
@@ -173,7 +139,8 @@ class MicrosoftCalendar:
         self, *, start: str, end: str, calendar_ids: list[str] | None = None
     ) -> dict:
         require_window(start, end)
-        targets = calendar_ids or [self._default_calendar]
+        # None is Graph's own default calendar (see `_view_path`).
+        targets: list[str | None] = [*calendar_ids] if calendar_ids else [self._default_calendar]
         busy: list[dict] = []
         for cal in targets:
             data = await self._calendar_view(

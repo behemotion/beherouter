@@ -35,7 +35,8 @@ DOC = {
 
 def _client():
     return httpx.AsyncClient(
-        base_url="https://crm", transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        base_url="https://crm",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
     )
 
 

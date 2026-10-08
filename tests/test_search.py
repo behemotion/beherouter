@@ -1,4 +1,4 @@
-from beherouter.search import ToolIndex
+from beherouter.search import DEFAULT_LIMIT, ToolIndex, normalize, singular, split_lead
 
 
 def test_search_ranks_relevant_first():
@@ -111,7 +111,6 @@ def test_short_tokens_do_not_prefix_match_everything():
     assert idx.search("xy") == []
 
 
-from beherouter.search import DEFAULT_LIMIT, normalize, singular, split_lead
 
 
 def test_normalize_splits_camel_case_and_snake_case():

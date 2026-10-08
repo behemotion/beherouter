@@ -17,7 +17,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.routing import Mount
 
-from beherouter import auth
+from beherouter import auth, metrics
 from beherouter.auth import (
     CompositeVerifier,
     GatewayJWTVerifier,
@@ -52,11 +52,23 @@ def pair():
     return kp, v, rec
 
 
+def _rejections() -> dict[str, float]:
+    out: dict[str, float] = {}
+    for family in metrics.REGISTRY.collect():
+        if family.name == "beherouter_auth_rejections":
+            for s in family.samples:
+                if s.name.endswith("_total") and s.value:
+                    out[s.labels["reason"]] = out.get(s.labels["reason"], 0) + s.value
+    return out
+
+
 @pytest.fixture(autouse=True)
 def _fresh_counter():
-    auth.REJECTIONS.clear()
+    metrics.AUTH_REJECTIONS.clear()
+    auth.seed_rejections()
     yield
-    auth.REJECTIONS.clear()
+    metrics.AUTH_REJECTIONS.clear()
+    auth.seed_rejections()
 
 
 def _expired(kp, **kw):
@@ -69,7 +81,7 @@ async def test_an_expired_signed_token_is_expired_and_warned(pair):
     kp, v, rec = pair
     observed = ObservedVerifier(v)
     assert await observed.verify_token(_expired(kp)) is None
-    assert auth.REJECTIONS["expired"] == 1
+    assert _rejections()["expired"] == 1
     assert ("warning", "Bearer token rejected for client alice: token expired") in rec.calls
     assert not [c for c in rec.calls if c[0] == "info"]
 
@@ -80,14 +92,14 @@ async def test_a_forged_token_with_an_old_exp_is_invalid_not_expired(pair):
     _kp, v, _rec = pair
     forged = _expired(RSAKeyPair.generate())
     assert await ObservedVerifier(v).verify_token(forged) is None
-    assert auth.REJECTIONS == {"invalid": 1}
+    assert _rejections() == {"invalid": 1}
 
 
 async def test_a_wrong_audience_is_counted_as_audience(pair):
     kp, v, _rec = pair
     token = kp.create_token(subject="alice", issuer=ISSUER, audience="someone-else")
     assert await ObservedVerifier(v).verify_token(token) is None
-    assert auth.REJECTIONS == {"audience": 1}
+    assert _rejections() == {"audience": 1}
 
 
 async def test_both_mode_counts_a_token_once(pair):
@@ -95,23 +107,35 @@ async def test_both_mode_counts_a_token_once(pair):
     observed = ObservedVerifier(CompositeVerifier([SharedTokenVerifier("s3cret"), v]))
     assert await observed.verify_token(_expired(kp)) is None
     assert await observed.verify_token("not-the-shared-token") is None
-    assert auth.REJECTIONS == {"expired": 1, "invalid": 1}
+    assert _rejections() == {"expired": 1, "invalid": 1}
 
 
 async def test_an_accepted_token_counts_nothing(pair):
     kp, v, _rec = pair
     token = kp.create_token(subject="alice", issuer=ISSUER, audience="beherouter")
     assert await ObservedVerifier(v).verify_token(token) is not None
-    assert not auth.REJECTIONS
+    assert _rejections() == {}
 
 
 def test_metrics_emit_every_reason_zero_included():
-    auth.REJECTIONS["expired"] += 2
-    text = auth.metrics_text()
-    assert 'beherouter_auth_rejections_total{reason="expired"} 2' in text
+    metrics.AUTH_REJECTIONS.labels(reason="expired", surface="").inc(2)
+    text = metrics.render()[0].decode()
+    assert 'beherouter_auth_rejections_total{reason="expired",surface=""} 2.0' in text
     for reason in auth.REASONS:
         assert f'reason="{reason}"' in text
     assert "# TYPE beherouter_auth_rejections_total counter" in text
+
+
+async def test_a_rejection_is_labelled_only_with_a_configured_surface():
+    seen = []
+
+    async def app(scope, receive, send):
+        seen.append(auth._SLOT.get()["surface"])
+
+    mw = auth.RejectionMiddleware(app, surfaces=frozenset({"dwh"}))
+    for path in ("/dwh/mcp", "/attacker-chosen/mcp"):
+        await mw({"type": "http", "path": path}, None, None)
+    assert seen == ["dwh", ""]
 
 
 def _app(verifier) -> Starlette:

@@ -366,3 +366,44 @@ def test_context_cost_on_an_empty_registry_reports_nothing_and_succeeds(tmp_path
     out = json.loads(r.stdout)
     assert out["ok"] is True
     assert out["surfaces"] == []
+
+
+def test_context_cost_closes_every_backend_it_built(
+    fake_cli_cmd, tmp_path, monkeypatch, capsys
+):
+    """Each measured backend is dropped at the end of its iteration, so its
+    executor's `aclose` (a kept-alive subprocess, an HTTP client) is awaited --
+    including when costing fails after the attach succeeded."""
+    from beherouter import costing
+    from beherouter.cli import app as cli
+
+    closed: list[str] = []
+    real_load = cli.load_backend
+
+    async def load(entry):
+        backend = await real_load(entry)
+
+        async def aclose(name=entry.name):
+            closed.append(name)
+
+        monkeypatch.setattr(backend.executor, "aclose", aclose, raising=False)
+        return backend
+
+    real_surface_cost = costing.surface_cost
+
+    async def flaky(mcp, backend):
+        if backend.name == "broken":
+            raise RuntimeError("boom")
+        return await real_surface_cost(mcp, backend)
+
+    monkeypatch.setattr(cli, "load_backend", load)
+    monkeypatch.setattr(costing, "surface_cost", flaky)
+    reg = tmp_path / "registry.toml"
+    reg.write_text(
+        f'[good]\nplugin = "_test-cli"\n\n[good.config]\ncmd = "{fake_cli_cmd}"\n\n'
+        f'[broken]\nplugin = "_test-cli"\n\n[broken.config]\ncmd = "{fake_cli_cmd}"\n'
+    )
+    monkeypatch.setenv("BEHEROUTER_REGISTRY", str(reg))
+    cli.app.main(["context-cost", "--json"])
+    capsys.readouterr()
+    assert closed == ["good", "broken"]

@@ -50,7 +50,9 @@ def test_refuses_both_spellings_of_one_arg():
 
 
 def test_missing_required_lists_the_enum():
-    with pytest.raises(UsageError, match=r"missing required arg 'action' \(one of: list, create, archive\)"):
+    with pytest.raises(
+        UsageError, match=r"missing required arg 'action' \(one of: list, create, archive\)"
+    ):
         prepare_args(_d(CLOSED), {"project_id": "p"})
 
 
@@ -72,3 +74,14 @@ def test_cli_schema_is_closed():
 
 def test_empty_schema_takes_no_args():
     assert prepare_args(_d({}), {}) == {}
+
+
+def test_a_union_type_degrades_to_any_instead_of_crashing():
+    """`"type": ["string", "null"]` is valid JSON Schema; it used to reach a
+    dict lookup as an unhashable key and raise TypeError at attach."""
+    from typing import Any
+
+    from beherouter.args import NO_DEFAULT, normalize_args
+
+    schema = {"type": "object", "properties": {"note": {"type": ["string", "null"]}}}
+    assert normalize_args(schema) == [("note", "note", Any, False, NO_DEFAULT)]

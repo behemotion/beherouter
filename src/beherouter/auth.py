@@ -29,7 +29,6 @@ only ever "expired" for a token whose SIGNATURE verified: FastMCP checks the
 signature before `exp`, so a forged token with an old `exp` is "invalid".
 """
 
-import collections
 import contextvars
 import hmac
 import json
@@ -39,6 +38,7 @@ import re
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 
+from . import metrics
 from .errors import UsageError
 
 ENV_VAR = "BEHEROUTER_GATEWAY_TOKEN"
@@ -64,10 +64,19 @@ AUTH_MODES = ("shared", "oidc", "both")
 # report into it however many tasks sit in between (a copied context still
 # holds the same dict).
 REASONS = ("expired", "invalid", "issuer", "audience", "scope")
-REJECTIONS: collections.Counter[str] = collections.Counter()
 _SLOT: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "beherouter_auth_rejection", default=None
 )
+
+
+def seed_rejections() -> None:
+    """Every known reason as a zero series, so a dashboard has one before an
+    incident. Unlabelled by surface: a refusal before routing knows none."""
+    for reason in REASONS:
+        metrics.AUTH_REJECTIONS.labels(reason=reason, surface="")
+
+
+seed_rejections()
 
 # FastMCP's JWTVerifier rejection log lines -> our reason. Matched on the
 # FORMAT string, which is a constant in FastMCP's source; if a future FastMCP
@@ -124,7 +133,8 @@ class GatewayJWTVerifier(JWTVerifier):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.logger = _RejectionLog(self.logger)
+        # A duck-typed proxy, not a Logger subclass: it forwards every attribute.
+        self.logger = _RejectionLog(self.logger)  # type: ignore[assignment]
 
 
 class ObservedVerifier(TokenVerifier):
@@ -153,7 +163,7 @@ class ObservedVerifier(TokenVerifier):
                 _SLOT.reset(reset)
         if found is None:
             reason = slot.setdefault("reason", "invalid")
-            REJECTIONS[reason] += 1
+            metrics.AUTH_REJECTIONS.labels(reason=reason, surface=slot.get("surface", "")).inc()
         return found
 
 
@@ -172,14 +182,18 @@ class RejectionMiddleware:
     telling a caller WHICH check its forged token failed helps nobody else.
     """
 
-    def __init__(self, app) -> None:
+    def __init__(self, app, surfaces: frozenset[str] = frozenset()) -> None:
         self.app = app
+        self.surfaces = surfaces
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        slot: dict = {}
+        first = scope.get("path", "").lstrip("/").split("/", 1)[0]
+        # Only a CONFIGURED surface name becomes a label: the path is caller
+        # input, and an unauthenticated caller could otherwise mint series.
+        slot: dict = {"surface": first if first in self.surfaces else ""}
         token = _SLOT.set(slot)
         replaced = False
 
@@ -220,22 +234,6 @@ class RejectionMiddleware:
         finally:
             _SLOT.reset(token)
 
-
-def metrics_text() -> str:
-    """Prometheus text exposition of the rejection counter. Every known reason
-    is emitted, zero included, so a dashboard has a series before an incident."""
-    lines = [
-        (
-            "# HELP beherouter_auth_rejections_total Bearer tokens the gateway "
-            "refused, by reason."
-        ),
-        "# TYPE beherouter_auth_rejections_total counter",
-    ]
-    for reason in sorted(set(REASONS) | set(REJECTIONS)):
-        lines.append(
-            f'beherouter_auth_rejections_total{{reason="{reason}"}} {REJECTIONS[reason]}'
-        )
-    return "\n".join(lines) + "\n"
 
 # The shared token's AccessToken.client_id, and the ONE discriminator between a
 # shared-secret caller and a user. `identity.py` refuses per-user surfaces on
@@ -328,6 +326,7 @@ def oidc_verifier() -> JWTVerifier:
     # Several surfaces owned by several teams can then each keep an audience
     # of their own and narrow to it with [surface.authz] audience, instead of
     # all sharing one gateway-wide name.
+    assert audience is not None  # narrowed by the `missing` check above
     audiences = [a.strip() for a in audience.split(",") if a.strip()]
     return GatewayJWTVerifier(
         jwks_uri=jwks_uri,

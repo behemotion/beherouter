@@ -12,7 +12,7 @@ un-attachable.
 
 ⚠️ EVERY WRITE THROUGH THIS SURFACE IS ATTRIBUTED TO ONE MICROSOFT IDENTITY —
 the account that consented. Universal availability in LibreChat is not per-user
-access.
+access. Per-user is mode "lookup" plus `beherouter calendar-consent` per user.
 
 Free/busy derives from calendarView, not from Graph's getSchedule, which is a
 work/school feature — see providers/microsoft.py.
@@ -42,6 +42,11 @@ SPEC = PluginSpec(
         "delete_event",
     ),
     probe="list_calendars",
+    # Native: the catalogue is the shared core's descriptor set, recorded from
+    # this plugin's own build and drift-guarded by tests/test_calendar_catalogue.py.
+    # Raise gcal and m365 TOGETHER — they share one schema set and one file.
+    maturity="catalogued",
+    evidence=("tests/fixtures/catalogues/calendar-0.2.5.json",),
     config=(
         ConfigField(
             name="calendar_id",

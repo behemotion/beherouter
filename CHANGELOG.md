@@ -8,6 +8,168 @@ released is the body of its GitHub Release (`release.yml` extracts it, and the
 auto-generated contributor appendix is appended below it). Releases before
 0.2.0 were not tagged; their history is the git log.
 
+## [Unreleased]
+
+### Added
+
+- **Generic plugins: `mcp-http`, `mcp-stdio` and `beheaxi-cli`.** A backend with
+  no curated plugin attaches by URL, by command, or as any beheaxi CLI.
+  `beheaxi-cli` is the first production plugin on the `cli` backing. All three
+  require `probe` in the registry entry, and the two MCP ones also require
+  `pinned`, so an unprobed surface still can't be configured. `mcp-http` honours
+  identity modes `bearer`, `claims`, `client` and `exchange`; `beheaxi-cli`
+  honours `claims`; `mcp-stdio` honours none. See `docs/PLUGINS.md` § Generic
+  plugins.
+- **Optional credentials.** `EnvVar(required=False)` declares a credential an
+  entry may omit. Undeclared names are still refused. `plugin-config` emits an
+  optional credential commented out, so the generated block passes
+  `registry-lint` and nothing un-vaulted reaches the env file.
+- `beherouter plugins` reports `generic` for each plugin: true when the entry
+  must supply a key the plugin has no tested default for.
+- **Identity mode `exchange` (OAuth 2.0 Token Exchange, RFC 8693).** The gateway
+  trades the caller's verified token at the IdP for one addressed to the
+  backend and forwards that, as a header. Declared by `mcp-http`, `openapi`,
+  `office-mcp` and `plane-http`. Issued tokens are cached per surface and caller
+  digest until 30 s before `expires_in` (LRU, 1024 entries), and concurrent
+  calls for one caller share one exchange. Nothing falls back: a failed
+  exchange never sends the call. The `client_secret` `${VAR}` is resolved per
+  exchange, and `registry-lint` warns when it is unset. See `docs/IDENTITY.md`
+  and `docs/superpowers/specs/2026-10-07-token-exchange-design.md`.
+- **`beherouter calendar-consent <surface> --subject <value>`**: one user's
+  Google or Microsoft consent for a `lookup` calendar surface, as a PKCE
+  loopback flow on `127.0.0.1`, written into the identity map atomically with
+  mode 0600. `--revoke` removes the entry. Replaces the hand-run `nc`/`curl`
+  procedure per user; see `docs/CALENDAR-BOOTSTRAP.md`.
+- **`beherouter catalog-import <file|URL|name> <surface> [--registry URL]`**
+  turns an MCP Registry `server.json` (schema 2025-12-11) into `mcp-http` or
+  `mcp-stdio` registry fragments with exact version pins. `pinned` and `probe`
+  it cannot know are emitted as TODOs that fail `registry-lint`, unless the
+  document carries an `io.beherouter/plugin` block under `_meta`. Credentials
+  beyond the one `api_key` are warned about, never emitted.
+- **`beherouter catalog-export <plugin>`** emits a curated plugin as a
+  `server.json` with its pins and probe under `_meta` (`--name`,
+  `--server-version`, `--url`, `--package`).
+- **Maturity tiers**: `declared` < `probed` < `catalogued` < `verified` <
+  `per-user`. A plugin states its tier and evidence (`PluginSpec(maturity=,
+  evidence=)`); `beherouter.testing.plugin_conformance` proves the claim in a
+  test suite, `beherouter plugins` shows it, and `registry-lint` warns on a
+  surface using a `declared` plugin. An out-of-tree plugin whose evidence does
+  not ship in its own distribution is shown as `probed` at most. See
+  `docs/PLUGINS.md` § Maturity.
+- **`beherouter health --deep --textfile PATH`** writes the sweep as a
+  node_exporter textfile-collector file, atomically and with no identity value
+  in it; with `--bearer-file` it carries the per-user verdict too.
+  `contrib/health-textfile/` ships a systemd timer, a Kubernetes CronJob and
+  alert rules, and the chart (0.1.7) has an opt-in `healthCronJob`.
+- **`beherouter --version`**, read from the installed package metadata.
+- **`scripts/deploy.sh`**: a single-host podman deploy that lints the registry
+  inside the new image, snapshots the registry per deploy, verifies `/healthz`
+  (and optionally `health --deep`) and rolls back to the previous container
+  and registry on failure. See `docs/DEPLOYMENT.md`.
+- `/healthz` gains two optional keys: `needs_config_change` (failed surfaces
+  the gateway has stopped retrying) and `pinned_missing` (per surface, pinned
+  tools the backend no longer serves).
+- `beherouter plugins` lists entry points that failed to load under `failed`;
+  `registry-lint` warns about them, and an `unknown plugin` error names them.
+- Search eval sets for `sonarqube` (1.27.0.4335, 18 tools) and `office-mcp`
+  (0.1.0, 4 tools), with search aliases: top-3 hits go from 23/33 to 33/33 and
+  from 9/18 to 18/18. `gcal`/`m365` gain a recorded catalogue
+  (`tests/fixtures/catalogues/calendar-0.2.5.json`).
+- **Audit line.** Every tool call writes one JSON line on `beherouter.audit` (stdout):
+  surface, tool, inner tool, caller `sub` plus the claims named in
+  `BEHEROUTER_AUDIT_CLAIMS`, outcome, reason, status, latency, `call_id`. Never the
+  arguments. `BEHEROUTER_AUDIT=off` disables it.
+- **Metrics.** `beherouter_tool_calls_total`, `beherouter_tool_call_duration_seconds`,
+  `beherouter_active_sessions` and `beherouter_surface_up` on `/metrics`.
+- **`call_timeout_s`** (registry entry) and `BEHEROUTER_CALL_TIMEOUT_S`: a bound on the
+  backend call, unset = no limit. Expiry ends the call with reason `timeout`.
+- **Machine-readable errors.** A failed call carries
+  `_meta["io.beherouter/error"] = {type, code, reason, context}` with a documented
+  `reason` enum. See `docs/DEPLOYMENT.md` § Logs, audit and metrics.
+- **JSON logs.** `BEHEROUTER_LOG_FORMAT=json` writes one object per line with a local-offset
+  timestamp; the default `text` format no longer prints multi-line tracebacks for expected
+  refusals.
+
+### Changed
+
+- **A failed call returns an error result instead of raising**: `isError: true` with
+  `_meta`, text unchanged apart from dropping FastMCP's `Error calling tool '<name>': `
+  prefix. Backend refusals log one WARNING line instead of an ERROR traceback.
+- **`beherouter_auth_rejections_total` gains a `surface` label** (`""` when the path names
+  no configured surface); its values now render as floats.
+- **The audit line is on by default**: a new JSON stream on stdout, beside the
+  log on stderr. Set `BEHEROUTER_AUDIT=off` to disable it; any other value but
+  `on` refuses boot.
+- **One `beherouter.calls` line per call replaces the INFO `identity applied …`
+  line.** It carries the same names-only identity fields (`subject`, `mode`,
+  `keys`), but on every call of every surface, so `subject` now appears in the
+  log for each call rather than only on identity-enabled surfaces.
+- **`beherouter serve` takes over logging.** One plain handler (text or JSON)
+  replaces FastMCP's Rich and uvicorn's own formats. Third-party loggers stay
+  quiet below WARNING (`httpx`, `httpcore` and `mcp`, whose INFO lines carry
+  request URLs and session ids), so INFO output is beherouter's own.
+- **`/metrics` Content-Type is now prometheus-client's**:
+  `text/plain; version=1.0.0; charset=utf-8`.
+- New dependency: `prometheus-client`.
+- **`plugin-config` and `catalog-import` emit plain env lines** (`VAR=`, empty)
+  instead of an ansible `{{ vault_… }}` template, so the fragment is correct for
+  a `.env` file, a Kubernetes Secret or any vault render. The value is left
+  empty on purpose: an unfilled `${VAR}` refuses boot by name rather than
+  booting into 401s.
+
+- **Surfaces attach concurrently**, and `health --deep` probes them
+  concurrently. Registry order is kept in the output, and when several fail,
+  the first failure in registry order is the one raised.
+- **A pinned tool missing at attach logs a WARNING and appears under
+  `/healthz` `pinned_missing`**; the surface status is unchanged.
+  `health --deep` still fails it (`catalogue: "pinned_missing"`).
+- Probe resolution and the missing-pins check have one implementation each
+  (`plugins.resolve_probe`, `gateway.missing_pins`), shared by attach, health
+  and lint.
+- `attach` and `detach` edit `registry.toml` in place (new dependency
+  `tomlkit`), keeping the operator's comments and layout.
+- `attach --config` coerces values (integers, floats, `true`/`false`); a list
+  is written by repeating the key.
+- Backends are closed when they are no longer served: on shutdown (surfaces
+  attached by retry included), when dropped after build, when `build_surfaces`
+  raises, and after each `health --deep` and `context-cost` probe.
+- `registry-lint` also warns when a `cli` plugin's `cmd` is not on `PATH`, as it
+  already did for `stdio`.
+- Chart 0.1.7: the registry-lint hook and test pods no longer carry the
+  gateway's selector labels, so the Service, PodDisruptionBudget and
+  NetworkPolicy cannot count them as gateway replicas.
+- Images build from the committed `uv.lock` (`uv sync --frozen`), with `uv`
+  pinned by version and digest, as UID 1000. `.dockerignore` mirrors
+  `.containerignore`, and `.env` files are excluded from the build context.
+- CI runs ruff (an extended rule set), mypy over `src`, the test suite with a
+  90 % branch-coverage floor, `pip-audit`, hadolint, shellcheck, the
+  version-consistency gates and the e2e stack; every action is pinned to a
+  commit SHA and kept current by Dependabot, and workflows run with read-only
+  default permissions.
+
+### Fixed
+
+- **A configuration fault at attach is no longer retried.** A `UsageError`
+  (for example a bad `[surface.identity]`) used to be retried forever; the
+  surface's `503` now says it will not be retried and carries no
+  `Retry-After`, and `/healthz` lists it under `needs_config_change`.
+- `beherouter --version` and the manifest reported `0.1.0`; they report the
+  package version.
+- A failed or timed-out `openapi` attach closes its HTTP client.
+- `openapi` coerces numeric strings for `integer`/`number` parameters.
+- `python-dir`: two directories shipping a module of the same name (say
+  `helpers.py`) each get their own; sibling imports must be at module top level.
+- A JSON Schema whose `type` is a list (a union) no longer raises `TypeError`
+  in argument checking.
+- `catalog-import` refuses a non-UTF-8 document instead of crashing.
+- Calendar providers evicted from the per-identity cache are closed once no
+  call is using them, instead of leaking their HTTP clients.
+
+### Security
+
+- `cryptography` 50.0.2 and `pyjwt` 2.15.1, clearing the 16 advisories
+  `pip-audit` reported against the previous lock.
+
 ## [0.2.5] - 2026-10-06
 
 ### Changed

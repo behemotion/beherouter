@@ -18,6 +18,7 @@ from fastmcp.exceptions import ToolError
 from mcp.client.stdio import get_default_environment
 
 from ..errors import Unavailable, UsageError
+from ..identity import settle
 from ..models import Backend, ToolDescriptor
 from .backing import McpBacking
 
@@ -112,7 +113,9 @@ class MCPClientExecutor:
         self._client = client
 
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
-        if identity is not None and identity.headers:
+        if identity is not None and (
+            identity.headers or getattr(identity, "pending", None) is not None
+        ):
             # This executor is the bound-client one that `load_mcp_backend`
             # replaces; it holds an OPEN session whose headers were fixed at
             # connect. Raising keeps the "no silent shared fallback" rule
@@ -166,6 +169,8 @@ class ReconnectingMCPExecutor:
             # Before any transport is built: a refused call must not cost a
             # round trip, and must not depend on the backend being up.
             self._backing.guard(verb, args)
+        # After the guard: a refused call must not cost a token exchange either.
+        identity = await settle(identity)
         transport = self._transport
         if identity is not None and identity.headers:
             if self._backing is None:

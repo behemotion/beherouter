@@ -11,6 +11,13 @@ from dataclasses import dataclass, field
 
 BACKINGS = ("native", "http", "stdio", "cli", "inproc")
 
+# Maturity tiers, lowest first. A tier is a claim about EVIDENCE: every tier
+# above `declared` is checked by `beherouter.testing.plugin_conformance`, never
+# merely asserted, and each tier includes the checks of the ones below it.
+# Declared on the spec, never computed at runtime: the gateway does not run
+# pytest, and what it CAN check live is already `health --deep`'s job.
+MATURITY_TIERS = ("declared", "probed", "catalogued", "verified", "per-user")
+
 # The plugin contract's version. Bump ONLY on a change an existing plugin
 # cannot survive (a removed or re-typed PluginSpec/PluginContext field, a
 # changed build() contract); additive fields keep the number. A gateway
@@ -37,10 +44,16 @@ class EnvVar:
     The plugin maps this to wherever the credential actually goes — a subprocess
     environment variable, an HTTP header, an OAuth exchange. The operator never
     needs to know the backend's own variable name.
+
+    `required=False` is for a generic plugin whose backend may or may not take
+    a credential (`mcp-http`, `mcp-stdio`): there is no tested answer to "does
+    this backend need one", so the operator's entry is the answer. A curated
+    plugin knows, and keeps the default.
     """
 
     name: str
     doc: str = ""
+    required: bool = True
 
 
 @dataclass(frozen=True)
@@ -91,6 +104,14 @@ class PluginSpec:
     # `probe`/`pinned` stop being overrides, because there is no tested
     # default to fall back to (a generic source like `openapi`).
     requires_entry: tuple[str, ...] = ()
+    # The tier this plugin claims (one of MATURITY_TIERS) and the in-tree
+    # paths that prove it: recorded catalogues (`*.json`, a `tools/list`
+    # reply) and test ids (`path::test_name`, or `path::<check name>` for the
+    # e2e driver's named checks). Paths are relative to the distribution root.
+    # ⚠️ Additive fields, so API_VERSION does not move; the default claims
+    # nothing, which is the honest default for a spec nobody has tested.
+    maturity: str = "declared"
+    evidence: tuple[str, ...] = ()
     # Which plugin contract this spec was written against; `register()`
     # refuses one this gateway does not serve. See API_VERSION.
     api: int = API_VERSION

@@ -1,0 +1,114 @@
+[
+ {
+  "annotations": null,
+  "description": "Find tools for a task. Returns up to 5 matches with their COMPLETE input schemas, ready to pass to invoke(). Call with an empty query to see the category index.",
+  "inputSchema": {
+   "properties": {
+    "category": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Category"
+    },
+    "limit": {
+     "default": 5,
+     "title": "Limit",
+     "type": "integer"
+    },
+    "query": {
+     "default": "",
+     "title": "Query",
+     "type": "string"
+    }
+   },
+   "title": "discoverArguments",
+   "type": "object"
+  },
+  "name": "discover"
+ },
+ {
+  "annotations": null,
+  "description": "Run a tool found via discover(). `args` must match that tool's input_schema exactly. Returns {file: 'f_...'} when fast or {job: 'j_...'} when the work is still running.",
+  "inputSchema": {
+   "properties": {
+    "args": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Args"
+    },
+    "tool": {
+     "title": "Tool",
+     "type": "string"
+    }
+   },
+   "required": [
+    "tool"
+   ],
+   "title": "invokeArguments",
+   "type": "object"
+  },
+  "name": "invoke"
+ },
+ {
+  "annotations": null,
+  "description": "Fetch a URL server-side and store it, returning a file handle. Every workflow starts here. Advertised natively because it is on the universal path.",
+  "inputSchema": {
+   "properties": {
+    "filename": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Filename"
+    },
+    "url": {
+     "title": "Url",
+     "type": "string"
+    }
+   },
+   "required": [
+    "url"
+   ],
+   "title": "file_from_urlArguments",
+   "type": "object"
+  },
+  "name": "file_from_url"
+ },
+ {
+  "annotations": null,
+  "description": "Check a job returned by a slow tool. Status is running, done, failed or cancelled. Poll no faster than every 2 seconds.",
+  "inputSchema": {
+   "properties": {
+    "job": {
+     "title": "Job",
+     "type": "string"
+    }
+   },
+   "required": [
+    "job"
+   ],
+   "title": "job_statusArguments",
+   "type": "object"
+  },
+  "name": "job_status"
+ }
+]

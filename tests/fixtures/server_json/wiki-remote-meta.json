@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.example/wiki",
+  "description": "Search and read the team wiki.",
+  "version": "1.4.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://wiki.example.com/mcp",
+      "headers": [
+        {
+          "name": "X-Api-Key",
+          "description": "Wiki API key",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "io.beherouter/plugin": {
+        "v": 1,
+        "pinned": ["search_pages", "get_page"],
+        "probe": "search_pages",
+        "probe_args": {"query": "a", "limit": 1},
+        "search_aliases": {"search_pages": ["wiki", "docs"]},
+        "identity": {"modes": ["bearer", "lookup"], "target": "header"}
+      }
+    }
+  }
+}

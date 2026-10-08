@@ -1,0 +1,743 @@
+[
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": false
+  },
+  "description": "Change the status of an issue. This tool can be used to change the status of an issue to \"accept\", \"falsepositive\" or to \"reopen\" an issue.\nAn example request could be: I would like to accept the issue having the key \"AX-HMISMFixnZED\"\nYou can optionally add a comment to explain your triage decision.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "description": "An optional comment explaining the status change",
+     "type": "string"
+    },
+    "key": {
+     "description": "The key of the issue which status should be changed",
+     "type": "string"
+    },
+    "status": {
+     "description": "The new status of the issue",
+     "enum": [
+      "accept",
+      "falsepositive",
+      "reopen"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "key",
+    "status"
+   ],
+   "type": "object"
+  },
+  "name": "change_sonar_issue_status"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Find SonarQube projects in your instance. Supports searching by project name or key. Use this first when projectKey is unknown - most other tools require the project key from this response.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "pageIndex": {
+     "description": "An optional 1-based page index. Defaults to 1.",
+     "type": "number"
+    },
+    "pageSize": {
+     "description": "An optional page size. Must be greater than 0 and less than or equal to 500. Defaults to 500.",
+     "type": "number"
+    },
+    "q": {
+     "description": "An optional search query to filter projects by name (partial match) or key (exact match).",
+     "type": "string"
+    }
+   },
+   "required": [],
+   "type": "object"
+  },
+  "name": "search_my_sonarqube_projects"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Search for issues (bugs, vulnerabilities, code smells) in my projects. Filter by severities=['HIGH','BLOCKER'] for critical issues, impactSoftwareQualities=['SECURITY'] for security, issueStatuses=['OPEN'] to exclude resolved.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "files": {
+     "description": "An optional list of component keys (files, directories, modules) to filter issues",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "impactSoftwareQualities": {
+     "description": "An optional list of software qualities to filter by",
+     "items": {
+      "enum": [
+       "MAINTAINABILITY",
+       "RELIABILITY",
+       "SECURITY"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "inNewCodePeriod": {
+     "description": "Only return issues in the new code period. Requires exactly one entry across projectKeys and files",
+     "type": "boolean"
+    },
+    "issueKey": {
+     "description": "An optional list of issue keys to fetch specific issues",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "issueStatuses": {
+     "description": "An optional list of issue statuses to filter by. Note: IN_SANDBOX is valid only for SonarQube Server",
+     "items": {
+      "enum": [
+       "OPEN",
+       "CONFIRMED",
+       "FALSE_POSITIVE",
+       "ACCEPTED",
+       "FIXED",
+       "IN_SANDBOX"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "pageIndex": {
+     "description": "An optional 1-based page index. Defaults to 1.",
+     "type": "number"
+    },
+    "pageSize": {
+     "description": "An optional page size. Must be greater than 0 and less than or equal to 500. Defaults to 100.",
+     "type": "number"
+    },
+    "projectKeys": {
+     "description": "An optional list of SonarQube project keys to look in",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    },
+    "severities": {
+     "description": "An optional list of severities to filter by",
+     "items": {
+      "enum": [
+       "INFO",
+       "LOW",
+       "MEDIUM",
+       "HIGH",
+       "BLOCKER"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "tags": {
+     "description": "An optional list of issue tags to filter by. Tags are lowercase, e.g. ['security','convention']",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "required": [],
+   "type": "object"
+  },
+  "name": "search_sonar_issues_in_projects"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Search for Security Hotspots in a project.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "files": {
+     "description": "An optional list of file paths to filter Security Hotspots",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "hotspotKeys": {
+     "description": "Comma-separated list of specific Security Hotspot keys to retrieve. Required unless projectKey is provided.",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "onlyMine": {
+     "description": "If true, only Security Hotspots assigned to the current user are returned",
+     "type": "boolean"
+    },
+    "pageIndex": {
+     "description": "An optional 1-based page index. Defaults to 1.",
+     "type": "number"
+    },
+    "pageSize": {
+     "description": "An optional page size. Must be greater than 0 and less than or equal to 500. Defaults to 100.",
+     "type": "number"
+    },
+    "projectKey": {
+     "description": "The key of the project or application to search in. Required unless hotspotKeys is provided.",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    },
+    "resolution": {
+     "description": "Filter by resolution (when status is REVIEWED)",
+     "enum": [
+      "FIXED",
+      "SAFE",
+      "ACKNOWLEDGED"
+     ],
+     "type": "string"
+    },
+    "sinceLeakPeriod": {
+     "description": "If true, only Security Hotspots created since the leak period (new code period) are returned",
+     "type": "boolean"
+    },
+    "status": {
+     "description": "Filter by review status",
+     "enum": [
+      "TO_REVIEW",
+      "REVIEWED"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [],
+   "type": "object"
+  },
+  "name": "search_security_hotspots"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Get detailed information about a specific Security Hotspot, including rule details, code context, flows, and comments.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "hotspotKey": {
+     "description": "The key of the Security Hotspot to retrieve",
+     "type": "string"
+    }
+   },
+   "required": [
+    "hotspotKey"
+   ],
+   "type": "object"
+  },
+  "name": "show_security_hotspot"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": false
+  },
+  "description": "Change the status of a Security Hotspot to review it. When marking as REVIEWED, you must specify a resolution.\n- TO_REVIEW: Mark the Security Hotspot as needing review\n- REVIEWED: Mark the Security Hotspot as reviewed with one of these resolutions:\n  * FIXED: A fix has been implemented\n  * SAFE: Reviewed and determined to be safe\n  * ACKNOWLEDGED: Acknowledged as a risk but accepted\nYou can optionally add a comment to explain your review decision.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "comment": {
+     "description": "An optional comment explaining the review decision",
+     "type": "string"
+    },
+    "hotspotKey": {
+     "description": "The key of the Security Hotspot to update",
+     "type": "string"
+    },
+    "resolution": {
+     "description": "The resolution when status is REVIEWED. Required if status is REVIEWED",
+     "enum": [
+      "FIXED",
+      "SAFE",
+      "ACKNOWLEDGED"
+     ],
+     "type": "string"
+    },
+    "status": {
+     "description": "The new status of the Security Hotspot",
+     "enum": [
+      "TO_REVIEW",
+      "REVIEWED"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "hotspotKey",
+    "status"
+   ],
+   "type": "object"
+  },
+  "name": "change_security_hotspot_status"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Get the Quality Gate Status for a project. Either 'analysisId', 'projectId' or 'projectKey' must be provided.\n",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "analysisId": {
+     "description": "The optional analysis ID to get the status for, for example 'AU-TpxcA-iU5OvuD2FL1'",
+     "type": "string"
+    },
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "projectId": {
+     "description": "The optional project ID to get the status for, for example 'AU-Tpxb--iU5OvuD2FLy'. Doesn't work with branches or pull requests.\n",
+     "type": "string"
+    },
+    "projectKey": {
+     "description": "The optional project key to get the status for, for example 'my_project'",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    }
+   },
+   "required": [],
+   "type": "object"
+  },
+  "name": "get_project_quality_gate_status"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Shows detailed information about a SonarQube rule.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "key": {
+     "description": "The rule key (e.g. javascript:EmptyBlock)",
+     "type": "string"
+    }
+   },
+   "required": [
+    "key"
+   ],
+   "type": "object"
+  },
+  "name": "show_rule"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "List all quality gates.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {},
+   "required": [],
+   "type": "object"
+  },
+  "name": "list_quality_gates"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Get SonarQube measures for a project, such as ncloc, complexity, violations, coverage, etc.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "metricKeys": {
+     "description": "The metric keys to retrieve (e.g. ncloc, complexity, violations, coverage)",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "projectKey": {
+     "description": "The SonarQube project key (e.g. my_project). Use search_my_sonarqube_projects when the key is unknown.",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "projectKey"
+   ],
+   "type": "object"
+  },
+  "name": "get_component_measures"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Search for files in a project sorted by coverage (ascending - worst coverage first). This tool helps identify files that need test coverage improvements.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "maxCoverage": {
+     "description": "Only return files with coverage below this threshold (0-100)",
+     "type": "number"
+    },
+    "pageIndex": {
+     "description": "Page index (1-based, default: 1)",
+     "type": "number"
+    },
+    "pageSize": {
+     "description": "Page size (default: 100, max: 500)",
+     "type": "number"
+    },
+    "projectKey": {
+     "description": "The SonarQube project key (e.g. my_project). Use search_my_sonarqube_projects when the key is unknown.",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "projectKey"
+   ],
+   "type": "object"
+  },
+  "name": "search_files_by_coverage"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Get complete line-by-line coverage information for a file, including which exact lines are uncovered and which have partially covered branches. This tool helps identify precisely where to add test coverage. Use after identifying files with low coverage via search_files_by_coverage.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "key": {
+     "description": "File key (e.g. my_project:src/foo/Bar.java)",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "key"
+   ],
+   "type": "object"
+  },
+  "name": "get_file_coverage_details"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Search for available metrics",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "pageIndex": {
+     "description": "1-based page index (default: 1)",
+     "type": "number"
+    },
+    "pageSize": {
+     "description": "Page size. Must be greater than 0 and less than or equal to 500 (default: 100)",
+     "type": "number"
+    }
+   },
+   "required": [],
+   "type": "object"
+  },
+  "name": "search_metrics"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Get duplications for a file. Requires Browse permission on file's project",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "key": {
+     "description": "File key (e.g. my_project:src/foo/Bar.php)",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "key"
+   ],
+   "type": "object"
+  },
+  "name": "get_duplications"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Search for files with code duplications in a project. By default, automatically fetches all duplicated files across all pages (up to 10,000 files max).",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branch": {
+     "description": "Branch name for branch-based analysis. Discover names with list_branches. For pull request analysis, use pullRequest instead.",
+     "type": "string"
+    },
+    "pageIndex": {
+     "description": "Optional: Page number for manual pagination (starts at 1). If not specified, auto-fetches all duplicated files.",
+     "type": "number"
+    },
+    "pageSize": {
+     "description": "Optional: Number of results per page for manual pagination (max: 500). If not specified, auto-fetches all duplicated files.",
+     "type": "number"
+    },
+    "projectKey": {
+     "description": "The SonarQube project key (e.g. my_project). Use search_my_sonarqube_projects when the key is unknown.",
+     "type": "string"
+    },
+    "pullRequest": {
+     "description": "Pull request key/ID in SonarQube for PR-decorated analysis. Use list_pull_requests to discover valid keys. For branch-based analysis (long-lived or short-lived without PR), use branch instead. Must be the SonarQube PR key, not a git branch name.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "projectKey"
+   ],
+   "type": "object"
+  },
+  "name": "search_duplicated_files"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "List all pull requests for a project. Use this tool to discover pull requests for PR-decorated analysis (coverage, issues, quality gate on new code). Returns the pull request key/ID and source branch for each PR, which can be used with other tools that accept a pullRequest parameter. For branch-based analysis without pull requests, use list_branches instead.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "projectKey": {
+     "description": "The SonarQube project key (e.g. my_project). Use search_my_sonarqube_projects when the key is unknown.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "projectKey"
+   ],
+   "type": "object"
+  },
+  "name": "list_pull_requests"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "List analyzed branches for a SonarQube Server project. Use returned branch names as the branch parameter on other tools (e.g. get_project_quality_gate_status, get_component_measures). For pull request analysis, use list_pull_requests instead.",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "projectKey": {
+     "description": "The SonarQube project key (e.g. my_project). Use search_my_sonarqube_projects when the key is unknown.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "projectKey"
+   ],
+   "type": "object"
+  },
+  "name": "list_branches"
+ },
+ {
+  "annotations": {
+   "destructiveHint": false,
+   "idempotentHint": false,
+   "openWorldHint": true,
+   "readOnlyHint": true
+  },
+  "description": "Analyze a file or code snippet to identify code quality and security issues. Optionally provide a code snippet to filter issues \u2014 only issues within the snippet will be reported (snippet location is auto-detected). Always specify the language and the file scope (MAIN or TEST) for more accurate results. This tool is deprecated and will be removed in a future release. For richer, cross-file analysis, connect SonarQube for IDE (enables analyze_file_list) or enable Vortex analysis (run_advanced_code_analysis).",
+  "inputSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "codeSnippet": {
+     "description": "Code snippet to filter issues - must match content within the analyzed file",
+     "type": "string"
+    },
+    "fileContent": {
+     "description": "Complete file content to analyze.",
+     "type": "string"
+    },
+    "language": {
+     "description": "Language of the code (e.g., 'java', 'python', 'ts', 'tsx', 'js', 'jsx')",
+     "enum": [
+      "ansible",
+      "ascx",
+      "aspx",
+      "azureresourcemanager",
+      "bicep",
+      "cloudformation",
+      "cshtml",
+      "css",
+      "docker",
+      "erb",
+      "go",
+      "html",
+      "inc",
+      "ipynb",
+      "ipython",
+      "jav",
+      "java",
+      "js",
+      "jsp",
+      "jspf",
+      "jspx",
+      "jsx",
+      "kotlin",
+      "kt",
+      "kts",
+      "kubernetes",
+      "less",
+      "php",
+      "php3",
+      "php4",
+      "php5",
+      "phtml",
+      "py",
+      "python",
+      "rb",
+      "rhtml",
+      "ruby",
+      "scss",
+      "secrets",
+      "shtm",
+      "shtml",
+      "terraform",
+      "tf",
+      "ts",
+      "tsx",
+      "vbhtml",
+      "vue",
+      "xhtml",
+      "xml",
+      "xsd",
+      "xsl"
+     ],
+     "type": "string"
+    },
+    "projectKey": {
+     "description": "Optional SonarQube project key (e.g. my_project). Uses organization default quality profiles when omitted. Use search_my_sonarqube_projects when the key is unknown.",
+     "type": "string"
+    },
+    "scope": {
+     "description": "Scope of the file: MAIN or TEST (default: MAIN)",
+     "enum": [
+      "MAIN",
+      "TEST"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "fileContent"
+   ],
+   "type": "object"
+  },
+  "name": "analyze_code_snippet"
+ }
+]

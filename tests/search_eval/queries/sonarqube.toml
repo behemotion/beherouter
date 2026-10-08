@@ -1,0 +1,116 @@
+# Agent-style queries against sonarqube-mcp 1.27.0.4335 (catalogue
+# sonarqube-1.27.0.4335.json, 18 tools). `expect` is the tool a competent human
+# would pick after reading the catalogue. Fix an expectation only if the
+# catalogue proves it wrong -- never to make a gate pass.
+
+[[query]]
+q = "list my projects"
+expect = "search_my_sonarqube_projects"
+[[query]]
+q = "find the project key"
+expect = "search_my_sonarqube_projects"
+[[query]]
+q = "show bugs in a project"
+expect = "search_sonar_issues_in_projects"
+[[query]]
+q = "vulnerabilities"
+expect = "search_sonar_issues_in_projects"
+[[query]]
+q = "code smells"
+expect = "search_sonar_issues_in_projects"
+[[query]]
+q = "critical issues"
+expect = "search_sonar_issues_in_projects"
+[[query]]
+q = "lint findings"
+expect = "search_sonar_issues_in_projects"
+[[query]]
+q = "did the quality gate pass"
+expect = "get_project_quality_gate_status"
+[[query]]
+q = "is the build passing sonar"
+expect = "get_project_quality_gate_status"
+[[query]]
+q = "qualiti gate status"
+expect = "get_project_quality_gate_status"
+[[query]]
+q = "which quality gates exist"
+expect = "list_quality_gates"
+[[query]]
+q = "explain a rule"
+expect = "show_rule"
+[[query]]
+q = "what does rule java:S1481 mean"
+expect = "show_rule"
+[[query]]
+q = "lines of code"
+expect = "get_component_measures"
+[[query]]
+q = "cyclomatic complexity"
+expect = "get_component_measures"
+[[query]]
+q = "technical debt"
+expect = "get_component_measures"
+[[query]]
+q = "project metrics"
+expect = "get_component_measures"
+[[query]]
+q = "files with the lowest test coverage"
+expect = "search_files_by_coverage"
+[[query]]
+q = "untested code"
+expect = "search_files_by_coverage"
+[[query]]
+q = "uncovered lines in a file"
+expect = "get_file_coverage_details"
+[[query]]
+q = "available metric keys"
+expect = "search_metrics"
+[[query]]
+q = "duplicated code in a file"
+expect = "get_duplications"
+[[query]]
+q = "copy paste detection"
+expect = "search_duplicated_files"
+[[query]]
+q = "which files have duplicates"
+expect = "search_duplicated_files"
+[[query]]
+q = "security hotspots"
+expect = "search_security_hotspots"
+[[query]]
+q = "hotspot details"
+expect = "show_security_hotspot"
+[[query]]
+q = "mark a hotspot as safe"
+expect = "change_security_hotspot_status"
+[[query]]
+q = "mark issue as false positive"
+expect = "change_sonar_issue_status"
+[[query]]
+q = "won't fix"
+expect = "change_sonar_issue_status"
+[[query]]
+q = "pull requests"
+expect = "list_pull_requests"
+[[query]]
+q = "branches"
+expect = "list_branches"
+[[query]]
+q = "analyze this code snippet"
+expect = "analyze_code_snippet"
+[[query]]
+q = "static analysis of a file"
+expect = "analyze_code_snippet"
+
+# Negatives: nothing on this surface does these. At most one weak hit allowed.
+[[negative]]
+q = "send an email"
+[[negative]]
+q = "weather forecast"
+[[negative]]
+q = "convert pdf to docx"
+[[negative]]
+q = "book a meeting"
+[[negative]]
+q = "deploy a kubernetes cluster"

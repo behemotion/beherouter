@@ -254,3 +254,35 @@ async def test_aliases_survive_a_refresh():
     clock.advance(2.0)
     await cat.ensure_fresh()
     assert cat.index.search("sprint") == ["cycle"]
+
+
+async def test_by_name_is_built_once_per_catalogue_generation():
+    """Audit §3.1: describe_tool and run_tool each rebuilt the whole dict to do
+    one lookup. Cached beside the index, and dropped at the same point."""
+    import pytest
+
+    async def relist():
+        return [_d("a"), _d("b")]
+
+    clock = _Clock()
+    cat = Catalogue([_d("a")], relist=relist, ttl_ms=1000, clock=clock)
+    first = cat.by_name
+    assert cat.by_name is first
+    with pytest.raises(TypeError):
+        first["x"] = _d("x")  # shared, so read-only
+    clock.advance(2.0)
+    await cat.ensure_fresh()
+    assert cat.by_name is not first
+    assert set(cat.by_name) == {"a", "b"}
+
+
+async def test_a_failed_relist_keeps_the_cached_lookup():
+    async def relist():
+        raise RuntimeError("down")
+
+    clock = _Clock()
+    cat = Catalogue([_d("a")], relist=relist, ttl_ms=1000, clock=clock)
+    first = cat.by_name
+    clock.advance(2.0)
+    await cat.ensure_fresh()
+    assert cat.by_name is first

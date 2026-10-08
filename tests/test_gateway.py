@@ -142,6 +142,26 @@ def test_serve_accepts_an_empty_registry(tmp_path, monkeypatch):
     assert served["port"] == 47100
 
 
+def test_serve_takes_over_logging_before_uvicorn(tmp_path, monkeypatch):
+    """serve() installs the gateway's own log setup and stops uvicorn from
+    installing its own (log_config=None), or its formats come back."""
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    import uvicorn
+
+    from beherouter import logsetup
+    from beherouter.gateway import serve
+
+    calls: list = []
+    monkeypatch.setattr(logsetup, "configure", lambda: calls.append("configure"))
+    monkeypatch.setattr(
+        uvicorn, "run", lambda app, **kw: calls.append(("run", kw.get("log_config", "unset")))
+    )
+
+    serve(_empty_registry_file(tmp_path), host="127.0.0.1", port=47100)
+
+    assert calls == ["configure", ("run", None)]
+
+
 def test_serve_still_refuses_an_empty_registry_without_a_token(tmp_path, monkeypatch):
     """Empty is permitted; unauthenticated is not. Two different failures, and
     relaxing the first must not relax the second."""

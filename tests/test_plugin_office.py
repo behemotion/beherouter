@@ -63,4 +63,4 @@ def test_office_declares_header_identity_support():
 
     support = get("office-mcp").spec.identity
     assert support.target == "header"
-    assert set(support.modes) == {"bearer", "claims", "client"}
+    assert set(support.modes) == {"bearer", "claims", "client", "exchange"}

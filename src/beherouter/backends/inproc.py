@@ -29,6 +29,8 @@ the spec's § Measured 2026-09-26):
 import asyncio
 import contextvars
 import logging
+import re
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -44,6 +46,7 @@ from fastmcp.tools import Tool
 from fastmcp.tools.function_tool import FunctionTool
 
 from ..errors import Unavailable, UsageError
+from ..identity import settle
 from ..models import Backend, ToolDescriptor
 from .backing import McpBacking
 from .mcp import _payload, backend_from_client
@@ -57,8 +60,16 @@ CURRENT_IDENTITY_HEADERS: contextvars.ContextVar[Mapping[str, str]] = contextvar
 )
 
 # Set on an httpx client by `identity_client`, and carried onto the server by
-# `mark_identity_aware` (which `openapi_server` calls). `load_inproc_backend` reads it off the server.
+# `mark_identity_aware` (which `openapi_server` calls). `load_inproc_backend`
+# reads it off the server.
 IDENTITY_MARKER = "_beherouter_identity_aware"
+
+# The httpx clients a server OWNS: set by `openapi_server`, which takes the
+# client into the server it builds, and released by `InprocExecutor.aclose`.
+# A list attribute rather than a FastMCP lifespan, because the server's
+# lifespan runs once per LISTING (`_list` opens a Client over it) — closing
+# the client there would kill it after attach and again after every relist.
+OWNED_CLIENTS = "_beherouter_owned_clients"
 
 
 def identity_client(**httpx_kwargs) -> httpx.AsyncClient:
@@ -109,6 +120,51 @@ def _server(backing: McpBacking) -> FastMCP:
     return backing.server
 
 
+# Strings that ARE a number, and nothing else: no whitespace, sign only '-',
+# no exponent, no '7.0' for an integer. Narrower than pydantic's lax mode on
+# purpose — coercion here may only ever accept what a model obviously meant.
+_INT = re.compile(r"-?[0-9]+")
+_NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+
+
+def _types(prop) -> set[str]:
+    if not isinstance(prop, dict):
+        return set()
+    t = prop.get("type")
+    out = {t} if isinstance(t, str) else set(t) if isinstance(t, list) else set()
+    for alt in (prop.get("anyOf") or []) + (prop.get("oneOf") or []):
+        out |= _types(alt)
+    return out
+
+
+def _coerced(args: dict, schema: dict) -> dict:
+    """`args` with numeric strings turned into numbers where the schema wants one.
+
+    Function tools get this from pydantic (`"7"` for an `int` works on both
+    paths); a non-function tool — an OpenAPI path parameter, typically — was
+    refused by the strict `jsonschema` check instead, so the same call worked
+    on one source and not the other. Top-level properties only (that is where
+    path and query parameters live), never when the property also admits a
+    string (then "7" is a valid string and must stay one), and the result is
+    still validated afterwards, so `maximum` and friends keep refusing.
+    """
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict):
+        return args
+    out = dict(args)
+    for key, value in args.items():
+        if not isinstance(value, str):
+            continue
+        types = _types(props.get(key))
+        if "string" in types:
+            continue
+        if "integer" in types and _INT.fullmatch(value):
+            out[key] = int(value)
+        elif "number" in types and _NUMBER.fullmatch(value):
+            out[key] = int(value) if _INT.fullmatch(value) else float(value)
+    return out
+
+
 class InprocExecutor:
     def __init__(self, backing: McpBacking) -> None:
         self._backing = backing
@@ -120,6 +176,7 @@ class InprocExecutor:
     async def run(self, verb: str, args: dict, *, identity=None) -> dict:
         if self._backing.guard is not None:
             self._backing.guard(verb, args)
+        identity = await settle(identity)  # a pending token exchange, if any
         headers = dict(identity.headers) if identity is not None and identity.headers else {}
 
         async def _call():
@@ -127,13 +184,15 @@ class InprocExecutor:
             tool = await self._server.get_tool(verb)
             if tool is None:
                 raise UsageError(f"backend has no tool '{verb}'")
+            call_args = args
             if not isinstance(tool, FunctionTool):
+                call_args = _coerced(args, tool.parameters)
                 try:
-                    jsonschema.validate(args, tool.parameters)
+                    jsonschema.validate(call_args, tool.parameters)
                 except jsonschema.ValidationError as e:
                     where = e.json_path if e.path else "arguments"
                     raise UsageError(f"backend rejected '{verb}': {where}: {e.message}") from e
-            return await self._server.call_tool(verb, args)
+            return await self._server.call_tool(verb, call_args)
 
         try:
             # A blank context: no inbound request, no auth token, only `headers`.
@@ -147,6 +206,19 @@ class InprocExecutor:
         except Exception as e:
             raise Unavailable(f"backend call '{verb}' failed: {e}") from e
         return {"result": _unwrapped(res)}
+
+    async def aclose(self) -> None:
+        """Release the httpx clients this backend's server owns. Idempotent.
+
+        The client lives exactly as long as the backend: an attached surface
+        keeps its server (and so its pool) for the process lifetime, and
+        whoever drops a backend — a one-shot CLI command, a shutdown hook —
+        calls this. A build that FAILS closes its own client (see
+        `plugins/openapi.build`), which is what stops the degraded-surface
+        retry loop leaking one pool per attempt.
+        """
+        for client in getattr(self._server, OWNED_CLIENTS, ()):
+            await client.aclose()
 
 
 def _unwrapped(res):
@@ -262,11 +334,14 @@ async def openapi_server(
             f"OpenAPI include does not match what was published: "
             f"missing {missing}, unexpected {extra}"
         )
-    open_ = sorted(n for n, t in tools.items() if t.parameters.get("additionalProperties") is not False)
+    open_ = sorted(
+        n for n, t in tools.items() if t.parameters.get("additionalProperties") is not False
+    )
     if open_:
         raise UsageError(f"OpenAPI tool schema(s) not closed: {open_}")
     if getattr(client, IDENTITY_MARKER, False):
         mark_identity_aware(server, client)
+    setattr(server, OWNED_CLIENTS, (*getattr(server, OWNED_CLIENTS, ()), client))
     return server
 
 
@@ -287,7 +362,7 @@ def python_dir_server(path: str | Path, *, name: str) -> FastMCP:
     root = Path(path)
     if not root.is_dir():
         raise UsageError(f"'{name}': python-dir path '{root}' is not a directory")
-    result = discover_and_import(root)
+    result = _import_isolated(root)
     if result.failed_files:
         failures = "; ".join(f"{p}: {err}" for p, err in sorted(result.failed_files.items()))
         raise UsageError(f"'{name}': python-dir could not import {failures}")
@@ -319,3 +394,40 @@ def python_dir_server(path: str | Path, *, name: str) -> FastMCP:
             f"functions with @tool (from fastmcp.tools import tool)"
         )
     return server
+
+
+def _under(module, root: Path) -> bool:
+    """Whether `module` was loaded from a file (or, for a package, a directory)
+    inside `root`."""
+    places = [getattr(module, "__file__", None), *(getattr(module, "__path__", None) or ())]
+    return any(place and Path(place).resolve().is_relative_to(root) for place in places)
+
+
+def _import_isolated(root: Path):
+    """`discover_and_import(root)`, leaving none of root's modules in sys.modules.
+
+    FastMCP imports a plain file under its bare stem (`helpers`) so that a
+    sibling's `import helpers` resolves, and KEEPS it there. A second python-dir
+    surface shipping its own `helpers.py` was then imported under a private
+    name, while its siblings' `import helpers` found the FIRST surface's module
+    in sys.modules — two surfaces silently sharing code. Same for a package
+    name two directories both use.
+
+    So the directory's modules are visible under their bare names only for the
+    duration of its own import (sync, on the event loop: no other attach can
+    interleave), then evicted. Each surface's functions keep their modules
+    through their globals; a re-import (an attach retry) starts fresh, so
+    fixing a file on disk heals the surface.
+
+    ⚠️ The price: a sibling import INSIDE a function body (`def f(): import
+    helpers`) runs at call time, after the eviction, and fails with
+    ModuleNotFoundError. Import siblings at module top level.
+    """
+    root = root.resolve()
+    before = set(sys.modules)
+    try:
+        return discover_and_import(root)
+    finally:
+        for key in set(sys.modules) - before:
+            if _under(sys.modules[key], root):
+                del sys.modules[key]

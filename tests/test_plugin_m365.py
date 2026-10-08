@@ -103,7 +103,7 @@ def test_plugin_config_emits_all_three_fragments():
     assert 'plugin = "m365"' in out["registry"]
     assert "${BEHEROUTER_M365_REFRESH_TOKEN}" in out["registry"]
     assert "^/m365/mcp/?$" in out["caddy"]
-    assert "BEHEROUTER_M365_REFRESH_TOKEN={{ vault_beherouter_m365_refresh_token }}" in out["env"]
+    assert "BEHEROUTER_M365_REFRESH_TOKEN=" in out["env"]
 
 
 # --- cross-plugin invariants -------------------------------------------------

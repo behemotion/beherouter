@@ -1,0 +1,186 @@
+[
+ {
+  "annotations": null,
+  "description": "Book a new event and invite attendees.",
+  "inputSchema": {
+   "properties": {
+    "attendees": {
+     "description": "Attendee email addresses. The provider sends the invitations.",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "calendar_id": {
+     "description": "Calendar id from list_calendars. Omit to use the account's default calendar.",
+     "type": "string"
+    },
+    "description": {
+     "description": "Body text / agenda.",
+     "type": "string"
+    },
+    "end": {
+     "description": "Event end. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    },
+    "location": {
+     "description": "Free-text location.",
+     "type": "string"
+    },
+    "start": {
+     "description": "Event start. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    },
+    "summary": {
+     "description": "Event title.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "summary",
+    "start",
+    "end"
+   ],
+   "type": "object"
+  },
+  "name": "create_event"
+ },
+ {
+  "annotations": null,
+  "description": "Cancel an event. Whether attendees are notified is provider-dependent: Google notifies them, Microsoft does not.",
+  "inputSchema": {
+   "properties": {
+    "calendar_id": {
+     "description": "Calendar id from list_calendars. Omit to use the account's default calendar.",
+     "type": "string"
+    },
+    "event_id": {
+     "description": "Event id from list_events.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "event_id"
+   ],
+   "type": "object"
+  },
+  "name": "delete_event"
+ },
+ {
+  "annotations": null,
+  "description": "Return the BUSY intervals in a window. Use this before create_event to find a slot that is actually free instead of guessing.",
+  "inputSchema": {
+   "properties": {
+    "calendar_ids": {
+     "description": "Calendars to check. Omit for the default calendar.",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "end": {
+     "description": "Window end. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    },
+    "start": {
+     "description": "Window start. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "start",
+    "end"
+   ],
+   "type": "object"
+  },
+  "name": "get_freebusy"
+ },
+ {
+  "annotations": null,
+  "description": "List the calendars this account can see, with their ids.",
+  "inputSchema": {
+   "properties": {},
+   "required": [],
+   "type": "object"
+  },
+  "name": "list_calendars"
+ },
+ {
+  "annotations": null,
+  "description": "List events between two instants. Recurring series are expanded into individual occurrences.",
+  "inputSchema": {
+   "properties": {
+    "calendar_id": {
+     "description": "Calendar id from list_calendars. Omit to use the account's default calendar.",
+     "type": "string"
+    },
+    "end": {
+     "description": "Window end. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    },
+    "max_results": {
+     "description": "Cap on events returned.",
+     "type": "integer"
+    },
+    "start": {
+     "description": "Window start. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "start",
+    "end"
+   ],
+   "type": "object"
+  },
+  "name": "list_events"
+ },
+ {
+  "annotations": null,
+  "description": "Change an existing event. Only the fields you pass are modified; everything else is left as it is.",
+  "inputSchema": {
+   "properties": {
+    "attendees": {
+     "description": "Attendee email addresses. The provider sends the invitations.",
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "calendar_id": {
+     "description": "Calendar id from list_calendars. Omit to use the account's default calendar.",
+     "type": "string"
+    },
+    "description": {
+     "description": "New body text.",
+     "type": "string"
+    },
+    "end": {
+     "description": "New end. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    },
+    "event_id": {
+     "description": "Event id from list_events.",
+     "type": "string"
+    },
+    "location": {
+     "description": "New location.",
+     "type": "string"
+    },
+    "start": {
+     "description": "New start. RFC 3339 timestamp WITH an explicit UTC offset, e.g. 2026-09-15T14:00:00+06:00 or 2026-09-15T08:00:00Z. A timestamp without an offset is rejected.",
+     "type": "string"
+    },
+    "summary": {
+     "description": "New title.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "event_id"
+   ],
+   "type": "object"
+  },
+  "name": "update_event"
+ }
+]

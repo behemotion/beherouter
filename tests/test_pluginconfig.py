@@ -17,7 +17,7 @@ def test_caddy_clause_is_anchored_to_the_surface_path():
 
 def test_plane_emits_one_env_line_per_credential():
     out = render("plane", "plane")
-    assert "BEHEROUTER_PLANE_API_KEY={{ vault_beherouter_plane_api_key }}" in out["env"]
+    assert "BEHEROUTER_PLANE_API_KEY=" in out["env"]
 
 
 def test_registry_fragment_references_the_placeholder_not_the_value():
@@ -74,3 +74,21 @@ def test_no_plugin_credential_derives_the_gateway_bearer_name():
         if token_var("s", v.name) == client_token_var("s")
     }
     assert clashing == set()
+
+
+def test_env_fragment_is_plain_for_any_secret_store():
+    """No templating syntax: the deployment may be a .env file, a Kubernetes
+    Secret or a vault render. The value is EMPTY, so a forgotten fill refuses
+    boot by name instead of booting into 401s."""
+    from beherouter.plugins import PLUGINS
+
+    for name, plugin in PLUGINS.items():
+        if not plugin.spec.env:
+            continue
+        lines = render("s", name)["env"].splitlines()[1:]
+        assert lines, name
+        for line in lines:
+            assert "{{" not in line and "}}" not in line, (name, line)
+            var = line.lstrip("# ").split("=", 1)
+            assert var[0].startswith("BEHEROUTER_S_"), (name, line)
+            assert var[1].strip() in ("", "(optional)"), (name, line)

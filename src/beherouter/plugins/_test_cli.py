@@ -1,9 +1,8 @@
-"""Any beheaxi CLI as a surface — the `cli` backing's only plugin-level caller.
+"""Any beheaxi CLI as a surface, for tests — `beheaxi-cli` without its rules.
 
-Nothing live uses the `cli` backing, and the design says it ships with no
-production plugin. But `CLIExecutor` and `load_cli_backend` are written and
-tested, and without ONE caller that reaches them the way the gateway does, the
-whole cli load path becomes unreachable from a registry entry and rots.
+The production plugin is `beheaxi-cli`, which requires `probe`. This fixture
+does not, so tests can reach the cli load path the way the gateway does without
+restating a probe in every entry.
 
 ⚠️ REGISTERED ONLY WHEN BEHEROUTER_TEST_PLUGINS=1. `beherouter plugins` is a
 pinned, agent-facing verb, and advertising a test fixture there would spend

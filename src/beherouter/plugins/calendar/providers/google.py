@@ -10,64 +10,29 @@ breakage surfaces somewhere else entirely. See docs/CALENDAR-BOOTSTRAP.md.
 different redirect model and will not complete the loopback bootstrap flow.
 """
 
-from urllib.parse import quote
-
-import httpx
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import ClassVar
 
 from ....errors import Unavailable, UsageError
-from ..oauth import RefreshTokenAuth
 from ..times import require_offset_datetime, require_window
-from . import raise_for_status
+from . import HttpCalendarProvider
 
 BASE = "https://www.googleapis.com/calendar/v3"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 DEFAULT_CALENDAR = "primary"
 # The broad scope, not calendar.events. Upstream does not document which scope
 # freeBusy needs, and a 403 there would look exactly like a revoked token.
 SCOPE = "https://www.googleapis.com/auth/calendar"
 
 
-class GoogleCalendar:
-    def __init__(
-        self,
-        *,
-        auth: RefreshTokenAuth,
-        calendar_id: str = DEFAULT_CALENDAR,
-        client: httpx.AsyncClient | None = None,
-    ) -> None:
-        self._auth = auth
-        self._default_calendar = calendar_id
-        self._client = client or httpx.AsyncClient(timeout=30.0)
-
-    # --- plumbing ---------------------------------------------------------
-
-    async def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {await self._auth.access_token()}"}
-
-    async def _request(self, method: str, path: str, *, context: str, **kw) -> dict:
-        try:
-            resp = await self._client.request(
-                method, f"{BASE}{path}", headers=await self._headers(), **kw
-            )
-        except httpx.HTTPError as e:
-            raise Unavailable(f"{context}: {type(e).__name__}") from e
-        raise_for_status(resp, context)
-        if resp.status_code == 204 or not resp.content:
-            return {}
-        return resp.json()
-
-    @staticmethod
-    def _segment(value: str) -> str:
-        """Percent-encode a user-supplied URL path segment.
-
-        ⚠️ Google's secondary calendar ids genuinely contain '#' and '@'
-        (en.usa#holiday@group.v.calendar.google.com), and list_calendars hands
-        exactly those ids to the agent. Unquoted, the '#' truncates the path at
-        the fragment; a '../' segment is worse still — the grant here is the
-        broad calendar scope, so a traversal reaches the whole Calendar API and
-        dissolves the six-verb list that IS this surface's boundary.
-        """
-        return quote(value, safe="")
+class GoogleCalendar(HttpCalendarProvider):
+    BASE = BASE
+    DEFAULT_CALENDAR = DEFAULT_CALENDAR
+    # Never None here: DEFAULT_CALENDAR is "primary", so `calendar_id or` it is set.
+    _default_calendar: str
 
     def _calendar(self, calendar_id: str | None) -> str:
         return self._segment(calendar_id or self._default_calendar)
@@ -150,21 +115,21 @@ class GoogleCalendar:
             if errors:
                 reasons = ", ".join(e.get("reason", "?") for e in errors)
                 raise Unavailable(f"get_freebusy: calendar '{cal_id}' failed: {reasons}")
-            for interval in node.get("busy") or []:
-                busy.append(
-                    {
-                        "calendar_id": cal_id,
-                        "start": interval.get("start", ""),
-                        "end": interval.get("end", ""),
-                    }
-                )
+            busy.extend(
+                {
+                    "calendar_id": cal_id,
+                    "start": interval.get("start", ""),
+                    "end": interval.get("end", ""),
+                }
+                for interval in node.get("busy") or []
+            )
         return {"busy": busy}
 
     # --- writes -----------------------------------------------------------
 
     # Google records attendees but notifies nobody unless asked. An invitation
     # nobody receives is the most confusing possible outcome of "book a meeting".
-    _SEND_UPDATES = {"sendUpdates": "all"}  # noqa: RUF012
+    _SEND_UPDATES: ClassVar[Mapping[str, str]] = MappingProxyType({"sendUpdates": "all"})
 
     async def create_event(
         self,

@@ -11,19 +11,53 @@ import logging
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import NotFoundError, ValidationError
 from fastmcp.server.middleware import Middleware
+from pydantic import ValidationError as PydanticValidationError
 
 from .args import NO_DEFAULT, normalize_args, prepare_args
+from .audit import AuditSink, audit_claims
 from .catalogue import Catalogue
-from .errors import AuthError, AxiError, NotFound
+from .costing import META_TOOL_NAMES
+from .errors import AuthError, AxiError, NotFound, UsageError, tag
 from .indexing import search_hits
+from .metrics import UNKNOWN_TOOL
 from .models import Backend, ToolDescriptor
+from .pipeline import CallPipeline
 from .search import DEFAULT_LIMIT, suggest
 
 logger = logging.getLogger(__name__)
 
+# FastMCP 3.4.5 (server/server.py, `call_tool`) logs a schema-validation
+# failure as WARNING with pydantic's errors() -- `input` values included, i.e.
+# the caller's arguments. The surface records that call itself
+# (_RecordRefusedCall); this keeps the arguments out of FastMCP's line.
+_INVALID_ARGUMENTS_MSG = "Invalid arguments for tool %r: %s"
 
-def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, dispatch):
+
+class _RedactInvalidArguments(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            record.msg == _INVALID_ARGUMENTS_MSG
+            and isinstance(record.args, tuple)
+            and len(record.args) == 2
+        ):
+            record.args = (record.args[0], "<redacted>")
+        return True
+
+
+def _install_redaction() -> None:
+    # On the emitting logger, so it holds for every handler (a test's, a
+    # deployment's) whether or not logsetup.configure() ran. Idempotent.
+    fastmcp_server = logging.getLogger("fastmcp.server.server")
+    if not any(isinstance(f, _RedactInvalidArguments) for f in fastmcp_server.filters):
+        fastmcp_server.addFilter(_RedactInvalidArguments())
+
+
+_install_redaction()
+
+
+def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, runner):
     """Build a callable with a REAL signature derived from the descriptor.
 
     FastMCP 3.x rejects `**kwargs` functions as tools, because it derives each
@@ -35,8 +69,9 @@ def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, dispatch):
     normalized = normalize_args(descriptor.schema)
 
     async def _tool(**kwargs):
-        # One argument path for pinned tools and run_tool: see args.prepare_args.
-        return await dispatch(descriptor.verb, prepare_args(descriptor, kwargs))
+        # One argument path for pinned tools and run_tool: the runner calls
+        # args.prepare_args, so its errors are classified in the PREPARE phase.
+        return await runner(descriptor, kwargs)
 
     params, annotations = [], {}
     for _wire, param_name, py_type, required, default in normalized:
@@ -61,7 +96,7 @@ def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, dispatch):
             )
         )
 
-    _tool.__signature__ = inspect.Signature(params)
+    _tool.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
     _tool.__annotations__ = annotations
     _tool.__name__ = descriptor.name
     _tool.__doc__ = descriptor.summary
@@ -114,7 +149,7 @@ def wrapped_output_schema(d: ToolDescriptor) -> dict | None:
 
 
 def register_pinned(
-    mcp: FastMCP, d: ToolDescriptor, backend: Backend, dispatch=None
+    mcp: FastMCP, d: ToolDescriptor, backend: Backend, runner=None
 ) -> None:
     """Publish one descriptor as a flat tool on `mcp`.
 
@@ -123,12 +158,16 @@ def register_pinned(
     direct connection would cost" figure is measured against the shape
     beherouter actually serves rather than a reimplementation of it.
 
-    `dispatch` is the identity-aware call path built by `build_surface`. It
-    defaults to the backend's own executor so `costing.py`'s throwaway
-    all-pinned surface — which measures definitions and never calls anything —
-    keeps working unchanged.
+    `runner(d, kwargs)` is the call path built by `build_surface` (through its
+    `CallPipeline`). It defaults to the backend's own executor so `costing.py`'s
+    throwaway all-pinned surface — which measures definitions and never calls
+    anything — keeps working unchanged.
     """
-    runner = dispatch or (lambda verb, args: backend.executor.run(verb, args))
+
+    async def _direct(desc: ToolDescriptor, kwargs: dict):
+        return await backend.executor.run(desc.verb, prepare_args(desc, kwargs))
+
+    runner = runner or _direct
     mcp.tool(
         name=d.name,
         description=d.summary,
@@ -175,8 +214,61 @@ class _GateListing(Middleware):
         return await call_next(context)
 
 
+def _invalid_arguments(tool: str, exc: ValidationError) -> UsageError:
+    """Name each failing field and why -- never the value (pydantic's own
+    message and errors() both carry `input`)."""
+    cause = exc.__cause__
+    if isinstance(cause, PydanticValidationError):
+        problems = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc']) or '(arguments)'}: {err['msg']}"
+            for err in cause.errors(include_input=False, include_url=False)
+        )
+    else:
+        problems = "arguments do not match the tool's schema"
+    return UsageError(f"invalid arguments for tool '{tool}': {problems}")
+
+
+class _RecordRefusedCall(Middleware):
+    """Route the calls FastMCP refuses BEFORE a tool function runs through the
+    call pipeline, so they are audited, counted and carry `_meta` like any other.
+
+    Two such refusals exist in 3.4.5: an unpublished name (`NotFoundError`,
+    from the tool lookup) and arguments that fail the published schema
+    (`ValidationError`, from FunctionTool's argument validation). Neither can
+    come from inside a tool: every tool here returns its errors through
+    `CallPipeline.run` instead of raising, so a call is never recorded twice.
+    The label is the requested name only when it is a published tool name;
+    otherwise caller input would become a metric label.
+    """
+
+    def __init__(self, pipeline: CallPipeline, published: set[str], unknown_tool) -> None:
+        self.pipeline = pipeline
+        self.published = published
+        self.unknown_tool = unknown_tool
+
+    async def on_call_tool(self, context, call_next):
+        name = context.message.name
+        try:
+            return await call_next(context)
+        except ValidationError as e:
+            refusal: AxiError = tag(_invalid_arguments(name, e), "bad_arguments")
+        except NotFoundError:
+            refusal = self.unknown_tool(name)
+        label = name if name in self.published else UNKNOWN_TOOL
+
+        async def work(scope):
+            raise refusal
+
+        return await self.pipeline.run(label, work)
+
+
 def build_surface(
-    backend: Backend, auth: Any | None = None, policy: Any | None = None
+    backend: Backend,
+    auth: Any | None = None,
+    policy: Any | None = None,
+    *,
+    call_timeout_s: float | None = None,
+    audit: AuditSink | None = None,
 ) -> FastMCP:
     """Build the MCP surface for one attached backend.
 
@@ -190,46 +282,31 @@ def build_surface(
     what makes this change invisible to the four static-token consumers.
     """
     mcp = FastMCP(backend.name, auth=auth)
-    enabled = policy is not None and policy.enabled
-    if enabled and policy.hides_listing:
-        mcp.add_middleware(_GateListing(policy))
+    # None unless identity is configured AND enabled; one name, so the closures
+    # below narrow on it instead of re-deriving it from a bool.
+    active = policy if policy is not None and policy.enabled else None
+    if active is not None and active.hides_listing:
+        mcp.add_middleware(_GateListing(active))
 
-    async def dispatch(verb: str, args: dict) -> dict:
-        """The ONE call path. Identity is resolved here, per call, and nowhere
-        else: `policy.resolve()` reads FastMCP's request context, which exists
-        only here — not in `health.check_entry`, not in the CLI.
-        """
-        identity = policy.resolve() if enabled else None
-        if identity is not None:
-            # Names only. A value here would put a credential in the log.
-            logger.info(
-                "identity applied surface=%s verb=%s subject=%s mode=%s keys=%s",
-                backend.name,
-                verb,
-                identity.subject,
-                policy.mode,
-                sorted({**identity.headers, **identity.env, **identity.credentials}),
-            )
-        return await backend.executor.run(verb, args, identity=identity)
+    # Every published tool -- pinned and meta alike -- goes through this one
+    # pipeline. It gates WITHOUT materialising (`policy.guard()`, before any
+    # catalogue re-list, so a refused caller cannot drive one), resolves the
+    # caller's identity per call, and classifies/records the outcome. See
+    # pipeline.CallPipeline.
+    pipeline = CallPipeline(
+        backend.name,
+        backend.executor,
+        policy,
+        call_timeout_s=call_timeout_s,
+        audit=audit,
+        audit_claim_names=audit_claims(),
+    )
 
-    def guard() -> None:
-        """`dispatch`'s refusal half, for the READ-ONLY meta-tools.
+    async def run_pinned(d: ToolDescriptor, kwargs: dict):
+        async def work(scope):
+            return await scope.execute(d.verb, prepare_args(d, kwargs))
 
-        A surface that refuses a caller's calls must also refuse to enumerate
-        itself to them — "you do not have access to this surface" is a thin
-        answer if `search_tools` still lists every tool on it. Called BEFORE
-        `catalogue.ensure_fresh()` so a refused caller cannot drive a re-list
-        of a backend they may not use.
-
-        It gates without materialising: the catalogue is read with the
-        deployment credential by design, so a `lookup` surface with an
-        unreadable map must still answer a search for a caller who holds the
-        role. The FROZEN published `tools` array is captured at attach; on a
-        role- or audience-gated surface `_GateListing` hides it from a refused
-        caller, but it is the same array for everyone who passes.
-        """
-        if enabled:
-            policy.guard()
+        return await pipeline.run(d.name, work)
 
     # ⚠️ `search_tools`, `describe_tool`, `run_tool` and `context_cost` are
     # RESERVED published names on every surface. A backend that serves and pins
@@ -264,17 +341,28 @@ def build_surface(
     # agent something the array contradicts.
     published_names = {d.name for d in backend.pinned}
 
-    def unknown_tool(name: str) -> NotFound:
+    def unknown_tool(name: str) -> AxiError:
         close = suggest(name, list(catalogue.by_name), catalogue.index)
         hint = (
             f" Did you mean: {', '.join(close)}?"
             if close
             else " Use search_tools to find one."
         )
-        return NotFound(f"unknown tool '{name}' on surface '{backend.name}'.{hint}")
+        return tag(
+            NotFound(f"unknown tool '{name}' on surface '{backend.name}'.{hint}"),
+            "unknown_tool",
+            suggestions=list(close),
+        )
 
     for d in backend.pinned:
-        register_pinned(mcp, d, backend, dispatch)
+        register_pinned(mcp, d, backend, run_pinned)
+    mcp.add_middleware(
+        _RecordRefusedCall(
+            pipeline,
+            published_names | META_TOOL_NAMES,
+            unknown_tool,
+        )
+    )
 
     @mcp.tool(
         description=(
@@ -283,41 +371,49 @@ def build_surface(
         )
     )
     async def search_tools(query: str, limit: int = DEFAULT_LIMIT) -> list[dict]:
-        guard()
-        await catalogue.ensure_fresh()
-        return search_hits(
-            catalogue.index, catalogue.by_name, query, limit, published_names
-        )
+        async def work(scope):
+            await catalogue.ensure_fresh()
+            return search_hits(
+                catalogue.index, catalogue.by_name, query, limit, published_names
+            )
+
+        return await pipeline.run("search_tools", work)
 
     @mcp.tool(description="Return the argument schema + summary for a tool name.")
     async def describe_tool(name: str) -> dict:
-        guard()
-        await catalogue.ensure_fresh()
-        d = catalogue.by_name.get(name)
-        if d is None:
-            raise unknown_tool(name)
-        out = {
-            "name": d.name,
-            "summary": d.summary,
-            "mutating": d.mutating,
-            "pinned": d.name in published_names,
-            "args": d.schema,
-        }
-        if d.annotations:
-            out["annotations"] = d.annotations
-        returns = wrapped_output_schema(d)
-        if returns:
-            out["returns"] = returns
-        return out
+        async def work(scope):
+            await catalogue.ensure_fresh()
+            d = catalogue.by_name.get(name)
+            if d is None:
+                raise unknown_tool(name)
+            out = {
+                "name": d.name,
+                "summary": d.summary,
+                "mutating": d.mutating,
+                "pinned": d.name in published_names,
+                "args": d.schema,
+            }
+            if d.annotations:
+                out["annotations"] = d.annotations
+            returns = wrapped_output_schema(d)
+            if returns:
+                out["returns"] = returns
+            return out
+
+        return await pipeline.run("describe_tool", work)
 
     @mcp.tool(description="Invoke any tool on this surface by name with an args object.")
     async def run_tool(name: str, args: dict | None = None) -> dict:
-        guard()
-        await catalogue.ensure_fresh()
-        d = catalogue.by_name.get(name)
-        if d is None:
-            raise unknown_tool(name)
-        return await dispatch(d.verb, prepare_args(d, args or {}))
+        async def work(scope):
+            await catalogue.ensure_fresh()
+            d = catalogue.by_name.get(name)
+            if d is None:
+                scope.inner_tool = UNKNOWN_TOOL  # caller input never becomes a label
+                raise unknown_tool(name)
+            scope.inner_tool = d.name
+            return await scope.execute(d.verb, prepare_args(d, args or {}))
+
+        return await pipeline.run("run_tool", work)
 
     @mcp.tool(
         description=(
@@ -334,33 +430,35 @@ def build_surface(
         from .costing import as_payload, surface_cost
         from .errors import AxiError, Unavailable
 
-        guard()
-        await catalogue.ensure_fresh()
-        # CLASSIFIED, not swallowed. CONVENTIONS asks that every error crossing
-        # the gateway boundary be an AxiError; a measurement failure here is an
-        # `Unavailable`. Returning a green payload instead would be worse than
-        # the bare exception -- a failing tool call must keep surfacing its
-        # error. An error that is ALREADY an AxiError (a bad `context_window`
-        # is a UsageError) passes through unrelabelled.
-        try:
-            cost = await surface_cost(mcp, backend, descriptors=catalogue.descriptors)
-        except AxiError:
-            raise
-        except Exception as e:
-            raise Unavailable(
-                f"could not measure surface '{backend.name}': {e}"
-            ) from e
-        payload = as_payload(cost, context_window)
-        # The live Catalogue's freshness rides here rather than on the health
-        # record: health.check_entry attaches fresh in a separate process with
-        # no baseline, so it cannot observe drift or staleness at all.
-        payload["catalogue"] = catalogue.status
-        if catalogue.drift.changed:
-            payload["catalogue_drift"] = {
-                "added": list(catalogue.drift.added),
-                "removed": list(catalogue.drift.removed),
-                "pinned_missing": list(catalogue.drift.pinned_missing),
-            }
-        return payload
+        async def work(scope):
+            await catalogue.ensure_fresh()
+            # CLASSIFIED, not swallowed. CONVENTIONS asks that every error crossing
+            # the gateway boundary be an AxiError; a measurement failure here is an
+            # `Unavailable`. Returning a green payload instead would be worse than
+            # the bare exception -- a failing tool call must keep surfacing its
+            # error. An error that is ALREADY an AxiError (a bad `context_window`
+            # is a UsageError) passes through unrelabelled.
+            try:
+                cost = await surface_cost(mcp, backend, descriptors=catalogue.descriptors)
+            except AxiError:
+                raise
+            except Exception as e:
+                raise Unavailable(
+                    f"could not measure surface '{backend.name}': {e}"
+                ) from e
+            payload = as_payload(cost, context_window)
+            # The live Catalogue's freshness rides here rather than on the health
+            # record: health.check_entry attaches fresh in a separate process with
+            # no baseline, so it cannot observe drift or staleness at all.
+            payload["catalogue"] = catalogue.status
+            if catalogue.drift.changed:
+                payload["catalogue_drift"] = {
+                    "added": list(catalogue.drift.added),
+                    "removed": list(catalogue.drift.removed),
+                    "pinned_missing": list(catalogue.drift.pinned_missing),
+                }
+            return payload
+
+        return await pipeline.run("context_cost", work)
 
     return mcp

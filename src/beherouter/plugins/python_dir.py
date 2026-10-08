@@ -21,6 +21,10 @@ Rules (spec § Phase 1b — `python-dir` decisions):
   best-effort, and `python_dir_server`'s attach-time checks are authoritative.
 - No identity support: a function that wants the caller has nowhere stable to
   read it from yet.
+- Each directory's modules are private to its surface: two directories that
+  both ship a `helpers.py` each get their own. ⚠️ Import siblings at module
+  top level; an import inside a function body runs after the directory's
+  modules have left `sys.modules` and fails (see `_import_isolated`).
 """
 
 import ast

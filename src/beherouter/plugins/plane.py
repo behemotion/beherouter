@@ -57,9 +57,16 @@ from urllib.parse import urlparse
 
 from ..backends.backing import McpBacking
 from ..backends.mcp import load_mcp_backend
-from ..errors import UsageError
+from ..errors import UsageError, tag
 from . import register
 from .spec import ConfigField, EnvVar, PluginContext, PluginSpec
+
+# Upstream plane-mcp-server's two HTTP mounts, spelled ONCE for both HTTP
+# plugins: each one's `validate` refuses the other's mount, and a constant
+# written in both modules was the one place that distinction could drift.
+# `/http` + FastMCP's default `/mcp` is the OAuth proxy.
+OAUTH_PROXY_MOUNT = "/http/mcp"
+API_KEY_MOUNT = "/http/api-key"
 
 # THE VOCABULARY, shared with `plane-http` rather than copied into it. The two
 # plugins are one surface attached two ways; an agent's tool list must not
@@ -85,6 +92,13 @@ PINNED = (
 # searches perfectly and fails only on a real call.
 PROBE = "member"
 PROBE_ARGS = {"action": "me"}
+
+# Maturity evidence shared by the three Plane plugins (see beherouter.testing).
+# The catalogue proves PINNED, PROBE/PROBE_ARGS and SEARCH_ALIASES against what
+# plane-mcp-server 0.3.2 really lists, so all three share it; the e2e checks
+# differ per plugin, because each one is attached by a different surface there.
+CATALOGUE = "tests/search_eval/catalogues/plane-0.3.2.json"
+E2E = "tests/e2e/e2e.py::"
 
 # Words agents type that Plane's own descriptions do not use (Plane says
 # `cycle`, agents say "sprint"). Shared by all three Plane plugins, like PINNED.
@@ -147,23 +161,32 @@ def community_edition_guard(verb: str, args: dict) -> None:
         return
     action = args.get("action")
     if args.get("pql"):
-        raise UsageError(
-            f"plane: `workitem` does not accept `pql` here. {_NOT_TRANSIENT} "
-            f"Call `workitem` with action 'list' and a `project_id` instead, "
-            f"and filter the results yourself."
+        raise tag(
+            UsageError(
+                f"plane: `workitem` does not accept `pql` here. {_NOT_TRANSIENT} "
+                f"Call `workitem` with action 'list' and a `project_id` instead, "
+                f"and filter the results yourself."
+            ),
+            "edition_unsupported",
         )
     if action == "list" and not args.get("project_id"):
-        raise UsageError(
-            f"plane: `workitem` action 'list' requires `project_id` here; the "
-            f"workspace-wide listing does not exist. {_NOT_TRANSIENT} Call "
-            f"`project` with action 'list' to find the project id, then list "
-            f"its work items."
+        raise tag(
+            UsageError(
+                f"plane: `workitem` action 'list' requires `project_id` here; the "
+                f"workspace-wide listing does not exist. {_NOT_TRANSIENT} Call "
+                f"`project` with action 'list' to find the project id, then list "
+                f"its work items."
+            ),
+            "edition_unsupported",
         )
     if action == "count" and args.get("project_id"):
-        raise UsageError(
-            f"plane: `workitem` action 'count' cannot be scoped to a project "
-            f"here (the server turns `project_id` into PQL). {_NOT_TRANSIENT} "
-            f"Use action 'list' with the `project_id` and count the results."
+        raise tag(
+            UsageError(
+                f"plane: `workitem` action 'count' cannot be scoped to a project "
+                f"here (the server turns `project_id` into PQL). {_NOT_TRANSIENT} "
+                f"Use action 'list' with the `project_id` and count the results."
+            ),
+            "edition_unsupported",
         )
 
 
@@ -189,6 +212,14 @@ SPEC = PluginSpec(
     probe=PROBE,
     probe_args=PROBE_ARGS,
     search_aliases=SEARCH_ALIASES,
+    # Not per-user, and never can be: a stdio subprocess's environment is fixed
+    # at spawn. `verified` is the `plane-stdio` surface in tests/e2e/.
+    maturity="verified",
+    evidence=(
+        CATALOGUE,
+        E2E + "the `plane` stdio plugin attaches on its default cmd inside the image",
+        E2E + "search_tools('sprint') finds Plane's `cycle`",
+    ),
     config=(
         ConfigField(
             name="base_url",

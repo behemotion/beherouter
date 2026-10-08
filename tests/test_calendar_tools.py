@@ -89,7 +89,7 @@ def test_names_and_verbs_match():
 
 
 def test_mutating_and_verbs_agree():
-    assert MUTATING <= set(VERBS)
+    assert set(VERBS) >= MUTATING
 
 
 def test_delete_event_promises_only_what_both_providers_do():
@@ -99,3 +99,63 @@ def test_delete_event_promises_only_what_both_providers_do():
     summary = SUMMARIES["delete_event"]
     assert "provider-dependent" in summary
     assert "The provider notifies attendees." not in summary
+
+
+def test_both_providers_share_one_http_plumbing():
+    """Audit §2.3: `__init__`, `_request` and `_segment` were byte-identical in
+    both adapters. One copy, so a fix to the error funnel or the path escaping
+    cannot land in one provider and not the other."""
+    from beherouter.plugins.calendar.providers import HttpCalendarProvider
+    from beherouter.plugins.calendar.providers.google import GoogleCalendar
+    from beherouter.plugins.calendar.providers.microsoft import MicrosoftCalendar
+
+    for cls in (GoogleCalendar, MicrosoftCalendar):
+        assert issubclass(cls, HttpCalendarProvider)
+        for name in ("__init__", "_request", "_segment", "aclose"):
+            assert name not in vars(cls), f"{cls.__name__} re-defines {name}"
+    assert GoogleCalendar.BASE.startswith("https://www.googleapis.com/")
+    assert MicrosoftCalendar.BASE.startswith("https://graph.microsoft.com/")
+
+
+async def test_a_provider_closes_its_own_clients_and_no_one_elses():
+    """Each provider (and so each credential) owns its clients: closing the
+    Google surface's provider must not touch anything Microsoft holds."""
+    import httpx
+
+    from beherouter.plugins.calendar.oauth import RefreshTokenAuth
+    from beherouter.plugins.calendar.providers.google import GoogleCalendar
+    from beherouter.plugins.calendar.providers.microsoft import MicrosoftCalendar
+
+    def make(cls):
+        auth = RefreshTokenAuth(token_url="https://t/token", client_id="c", refresh_token="r")
+        return cls(auth=auth), auth
+
+    g, g_auth = make(GoogleCalendar)
+    m, m_auth = make(MicrosoftCalendar)
+    await g.aclose()
+    assert g._client.is_closed and g_auth._client.is_closed
+    assert not m._client.is_closed and not m_auth._client.is_closed
+    await m.aclose()
+    assert isinstance(m._client, httpx.AsyncClient) and m._client.is_closed
+
+
+async def test_the_executor_closes_every_provider_it_holds():
+    from beherouter.plugins.calendar.executor import CalendarExecutor
+
+    closed = []
+
+    class P:
+        def __init__(self, name):
+            self.name = name
+
+        async def list_calendars(self):
+            return {"calendars": []}
+
+        async def aclose(self):
+            closed.append(self.name)
+
+    ident = type("I", (), {"credentials": {"refresh_token": "x"}, "cache_key": "k"})()
+    ex = CalendarExecutor(P("deploy"), provider_factory=lambda creds: P("alice"))
+    await ex.run("list_calendars", {}, identity=ident)
+    await ex.aclose()
+    assert sorted(closed) == ["alice", "deploy"]
