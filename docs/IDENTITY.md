@@ -14,7 +14,7 @@ Plugin authoring: [`PLUGINS.md`](PLUGINS.md). Deployment: [`DEPLOYMENT.md`](DEPL
 
 **It gives you** a verified caller (a JWKS-checked OIDC JWT, accepted *beside*
 the shared token), and a per-user credential at the backend, chosen per attached
-surface. Four surfaces can run four different modes on one gateway.
+surface. Five surfaces can run five different modes on one gateway.
 
 **It does not give you:**
 
@@ -68,7 +68,7 @@ plugin = "office-mcp"
   mode = "bearer"
 ```
 
-## 3. The four modes
+## 3. The five modes
 
 A surface has **one** mode, or none. There is deliberately **no `require =
 false`**: a surface either requires a verified user or does not mention
@@ -137,11 +137,53 @@ every backend.
 The right mode when the backend credential is a real secret the user cannot
 hand you per request — an OAuth refresh token, a minted PAT. See §5.
 
+### `exchange` — trade the caller's token for one addressed to the backend
+
+```toml
+  [crm.identity]
+  mode = "exchange"
+  token_url = "https://idp.example.com/realms/acme/protocol/openid-connect/token"
+  audience = "crm-api"                  # and/or resource = "https://crm.internal/"
+  scope = "crm.read"                    # optional; string or array
+  subject_token_type = "jwt"            # default; or "access_token"
+  client_auth = "client_secret_basic"   # default; or "client_secret_post"
+  client_id = "beherouter"              # literal or ${VAR}
+  client_secret = "${BEHEROUTER_CRM_EXCHANGE_SECRET}"   # MUST be a ${VAR}
+  # header = "authorization", prefix = "Bearer " — as for `bearer`
+```
+
+OAuth 2.0 Token Exchange (RFC 8693). The right mode when the backend verifies
+the same IdP but, correctly, refuses a token addressed to the **gateway**: on
+each call the gateway, authenticated as its own OAuth client, posts the
+caller's verified JWT to `token_url` and forwards the issued `access_token`.
+The backend sees a token minted for it, carrying the caller's identity; the
+IdP's exchange policy decides who may get one. Design record:
+`docs/superpowers/specs/2026-10-07-token-exchange-design.md`.
+
+- **Header backings only** (`http`, and `inproc` such as `openapi`). `cli` and
+  `native` are refused: no CLI plugin takes a bearer, and a calendar provider
+  needs a refresh token, which an exchange does not yield.
+- **Cached** per (surface, digest of the caller's token) until `expires_in`
+  minus 30 s, in a bounded LRU; a response without `expires_in` is not cached.
+  Concurrent calls for one caller share one exchange. Nothing is keyed or
+  logged by a raw token.
+- **No fallback.** `invalid_grant` / `invalid_target` refuse the call as an
+  auth error; any other 4xx (`invalid_client`, `invalid_scope`, …) is a
+  configuration error; a 5xx, 429, timeout or network error is `Unavailable`.
+  Each names the surface and the OAuth `error` code only — never a token and
+  never the IdP's `error_description`. A failed exchange never sends the call.
+- **The secret is resolved per exchange**, so an unset variable degrades this
+  surface's calls rather than refusing boot; `health --deep` reports
+  `identity.exchange.client_secret: "set" | "unset"`.
+- The exchange runs on the call path, after the backing's own guard, so a
+  call refused at the gateway costs no round trip to the IdP.
+
 ### Where a mode's output lands
 
 | Backing | `target` | The map's keys are | Applied as |
 |---|---|---|---|
 | `http` | `header` | HTTP header names | per-call transport headers, over the attach-time ones |
+| `inproc` | `header` | HTTP header names | per-call headers on the in-process server's outbound client |
 | `cli` | `env` | environment variable names | subprocess environment, merged over the gateway's own |
 | `native` | `credential` | the plugin's own declared credential names | a per-identity provider behind a bounded cache |
 | `stdio` | — | — | **refused** (§7) |
@@ -372,6 +414,11 @@ Offline, from `registry-lint` (and from `validate_entry`, so also at boot):
 | A map key outside the plugin's `accepts` | A `native` plugin's credentials are a closed set |
 | `claims`/`client`/`lookup` with an empty map | The mode has nothing to forward |
 | `bearer` with a map | It takes `header` and `prefix` |
+| `exchange` on a plugin whose target is not `header` | It forwards an HTTP bearer |
+| `exchange` without an http(s) `token_url`, or one with credentials or a fragment | Nowhere safe to post to |
+| `exchange` with neither `audience` nor `resource` | It would narrow nothing; that is `bearer` |
+| `exchange` without `client_id`, or a `client_secret` that is not exactly one `${VAR}` | An inline secret would be committed with the registry |
+| `exchange` with `map`, `key` or `path`; an exchange key on any other mode | It would be silently ignored |
 | `lookup` with no `path` and no `$BEHEROUTER_IDENTITY_MAP` | Nowhere to read from |
 | A `lookup` map that does not exist, where lint can see it | It would fail every call |
 | `require_roles` that is not a non-empty array of names | Malformed gate |
@@ -417,8 +464,28 @@ A `health --deep` record carries:
               "map": {"state": "ok", "entries": 12}}}
 ```
 
+An `exchange` surface's record also carries
+`identity.exchange`: `token_url`, `audience` / `resource` / `scope`,
+`client_auth`, and `client_secret: "set" | "unset"` — never the secret and
+never a cached token.
+
 An applied identity is logged with the subject, the mode and the **names** of
-the material applied — never a value.
+the material applied — never a value. An exchange logs the surface, subject,
+header name and whether the token came from the cache or the IdP.
+
+**The one exception: the audit line.** Every call also writes one JSON line on the
+`beherouter.audit` logger (see `docs/DEPLOYMENT.md` § Logs, audit and metrics). It
+carries the verified `sub` and may carry the claim values an operator names in
+`BEHEROUTER_AUDIT_CLAIMS` (comma-separated, default none) — never a token, header,
+credential or exchange material, and never the call's arguments. Claims are read from
+the verified JWT only, never from request headers.
+
+```json
+{"ts":"2026-10-08T10:12:03.412+02:00","event":"tool_call","call_id":"6f1c…","surface":"plane","tool":"run_tool","inner_tool":"cycle","caller":{"sub":"7d2e…","email":"a@example.com"},"auth":"oidc","outcome":"ok","reason":null,"status":null,"latency_ms":312}
+```
+
+A call made with the shared gateway token has no subject: it records
+`"caller":{"sub":null}` and `"auth":"shared"`.
 
 ### Proving a user's identity reaches the backend
 
@@ -445,6 +512,10 @@ the backend returned with the token's `email` / `preferred_username` / `sub`.
 quietly acting as the deployment identity. `rejected`, `refused`, `failed` and
 `mismatch` fail the command. A surface without an identity mode reports
 `not_applicable`.
+
+On an `exchange` surface the probe exchanges the token exactly as a real call
+does, because the exchange runs inside the backend call. A refusal by the IdP
+therefore reports as `failed` (with the OAuth error code), not `refused`.
 
 ### Expired tokens
 

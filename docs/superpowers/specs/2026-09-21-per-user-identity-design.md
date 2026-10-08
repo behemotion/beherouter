@@ -402,10 +402,15 @@ TDD, against the existing 473-test suite. The invariants worth naming:
    tokens it minted itself, so `bearer` cannot bind it until Plane's own JWT
    rework ships behind a backend that honours a forwarded token. The mount that
    works today is `/http/api-key`, with a per-caller PAT. Evidence: `tests/e2e/`.
-2. **RFC 8693 token exchange** as a fifth mode, for backends that need an
-   audience-scoped token rather than ours.
-3. **Per-user OAuth for the calendar surfaces** — the mechanism lands here
-   (target `credential`), the consent flows do not.
+2. ~~**RFC 8693 token exchange** as a fifth mode, for backends that need an
+   audience-scoped token rather than ours.~~ Done 2026-10-07 (unreleased): mode
+   `exchange`, header targets only. Design record:
+   [`2026-10-07-token-exchange-design.md`](2026-10-07-token-exchange-design.md).
+3. ~~**Per-user OAuth for the calendar surfaces** — the mechanism lands here
+   (target `credential`), the consent flows do not.~~ Done 2026-10-07
+   (unreleased): `beherouter calendar-consent`, a PKCE loopback flow writing the
+   identity map. Design record:
+   [`2026-10-07-calendar-consent-design.md`](2026-10-07-calendar-consent-design.md).
 4. ~~**`BEHEROUTER_PLANE_TOKEN` collides with itself across two meanings.**~~
    Closed: every example in the repo now names the backend PAT
    `BEHEROUTER_PLANE_API_KEY` (what `pluginconfig.token_var` emits), and

@@ -3,9 +3,11 @@
 One-time, per account, by hand. The gateway does not host an OAuth consent flow
 — that would mean a login UI, session state and redirect URIs, none of which
 belong in a backend router. The output of each procedure is one long-lived
-refresh token string that goes into the deployment's vault.
+refresh token string that goes into the deployment's secret store. For **per-user**
+grants the same consent runs through a CLI verb instead and lands in the
+identity map — see § Per-user grants.
 
-**Do this on a machine with a browser (the Mac), not on the server.** Google
+**Do this on a machine with a browser, not on the server.** Google
 refresh tokens are bound to the OAuth *client id*, not to a machine, so the
 resulting string is portable.
 
@@ -101,9 +103,10 @@ public client, which is why the `m365` plugin declares only two credentials.
 
 ## Where the tokens go
 
-Never into `registry.toml`, and never into this repo. Into the homelab ansible
-vault, surfaced to the gateway as environment variables the registry references
-as `${VAR}` placeholders:
+Never into `registry.toml`, and never into this repo. Into the deployment's secret
+store (the env file `scripts/deploy.sh` passes, the chart's `secret.env`, or your own
+vault), surfaced to the gateway as environment variables the registry references as
+`${VAR}` placeholders:
 
 ```toml
 [gcal]
@@ -120,14 +123,77 @@ plugin = "m365"
   refresh_token = "${BEHEROUTER_M365_REFRESH_TOKEN}"
 ```
 
-`beherouter plugin-config gcal gcal` emits this block, its Caddy `not` clause
-and its `beherouter-env.j2` lines together, so the three cannot disagree.
+`beherouter plugin-config gcal gcal` emits this block, its reverse-proxy clause
+and its env lines together, so the three cannot disagree.
 
 ⚠️ **An entry may not be committed before its secret exists.** An unset or empty
 `${VAR}` raises during `build_surfaces` — i.e. at startup — so it does not yield
 a broken surface, it yields a **dead gateway**, `/healthz` included. Entry and
-secret ship in the same playbook run, or not at all. `beherouter registry-lint`
+secret ship in the same deploy, or not at all. `beherouter registry-lint`
 catches it locally first.
+
+## Per-user grants: `beherouter calendar-consent`
+
+Everything above produces **one** refresh token, the deployment's, and every
+call through the surface acts as that account. For each user to act as
+themselves, the surface declares mode `lookup` (`docs/IDENTITY.md` §3, §5) and
+each user's own refresh token goes into the **identity map**. The client
+registration (steps 1–4 above, or the Entra registration) is done once and
+shared; the consent is per user, and is a command rather than `nc` + `curl`:
+
+```toml
+[gcal]
+plugin = "gcal"
+  [gcal.env]
+  client_id = "${BEHEROUTER_GCAL_CLIENT_ID}"
+  client_secret = "${BEHEROUTER_GCAL_CLIENT_SECRET}"
+  refresh_token = "${BEHEROUTER_GCAL_REFRESH_TOKEN}"
+  [gcal.identity]
+  mode = "lookup"
+  key = "email"
+  path = "/etc/beherouter/identity-map.toml"
+    [gcal.identity.map]
+    refresh_token = "gcal_refresh_token"
+```
+
+```bash
+beherouter calendar-consent gcal --subject alice@example.com
+#   --no-browser            print the URL instead of opening one
+#   --identity-map PATH     write a working copy instead of the entry's path
+#   --client-id ID          when the entry's ${VAR}s are not set on this machine
+#   --client-secret-file F  (Google only; `-` = stdin; never in argv)
+#   --port 8765             the loopback port your OAuth client allows
+beherouter calendar-consent gcal --subject alice@example.com --revoke
+```
+
+It binds `127.0.0.1:8765`, opens the provider's consent page (PKCE, a `state`
+check, `login_hint` = the subject), exchanges the code with the surface's own
+OAuth client, and writes the token into the subject's map entry under the name
+the entry's `[surface.identity.map]` cites — atomically, `0600`, keeping every
+other entry and comment. The gateway picks it up on the next call by `stat`; no
+restart. It **never prints the refresh token**. The same traps hold, enforced
+rather than remembered: Google always gets `access_type=offline` +
+`prompt=consent`, Microsoft always gets the `consumers` authority, and every
+Google grant warns about the 7-day Testing expiry, which cannot be detected.
+
+- `--subject` is the value of the entry's `key` claim, exactly as the caller's
+  JWT carries it.
+- **Run it where the browser is.** On a headless host,
+  `ssh -L 8765:127.0.0.1:8765 host` and `--no-browser`.
+- ⚠️ **A map rendered by configuration management is overwritten by its next
+  run.** Either your secret store renders the map (write a copy with
+  `--identity-map` and move the value into the store) or the file on the host is
+  the source of truth — not both.
+- A **symlinked** map (a projected Kubernetes Secret) is refused: write a copy
+  and apply it as the Secret.
+- `--revoke` revokes upstream at Google and removes the name locally either
+  way; Microsoft personal accounts have no revocation endpoint, so the user
+  removes the app at <https://account.live.com/consent/Manage>.
+- Prove it as the user: `beherouter health --deep --surface gcal --bearer-file -`
+  with their token on stdin — and for `m365`, again after the first refresh.
+
+Design and the rejected alternative (a consent route on the gateway):
+`docs/superpowers/specs/2026-10-07-calendar-consent-design.md`.
 
 ## Proving it works
 
@@ -144,15 +210,16 @@ native plugin is static and never touches the credential.
 
 Both tokens can be revoked upstream at any time, and nothing in the gateway can
 repair that: access tokens are in-memory only and there is no token cache to
-refresh from. Rotating means re-running the procedure above and re-running the
-playbook. `beherouter health --deep` is the only thing that sees a dead
-credential, and it is **not scheduled** — see § Follow-up in the plan.
+refresh from. Rotating means re-running the procedure above and redeploying the
+secret. `beherouter health --deep` is the only thing that sees a dead
+credential; schedule it with `--textfile` (`contrib/health-textfile/`, or the
+chart's `healthCronJob`) so a revoked grant pages instead of waiting for a user.
 
 ⚠️ **Microsoft rotates the refresh token on every refresh**, and expects the
 replacement to be used next time; Google does not rotate. The gateway keeps a
 rotated token **in memory for the life of the process** — deliberately not on
-disk, so the no-writable-state property holds — and falls back to the vault's
+disk, so the no-writable-state property holds — and falls back to the stored
 value on restart, which Microsoft still honours for a client that never used a
-rotation. The vault value therefore does not go stale by itself, but it is also
+rotation. The stored value therefore does not go stale by itself, but it is also
 never updated by the running gateway: **rotating for real means re-running the
-bootstrap and the playbook**, exactly as above.
+bootstrap and redeploying the secret**, exactly as above.

@@ -5,17 +5,34 @@
 > `BEHEMOTION/docs/HARNESS-PLAN.md` (Phase 2, items 7–8). The umbrella repo is
 > not published; both are named rather than linked.
 > Audited 2026-07-03; updated 2026-07-28 (build), 2026-07-29 (deployment),
-> 2026-07-30 (post-deployment cleanup), 2026-09-09 (two surfaces attached) and
-> 2026-09-10 (cache-hint decision recorded).
+> 2026-07-30 (post-deployment cleanup), 2026-09-09 (two surfaces attached),
+> 2026-09-10 (cache-hint decision recorded) and 2026-10-07 (standalone product;
+> the homelab deployment retired).
 > Remove entries as they are fixed.
 
 beherouter is the keystone: an authenticated gateway fronting many MCP backends. The
 existential divergence (zero code) is **closed** — the gateway is built, green,
-and **live** at `https://beherouter.example.com`. Both interface divergences that
-mattered (no `/healthz`, no backend health contract) are closed too, and as of
-2026-09-08 it fronts **two real backends** (`office`, `plane`) with a consumer on
-each. **No interface divergence against CONVENTIONS remains open.** What is left
-here is operational hardening, not contract work.
+published (`ghcr.io/behemotion/beherouter`, the OCI chart) and was proven live
+fronting two real backends (`office`, `plane`) on a homelab reference deployment
+from 2026-07-29 until **2026-10-07, when it was retired**: beherouter is now a
+standalone product, and the deployment sections below are history. Both interface
+divergences that mattered (no `/healthz`, no backend health contract) are closed,
+and since 2026-10-07 so is the last one, the hardcoded version (below). **No
+interface divergence against CONVENTIONS remains open.** What is left here is
+hardening, not contract work.
+
+## Resolved 2026-10-07
+
+- ~~**The CLI reported a version that never existed.**~~ `beherouter --version`
+  did not exist and the `describe --json` manifest said `0.1.0` through three
+  releases, so every sibling reading the manifest saw a wrong version
+  (CONVENTIONS §7: never hardcoded). Both now read the installed package
+  metadata, and CI and `release.yml` refuse a `--version` that disagrees with
+  `pyproject.toml` or the tag. Held by `tests/test_cli_version.py`.
+- ~~**Open §3, the vendored copy.**~~ Obsolete: the homelab deployment that
+  vendored `src/` and beheaxi is retired. The image builds from this repo's
+  `Containerfile` against the committed `uv.lock`, and beheaxi is a public,
+  pinned git dependency.
 
 ## Resolved by the 2026-07-28 build
 
@@ -32,6 +49,9 @@ here is operational hardening, not contract work.
   `"callable": true` unconditionally and the note is deleted.
 
 ## Resolved by the 2026-07-29 deployment
+
+*(History: that deployment, its hosts and its homelab repo paths were retired on
+2026-10-07. The entries stay for the defects they record.)*
 
 - ~~**Not deployed.**~~ **Live since 2026-07-29** (as `behemcp.example.com` until the
   2026-08-02 rename), now at **`https://beherouter.example.com`** —
@@ -194,7 +214,7 @@ correctness or availability one.
 **Re-measure when:** either backend is upgraded, `plane`'s catalogue grows
 substantially, or a third `mcp` surface is attached.
 
-## Per-user identity — the gateway can carry one, no live surface uses one yet
+## Per-user identity — the gateway can carry one; no deployment here exercises it
 
 Resolved 2026-09-22 by `docs/superpowers/specs/2026-09-21-per-user-identity-design.md`,
 prompted by an external feature request from a team running the published chart
@@ -209,21 +229,23 @@ nothing.
 
 **What now exists.** `BEHEROUTER_AUTH_MODE=oidc|both` accepts a JWKS-verified JWT
 beside the shared token; a surface opts into forwarding with `[surface.identity]` in
-one of four modes (`bearer`, `claims`, `client`, `lookup`); `http`, `cli` and
-`native` apply it and `stdio` refuses it in three places. `[surface.authz]`
+one of five modes (`bearer`, `claims`, `client`, `lookup`, and since 2026-10-07
+`exchange`, RFC 8693); `http`, `cli` and `native` apply it and `stdio` refuses it in
+three places. `[surface.authz]`
 `require_roles` gates a surface on the caller's roles, separately, so a surface may
 gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTITY.md).
 
 **What is still open, and is the honest residual:**
 
-1. **No live surface uses any of it.** `office` and `plane` are attached with no
-   `[identity]` table, so every write through them is still attributed to one
-   identity. The mechanism is tested, not exercised in production.
+1. **No deployment this repo operates uses any of it.** The homelab's `office`
+   and `plane` ran with no `[identity]` table until that deployment was retired
+   (2026-10-07), and there is no first-party deployment since. The mechanism is
+   tested, and proven end to end by the e2e stack (`tests/e2e/`); production use
+   is a deployer's, reported from outside (item 3).
 2. ~~**`plane` cannot use it as it stands.**~~ Resolved 2026-09-22: `plane-http`
    and `plane-http-apikey` attach the same pin list over HTTP, and per-user Plane
    is proven end to end in `tests/e2e/` — two callers, two Plane identities,
-   through real plane-mcp-server 0.3.2. The live surface is still the stdio
-   `plane`, so nothing in production is per-user yet.
+   through real plane-mcp-server 0.3.2.
 
    ⚠️ **The residual is which mount.** `/http` is an OAuth proxy that accepts
    only tokens it minted itself and 401s a forwarded one before Plane is
@@ -238,17 +260,23 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
 3. **No end-to-end verification against a real IdP has been performed here.**
    Every rule is held by a test with a locally-minted key pair. A production
    deployment outside this harness reports Keycloak JWTs verified by JWKS in
-   `auth.mode: both` (2026-09-24); no such JWT has traversed THIS deployed
-   gateway.
+   `auth.mode: both` (2026-09-24); no such JWT has traversed a deployment this
+   repo operates. Token exchange (`exchange`) is likewise tested only against a
+   local fake IdP.
 4. **The catalogue and the probe stay deployment-scoped by design.** A green
    `health --deep` proves the deployment credential and says nothing about any
    user's. The record now says so in its own output (`probe_scope`), which makes
    the limitation legible rather than removing it. Since 2026-09-24,
    `health --deep --bearer-file` runs the probe as a supplied user and reports
-   the identity the backend returned. That proves the per-user path on demand;
-   it does not make the scheduled probe per-user.
-5. **Modes `client` and `lookup` have no external consumer asking for them.** The
-   requesting team wants `bearer` only. They were chosen deliberately and are
+   the identity the backend returned. *Scheduled since 2026-10-07:*
+   `health --deep --textfile PATH --bearer-file F` writes that verdict for
+   node_exporter on a timer (`contrib/health-textfile/`, the chart's
+   `healthCronJob`), so a `mismatch` can page. The probe identity is a
+   dedicated monitoring user, not every user, and its token must be refreshed
+   faster than it expires.
+5. **Modes `client`, `lookup` and `exchange` have no external consumer asking for
+   them.** The requesting team wants `bearer` only. `lookup` now has a consent
+   path (`beherouter calendar-consent`, 2026-10-07). They were chosen deliberately and are
    tested; they are nonetheless unexercised by any stated need.
 6. ~~**A gated surface is still *listable*.**~~ Resolved 2026-10-06, at a
    production deployment's request (a role-gated DWH surface listed to ~2100
@@ -265,13 +293,14 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
    *(Slot kept so items 2–5 keep their numbers; `AGENTS.md` cites §5.)*
 
    ~~The residual worth naming: **two surfaces on one gateway is also two ways to take
-   the gateway down.**~~ **Closed in code 2026-09-25 (Plugin sources Phase 0),
-   unreleased** — the live 0.2.4 gateway still crash-loops until the next `/deploy`.
-   A surface whose attach fails or exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` is served as
-   `503` and retried with backoff; `/healthz` stays up and names it under `failed`, so
-   it now says *which* backend broke. What `registry-lint` can see (unknown plugin,
-   bad config, unset `${VAR}`) still refuses boot, deliberately. Held by
-   `tests/test_gateway_isolation.py`.
+   the gateway down.**~~ **Closed 2026-09-25 (Plugin sources Phase 0), released in
+   0.2.5.** A surface whose attach fails or exceeds `BEHEROUTER_ATTACH_TIMEOUT_S` is
+   served as `503` and retried with backoff; `/healthz` stays up and names it under
+   `failed`, so it says *which* backend broke. Since 2026-10-07 a configuration fault
+   (`UsageError`) is not retried: `/healthz` lists it under `needs_config_change` and
+   its `503` says so. What `registry-lint` can see (unknown plugin, bad config, unset
+   `${VAR}`) still refuses boot, deliberately. Held by
+   `tests/test_gateway_isolation.py` and `tests/test_gateway_attach.py`.
 2. **Pins are now tested knowledge; nothing still validates them against the LIVE
    catalogue.** Partly closed 2026-09-09 by Plugins Phase 1.
 
@@ -285,12 +314,15 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
    carry. `registry-lint` checks an entry offline before it can crash-loop the
    gateway.
 
-   *Still open, unchanged:* **nothing validates a pin against the live catalogue at
-   attach time.** gitea-mcp v1.4.0 consolidated a 106-tool catalogue into 53
-   action-parameterized tools; a pinned name that no longer exists is **silently not
-   pinned** — the surface still builds and still serves search/describe/run, so the
-   only symptom is a short `tools/list`. Hit for real during the 2026-07-29
-   deployment.
+   *Narrowed 2026-10-07:* a pinned name the backend no longer serves is **no longer
+   silent.** Attach logs a WARNING and `/healthz` lists it under
+   `pinned_missing: {surface: [names]}`; `health --deep` fails the surface
+   (`catalogue: "pinned_missing"`, since 2026-09-10), and the scheduled sweep exports
+   it (`beherouter_surface_pinned_missing`). *Still open:* the surface is still
+   **published** with the short list and its status unchanged — deliberately, since
+   refusing it would turn a backend rename into an outage. (Origin: gitea-mcp v1.4.0
+   consolidated 106 tools into 53 action-parameterized ones, hit during the
+   2026-07-29 deployment.)
 
    **And validating names would not be enough.** A pinned name can exist, list
    cleanly, and still be a dead end: `page` because this Plane is the Community
@@ -300,8 +332,10 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
    Validating names is the floor; the real contract is *call each pin once*. Until
    something automates that, the rule is manual and stated in `AGENTS.md` § Plugins:
    **probe before pinning, re-probe after any backend upgrade or edition change.**
-3. **The deployment source is a vendored copy** — now a *pinned mirror*, which is
-   the deliberate choice rather than an accident. `$HOMELAB_REPO/ur/service/beherouter/`
+3. ~~**The deployment source is a vendored copy.**~~ **Obsolete 2026-10-07**: the
+   homelab deployment is retired (see § Resolved 2026-10-07). The 2026-09 text, for
+   the record: a *pinned mirror*, which was the deliberate choice rather than an
+   accident. `$HOMELAB_REPO/ur/service/beherouter/`
    holds a copy of this repo's `src/` and of beheaxi at v0.1.1; un-vendoring
    would make the host build fetch a **private** GitHub repo and therefore need a
    token build-secret, which is worse than keeping a verifiable copy. Guardrails:
@@ -314,7 +348,20 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
    with exit 6. Intentional; now stated in `src/beherouter/manifest.py` and pinned
    by `test_extra_key_is_rejected`. Keep saying it loudly in registration docs so
    layer authors extend the schema *in beheaxi*.
-5. **Attachability reality check** (2026-07-03 audit, still current *for siblings*):
+5. **Attachability reality check.** *Updated 2026-10-07, unreleased:* the gateway
+   can now name every ready sibling from `registry.toml`. The generic `mcp-http`,
+   `mcp-stdio` and `beheaxi-cli` plugins (`docs/PLUGINS.md` § Generic plugins)
+   cover behemem (six-tool MCP over HTTP, live), behecheck (FastMCP stdio — its
+   `behecheck-mcp` script must be in the image) and behesid (a beheaxi CLI). Each
+   plugin is proven against real servers in `tests/test_plugin_generic.py` —
+   a FastMCP fixture on HTTP and stdio, and beherouter's own CLI as the beheaxi
+   CLI — not against the sibling layers themselves. Mounting one is a registry
+   entry in whichever deployment wants it; with the homelab retired (2026-10-07)
+   there is no first-party gateway to mount them on. The 2026-07-03 text below is
+   kept for its behelib caution, and its behemem/behetask sentence is superseded
+   for behemem.
+
+   *2026-07-03 audit:*
    the gateway can front `gitea` (external, proven live — 53 tools on v1.4.0, though
    not currently attached) + `behecheck` (`mcp/stdio`, untested here).
    behemem/behetask still have nothing to point `registry.toml` at; behelib's
@@ -339,11 +386,17 @@ gate while forwarding nothing. Full mechanism: [`docs/IDENTITY.md`](docs/IDENTIT
    dialect for **all five** consumers — librechat, claude-code, pi, opencode and
    **hermes** (added 2026-08-08 and verified by a live agent turn calling
    `search_tools("discovr")` through the gateway, not merely by config inspection).
-   Four are verified by an agent tool call; LibreChat's `office` paste is the one
-   step still awaiting a human. The generator never emits a credential, only a
-   placeholder.
+   Four were verified by an agent tool call against the homelab deployment (retired
+   2026-10-07); LibreChat's was wired but its `office` call never verified before
+   the retirement. The generator never emits a credential, only a placeholder.
 
-   ⚠️ **`codex` is NOT a consumer and must not be given a dialect.** It is not used in
-   this homelab and is not installed on the Mac. An earlier version of this note named
+   ⚠️ **`codex` is NOT a consumer and must not be given a dialect.** It was never used
+   by this project's own clients. An earlier version of this note named
    it as one, and that error alone regenerated a phantom "Codex dialect" work item
    across three handoffs. The consumer set is exactly the five above.
+8. **`python-dir` sibling imports must be at module top level.** Since 2026-10-07
+   each directory's modules are private to its surface (two directories may each
+   ship a `helpers.py`); the price is that an import inside a function body runs
+   after those modules have left `sys.modules`, and fails. Documented in
+   `docs/PLUGINS.md` § `python-dir`; not a harness divergence, recorded here so it
+   is not rediscovered as a bug.

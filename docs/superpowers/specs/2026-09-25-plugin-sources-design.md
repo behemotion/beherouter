@@ -4,6 +4,9 @@
 **Status:** design written from the 2026-09-25 plugin-system audit; **nothing
 implemented.** Two spikes were run against the locked FastMCP (3.4.5) and are
 quoted below as measurements, not assumptions.
+**Update 2026-10-07:** phases 0 and 1 shipped in 0.2.5; phases 2 and 3 are
+implemented, unreleased (`CHANGELOG.md` § Unreleased). Per-phase status lines
+below.
 **Scope:** a fifth way to back a surface — an **in-process FastMCP server** —
 and three sources built on it (`openapi`, `python-dir`, and the existing `native`
 re-expressed); generic `mcp-http` / `mcp-stdio` plugins; `beherouter catalog
@@ -427,6 +430,10 @@ differ.
 
 ### Phase 2 — generic `mcp-http` and `mcp-stdio`
 
+> **Status 2026-10-07: implemented, unreleased** — `plugins/mcp_http.py`,
+> `plugins/mcp_stdio.py`, plus a third generic plugin this phase did not plan,
+> `beheaxi-cli`. Documented in `docs/PLUGINS.md` § Generic plugins.
+
 `url`/`cmd` left `registry.toml` because `gitea-home` attached with no probe and
 served a dead token for a day. The generic plugins bring the capability back
 **without** the hole:
@@ -459,6 +466,11 @@ probe_args = { query = "a", limit = 1 }
   "generic" so no one mistakes `mcp-http` for a curated plugin.
 
 ### Phase 3 — `beherouter catalog import` (the `server.json` path)
+
+> **Status 2026-10-07: implemented, unreleased** — as flat verbs,
+> `beherouter catalog-import <file|URL|name> <surface>` and
+> `beherouter catalog-export <plugin>` (`src/beherouter/catalog.py`).
+> Documented in `docs/PLUGINS.md` § Importing from the MCP Registry.
 
 The official MCP Registry's `server.json` (schema `2025-12-11`) says how to
 **reach or launch** a server and which secrets it needs — `remotes[]` (URL,
@@ -514,6 +526,10 @@ Out of this phase: running a subregistry, MCPB bundles (a desktop install
 format; a stdio `cmd` covers the gateway's need).
 
 ### Phase 3 — maturity tiers
+
+> **Status 2026-10-07: implemented, unreleased** — `src/beherouter/maturity.py`,
+> `beherouter.testing.plugin_conformance`, `tests/test_maturity.py`.
+> Documented in `docs/PLUGINS.md` § Maturity.
 
 A tier is a claim about **evidence**, and every tier above the first is checked
 by a test, never merely declared:

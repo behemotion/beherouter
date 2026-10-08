@@ -100,19 +100,18 @@ inbound handoff on their own.
 
 ## Repository map
 
-<!--
-  One row per sibling repo. Slug must equal the sibling's directory name
-  (case-sensitive). Delete this comment and the example rows below once you've
-  populated your real siblings.
-
-  For single-repo projects: leave the table body empty (header rows only). The
-  skill will still allow `/handoff self`; cross-repo handoffs will be refused
-  with a clear message.
--->
-
 | Slug (= directory name) | Tag | Purpose |
 |-------------------------|-----|---------|
-| beherouter             | —   | This repo |
+| beherouter              | Connectivity | This repo — the MCP gateway. |
+| beheaxi                 | AXI          | Shared CLI framework + `describe --json` manifest contract that `cli` backends speak. |
+| behemem                 | Memory       | Durable, cited recall layer; has its own MCP surface (six tools, streamable HTTP). |
+| behelib                 | Knowledge    | Searchable docs/RAG layer; hand-rolled MCP today, gateway-mount target. |
+| behetask                | Task         | Shared task store (REST + Click CLI); gateway-mount target. |
+| behecheck               | Code-review  | Hybrid code review → SARIF; FastMCP surface. |
+| behedaemon              | Operational  | Ops layer (role decided, not yet rebuilt). |
+| behelink                | Relay        | Public NAT rendezvous / Telegram relay. |
+| behesid                 | Simulation   | System dynamics engine + agent toolkit; beheaxi CLI now, MCP server at its E4. |
+| beheskills              | Skills       | Portable `SKILL.md` collection; canonical `/handoff` skill. |
 
 Slug = full repo directory name. Case-sensitive. The resolver is exact-match
 only — no aliases, no fuzzy matching.

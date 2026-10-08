@@ -36,8 +36,8 @@ beherouter handles both in one hop:
   definitions and can still reach all 30.
 - **Identity:** the gateway **verifies the caller** (an OIDC JWT from your IdP, accepted
   alongside or instead of a shared token) and **forwards that caller's identity** to each
-  backend in the form that backend expects: their own token, asserted headers, their own
-  PAT, or a per-user secret looked up for them. Two people on one gateway act as
+  backend in the form that backend expects: their own token, a token exchanged for them
+  at your IdP, asserted headers, their own PAT, or a per-user secret looked up for them. Two people on one gateway act as
   themselves in the same backend. This is verified end to end against a real
   `plane-mcp-server` in [`tests/e2e/`](tests/e2e/README.md).
 
@@ -99,6 +99,7 @@ per-user, and actually shared.
 | `claims` | trusts the gateway to say who is calling (`REMOTE_USER`-style) | claims mapped onto headers (`x-remote-user = email`). A missing claim refuses the call rather than sending a partial identity |
 | `client` | takes a per-user PAT the client can send | named client headers, **allow-listed**. Everything else the client sent is dropped, so there's no header smuggling |
 | `lookup` | needs a real secret the user can't send per request (an OAuth refresh token, a minted PAT) | the caller's entry from a mounted identity map, keyed by a claim. Hot-reloaded, so rotating a credential needs no restart |
+| `exchange` | verifies your IdP but, correctly, refuses a token addressed to the gateway | a token the gateway obtains for the caller by OAuth 2.0 Token Exchange (RFC 8693), addressed to the backend. Cached until shortly before expiry; a failed exchange never sends the call |
 
 The mode's output lands wherever the backing needs it: HTTP headers for `http`, a
 subprocess environment for `cli`, a per-user credential provider for `native`. A
@@ -138,11 +139,13 @@ plugin = "gcal"
 
 | Plugin | Modes | Notes |
 |---|---|---|
-| `office-mcp` | `bearer`, `claims`, `client` | |
+| `office-mcp` | `bearer`, `claims`, `client`, `exchange` | |
 | `plane-http-apikey` | `client` | each caller's Plane PAT. Works against stock `plane-mcp-server` |
-| `plane-http` | `bearer` | each caller's **IdP token**, through [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md). Plane itself must verify it |
-| `gcal`, `m365` | `lookup` | each caller's OAuth refresh token, from the identity map |
-| `openapi` | `bearer`, `claims`, `client`, `lookup` | each caller's material, on the upstream REST request |
+| `plane-http` | `bearer`, `exchange` | each caller's **IdP token** (or one exchanged for Plane), through [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md). Plane itself must verify it |
+| `gcal`, `m365` | `lookup` | each caller's OAuth refresh token, from the identity map; `calendar-consent` puts it there |
+| `openapi` | `bearer`, `claims`, `client`, `lookup`, `exchange` | each caller's material, on the upstream REST request |
+| `mcp-http` | `bearer`, `claims`, `client`, `exchange` | generic: any HTTP MCP server, by URL |
+| `beheaxi-cli` | `claims` | generic: any beheaxi CLI, as subprocess environment |
 
 A plugin that declares no identity support **can't** be configured for per-user use.
 Your own plugins declare their modes the same way (see [`docs/PLUGINS.md`](docs/PLUGINS.md)).
@@ -182,13 +185,22 @@ the backend's own verification of the forwarded identity is what enforces access
   `mismatch` catches exactly the incident this feature exists to prevent: every user's
   call quietly acting as the deployment identity. The token is read from a file or
   stdin, never from argv.
+- **Per-user calendar consent.** `beherouter calendar-consent <surface> --subject
+  <claim value>` runs one user's Google or Microsoft consent (PKCE, a loopback listener on
+  `127.0.0.1`) and writes their refresh token into the identity map, mode 0600;
+  `--revoke` removes it. See [`docs/CALENDAR-BOOTSTRAP.md`](docs/CALENDAR-BOOTSTRAP.md).
 - **Audit logs without secrets.** Each applied identity is logged with the subject, the
   mode and the *names* of the material applied, never a value.
 - **Expired tokens are called out.** An expired token is logged at WARNING and answered
   with RFC 6750 `error_description="token expired"`, so a client can tell "refresh"
   from "re-authenticate".
-- **Metrics.** `GET /metrics` (counters only, unauthenticated) exposes
-  `beherouter_auth_rejections_total{reason}` for `expired | invalid | issuer | audience | scope`.
+- **Metrics.** `GET /metrics` (unauthenticated) exposes call counts and latency, active
+  sessions, surface state and auth rejections by reason and surface.
+- **Audit, logs and machine-readable errors.** Every tool call writes one JSON audit line
+  (who, which tool, outcome, latency; never arguments), `BEHEROUTER_LOG_FORMAT=json` gives
+  single-line logs, `BEHEROUTER_CALL_TIMEOUT_S` / `call_timeout_s` bounds a call, and a failed
+  call carries a stable `reason` in its `_meta`. See
+  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) § Logs, audit and metrics.
 - **Kubernetes.** The chart's `auth.*`, `identityMap.*` and `caBundle.*` values feed
   both the Deployment and the `registry-lint` hook Job, so the pre-deploy gate sees the
   environment that will actually serve. `caBundle` covers an IdP or backend behind a
@@ -276,11 +288,15 @@ To make a surface per-user, add `[surface.identity]` (see
 | `registry-lint [--path P]` | Validates a registry offline, including every identity and authz rule. No network, no attach |
 | `context-cost [--surface S]` | What each surface's published tools cost a client's context |
 | `surfaces` | Attached surfaces and the plugin behind each |
-| `health [--deep] [--bearer-file F]` | `--deep` makes a real credentialed call per backend. `--bearer-file` repeats it as a user and reports who the backend saw |
+| `health [--deep] [--bearer-file F] [--textfile P]` | `--deep` makes a real credentialed call per backend. `--bearer-file` repeats it as a user and reports who the backend saw. `--textfile` writes the verdict for node_exporter, for a scheduled check |
 | `search` | BM25-search a backend's tools |
 | `client-config <agent>` | Paste-ready MCP config for a client. Never emits a credential, only a placeholder |
-| `attach` / `detach` | Add or remove a surface |
+| `attach <surface> <plugin> [--config k=v,…]` / `detach` | Add or remove a surface, editing `registry.toml` in place with its comments kept |
+| `catalog-import <file\|URL\|name> <surface>` | Registry fragments for a server from an MCP Registry `server.json`. `pinned`/`probe` come out as TODOs that fail lint until chosen |
+| `catalog-export <plugin>` | A curated plugin as a `server.json`, its pins and probe under `_meta` |
+| `calendar-consent <surface> --subject S` | One user's calendar consent, written into the identity map (`--revoke` removes it) |
 | `serve` | Run the gateway |
+| `--version` | The installed version |
 
 Every command speaks JSON (`--json` where applicable) and follows the
 [beheaxi](https://github.com/behemotion/beheaxi) CLI contract: reserved exit codes, RFC
@@ -305,10 +321,37 @@ Five backings:
 | `native` | In-process Python. No sidecar, no extra runtime | per-user credential provider |
 | `inproc` | An in-process FastMCP server: the `openapi` and `python-dir` sources and decorator plugins | per-call headers on the upstream request |
 
+The plugins in this tree, with the **maturity tier** their in-tree evidence proves (held
+by `tests/test_maturity.py`; see [`docs/PLUGINS.md`](docs/PLUGINS.md) § Maturity):
+
+| Plugin | Backing | Tier | What it fronts |
+|---|---|---|---|
+| `plane-http` | `http` | per-user | Plane over HTTP, each caller's IdP token |
+| `plane` | `stdio` | verified | Plane work tracking (`plane-mcp-server`, shipped in the image) |
+| `plane-http-apikey` | `http` | verified | Plane over HTTP, each caller's own PAT |
+| `office-mcp` | `http` | catalogued | office-mcp: convert, inspect and edit files |
+| `sonarqube` | `http` | catalogued | SonarQube findings, quality gates, measures |
+| `gcal`, `m365` | `native` | catalogued | Google / Microsoft 365 calendars |
+| `mcp-http`, `mcp-stdio`, `beheaxi-cli` | `http`, `stdio`, `cli` | declared | generic: any MCP server by URL or command, any beheaxi CLI |
+| `openapi`, `python-dir` | `inproc` | declared | generic: a REST API from its OpenAPI document; a directory of `@tool` functions |
+
+`declared` < `probed` < `catalogued` < `verified` < `per-user`. A tier says what is
+**proven**, not what works: a generic plugin is `declared` because nothing tested *your*
+entry's pins and probe — `health --deep` after the deploy does. `registry-lint` warns on
+a `declared` plugin.
+
+No curated plugin for a backend? Three **generic** ones attach it by address:
+`mcp-http` (a URL), `mcp-stdio` (a command) and `beheaxi-cli` (a beheaxi CLI). They
+require `probe` in the entry (and `pinned`, for the two MCP ones), because there is no
+tested default to fall back to. See [`docs/PLUGINS.md`](docs/PLUGINS.md) § Generic plugins.
+A server listed in the MCP Registry can start from `catalog-import`, which emits the
+generic plugin's entry from its `server.json`.
+
 Plugins don't have to live in this tree. A package that advertises the
 `beherouter.plugins` entry point is picked up at startup, so a team with an internal
 backend extends the gateway instead of forking it. On Kubernetes, the chart installs
-such packages with `plugins.install`.
+such packages with `plugins.install`. An entry point that fails to import is skipped, not
+fatal, and `plugins` lists it under `failed`.
 
 Writing one: **[`docs/PLUGINS.md`](docs/PLUGINS.md)**.
 
@@ -322,12 +365,21 @@ Artifacts:
 
 - Image: **`ghcr.io/behemotion/beherouter`**, published on every release tag
   (multi-arch amd64/arm64, runs as UID 1000). Build it yourself from the repo-root
-  [`Containerfile`](Containerfile). [`podman-compose.yml`](podman-compose.yml) runs it
-  on a single host
+  [`Containerfile`](Containerfile).
+- Single podman host: [`scripts/deploy.sh`](scripts/deploy.sh) pulls the release, lints
+  the registry **inside the new image**, switches containers, verifies `/healthz` (and
+  `health --deep` with `--deep`) and **rolls back automatically**, registry included.
+  [`podman-compose.yml`](podman-compose.yml) is the plain alternative
 - Kubernetes: **`oci://ghcr.io/behemotion/charts/beherouter`** (Helm; source in
   [`charts/beherouter`](charts/beherouter)). It defaults to the published image, so the
   only required value is the gateway token (none at all in pure `auth.mode=oidc`). The
   `registry-lint` pre-deploy gate runs as a pre-install/pre-upgrade hook Job
+
+`/healthz` is shallow by design and stays green through a revoked backend credential, so
+run `health --deep --textfile` on a schedule: [`contrib/health-textfile/`](contrib/health-textfile/README.md)
+has the systemd timer, a CronJob and the alert rules, and the chart has an opt-in
+`healthCronJob`. `/healthz` itself reports `degraded` with the `failed` surfaces, the
+ones that `needs_config_change` (no longer retried), and any `pinned_missing` tools.
 
 Full guide, including the pre-deploy `registry-lint` gate and the failure modes worth
 knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
@@ -336,14 +388,17 @@ knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 
 | Document | What it covers |
 |---|---|
-| [`docs/IDENTITY.md`](docs/IDENTITY.md) | Per-user identity: OIDC next to the shared token, the four modes, the identity map, role and audience gates, user probes, every refusal rule |
-| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Writing a plugin: the contract, the five backings, pins and probes, identity support, out-of-tree plugins, testing |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deploying, verifying, upgrading, rolling back |
+| [`docs/IDENTITY.md`](docs/IDENTITY.md) | Per-user identity: OIDC next to the shared token, the five modes, the identity map, role and audience gates, user probes, every refusal rule |
+| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Writing a plugin: the contract, the five backings, generic plugins, pins and probes, maturity tiers, importing from the MCP Registry, identity support, out-of-tree plugins, testing |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deploying (`scripts/deploy.sh`, Helm), verifying, scheduled deep health, upgrading, rolling back |
+| [`docs/CALENDAR-BOOTSTRAP.md`](docs/CALENDAR-BOOTSTRAP.md) | Setting up the `gcal` / `m365` calendar surfaces and per-user consent |
+| [`contrib/health-textfile`](contrib/health-textfile/README.md) | Scheduled `health --deep` into Prometheus: metric contract, timer, CronJob, alert rules |
 | [`tests/e2e/`](tests/e2e/README.md) | The local end-to-end stack that proves per-user identity against a real `plane-mcp-server` |
 | [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md) | The Plane mount that forwards a caller's IdP token |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | Why build rather than adopt: the aggregator survey and the LiteLLM-MCP spike |
 | [`docs/FASTMCP-NOTES.md`](docs/FASTMCP-NOTES.md) | FastMCP 3.x API notes |
-| [`AGENTS.md`](AGENTS.md) | Working context for coding agents: the live operational detail |
+| [`AGENTS.md`](AGENTS.md) | Working context for coding agents: constraints, traps, conventions |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release, and what is unreleased |
 
 ## Attribution
 

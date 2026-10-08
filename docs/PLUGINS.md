@@ -103,6 +103,68 @@ Three things `inproc` does that the other MCP backings do not have to:
   an upstream 4xx is the caller's to correct (`UsageError`). A crash, an
   upstream 5xx or a network failure is an outage (`Unavailable`).
 
+## Generic plugins: `mcp-http`, `mcp-stdio`, `beheaxi-cli`
+
+When a backend has no curated plugin, three generic ones attach it by address.
+`beherouter plugins` marks them `"generic": true` (as it does `openapi` and
+`python-dir`): no tested default stands behind them, so **the entry supplies the
+check that proves the surface works.** `url`/`cmd` left `registry.toml` because
+`gitea-home` attached with no probe and served a revoked token for a day; these
+plugins bring the address back without that hole.
+
+| Plugin | Backing | Entry must set | Credential | Identity |
+|---|---|---|---|---|
+| `mcp-http` | `http` | `probe`, `pinned` | optional `api_key` → `<auth_header>: <auth_prefix><key>` (default `authorization: Bearer …`) | `bearer`, `claims`, `client`, `exchange` |
+| `mcp-stdio` | `stdio` | `probe`, `pinned` | optional `api_key` → the subprocess variable named by `api_key_env` | none — stdio never can |
+| `beheaxi-cli` | `cli` | `probe` | none | `claims`, as subprocess environment |
+
+```toml
+[behemem]
+plugin = "mcp-http"
+pinned = ["memory_search_notes", "memory_read_note", "memory_write_note"]
+probe = "memory_list_directory"
+  [behemem.config]
+  url = "https://behemem-mcp.example.com/mcp"   # another host: reached by its vhost
+  [behemem.env]
+  api_key = "${BEHEROUTER_BEHEMEM_API_KEY}"
+
+[behecheck]
+plugin = "mcp-stdio"
+pinned = ["review_diff", "explain_finding", "list_rules", "health", "search"]
+probe = "health"
+  [behecheck.config]
+  cmd = "behecheck-mcp"
+
+[behesid]
+plugin = "beheaxi-cli"
+probe = "inspect"            # read-only; reads the model directory
+pinned = ["validate", "inspect", "run", "series"]   # optional: bare verbs
+  [behesid.config]
+  cmd = "behesid"
+```
+
+- **The credential is optional, and it is still a closed set.** It is the one
+  place `EnvVar(required=False)` is used: a generic plugin cannot know whether
+  the backend takes one. It is named `api_key`, never `token`, because `token`
+  derives `BEHEROUTER_<SURFACE>_TOKEN`, the client's gateway-bearer variable.
+  `plugin-config` emits it **commented out**, so the generated block lints as
+  is and nothing un-vaulted reaches the env file.
+- **`mcp-stdio` takes the credential as a pair**: `api_key` in `[surface.env]`
+  and `api_key_env` in `[surface.config]`. Half a pair is refused at attach,
+  naming the missing half.
+- **`cmd` must exist in the image** (`mcp-stdio`, `beheaxi-cli`).
+  `registry-lint` warns when it is not on `PATH` where lint runs. Attach refuses
+  a missing stdio command by name; a missing CLI fails attach as `Unavailable`.
+- **A `beheaxi-cli` surface pins by bare verb**, and without `pinned` it uses
+  the manifest's own per-verb `pinned` flags. Published names are
+  `<surface>_<verb>`. The probe is required because a beheaxi manifest cannot
+  declare a health verb; choose a read-only verb that touches what the CLI
+  depends on.
+- **Graduate to a curated plugin** once a backend's catalogue warrants versioned
+  pins, search aliases and a probe that travels with the code. Generic is how a
+  backend gets attached today; curated is how its knowledge stops living in one
+  operator's registry file.
+
 ## Sources: `openapi`
 
 A customer's REST API, attached from its OpenAPI document with no MCP server and
@@ -239,9 +301,10 @@ Every top-level `@tool` function in every `.py` file under `path` (recursive;
   import is caught only at attach. If `path` is absent on the machine running
   lint, it warns instead of failing.
 - **No per-user identity.** `[ops.identity]` is refused.
-- ⚠️ Module names are process-wide: two `python-dir` directories must not
-  both ship a helper module of the same name that siblings import (the second
-  directory would get the first's). Give helper modules distinct names.
+- Each directory's modules are private to its surface: two `python-dir`
+  directories that both ship a `helpers.py` each get their own. ⚠️ Import
+  siblings at module **top level**. An import inside a function body runs at
+  call time, after the directory's modules have left `sys.modules`, and fails.
 - No hot reload: the published tools array is frozen per process by design.
   Restart the gateway to pick up a changed file.
 - On Kubernetes, mount the directory with the chart's `extraVolumes` /
@@ -264,6 +327,8 @@ class PluginSpec:
     catalogue_ttl_ms: int = 300_000    # 0 disables refresh
     search_aliases: Mapping[str, tuple[str, ...]] = {}  # tool -> extra search words
     requires_entry: tuple[str, ...] = ()  # entry keys with no tested default
+    maturity: str = "declared"         # one of MATURITY_TIERS; see § Maturity
+    evidence: tuple[str, ...] = ()     # what proves the tier, relative to the repo root
 ```
 
 | Field | Meaning |
@@ -278,6 +343,7 @@ class PluginSpec:
 | `catalogue_ttl_ms` | How long the searchable catalogue stays fresh |
 | `search_aliases` | Extra search words per tool: what agents type that the backend's descriptions lack. See § Search vocabulary |
 | `requires_entry` | Registry-entry keys (`"probe"`, `"pinned"`) the entry **must** set, for a generic source with no tested default to fall back to. `validate_entry` refuses an entry without them, and `plugin-config` emits them |
+| `maturity` / `evidence` | The tier the plugin claims and the recorded catalogues and test ids that prove it. See § Maturity |
 
 ## `pinned` and `probe` are overrides, not required knowledge
 
@@ -356,6 +422,10 @@ and accepting `True` for an int field would silently turn a typo into the value 
 **`EnvVar` names a credential logically.** The plugin maps it to wherever it actually goes —
 a subprocess environment variable, an HTTP header, an OAuth exchange — so the operator never
 needs to know the backend's own variable name.
+
+**Every declared credential is mandatory unless it says `required=False`.** Only a generic
+plugin, which cannot know whether its backend takes one, should say so. Undeclared names are
+refused either way, and `plugin-config` emits an optional one commented out.
 
 ## `validate()` — enforcing a backend's quirks at config time
 
@@ -466,6 +536,50 @@ matters more than their shape:
 upstream — as *tests*, not comments. Both were discovered on the day the surface shipped,
 and both listed cleanly first.
 
+## Maturity
+
+Every plugin states how much of it is **proven**, not how good it is. `beherouter plugins`
+shows the tier; `registry-lint` warns on an entry whose plugin is only `declared`, naming
+what would raise it. Tiers are cumulative:
+
+| Tier | What in-tree evidence proves |
+|---|---|
+| `declared` | nothing: a spec exists. Every generic plugin, and anything `catalog-import` produced |
+| `probed` | the default `probe` is in a cited recorded catalogue, and its `probe_args` (or `{}`) validate against that tool's `inputSchema` |
+| `catalogued` | every pin and every `search_aliases` key is in that catalogue |
+| `verified` | an `evidence` id resolves to an e2e check: `path::test_fn`, or `tests/e2e/e2e.py::<check name>` for the driver script |
+| `per-user` | the plugin declares `IdentitySupport` **and** cites an e2e check asserting `matches_caller` |
+
+The in-tree tiers today: `plane-http` per-user; `plane` and `plane-http-apikey` verified;
+`office-mcp`, `sonarqube`, `gcal` and `m365` catalogued; the generic plugins declared.
+
+Declare it on the spec and prove it in your test suite:
+
+```python
+SPEC = PluginSpec(..., maturity="catalogued",
+                  evidence=("tests/catalogues/acme-2.1.0.json",))
+
+from beherouter.testing import plugin_conformance
+
+def test_my_plugin_meets_its_tier():
+    report = plugin_conformance(SPEC)          # root defaults to the cwd
+    assert report.ok, report.problems
+```
+
+`tests/test_maturity.py` runs exactly this over every in-tree plugin, so a tier cannot
+outlive its evidence. Record a catalogue with `scripts/record_catalogue.py`.
+
+- ⚠️ **Evidence must resolve, even when the tier is otherwise met.** A cited file or test
+  id that has gone away fails conformance: stale evidence is how a tier silently stops
+  being true.
+- ⚠️ **Conformance cannot check that a cited e2e check exercises *this* plugin.** The id
+  must exist, and for `per-user` must assert `matches_caller`; that it is the right check is
+  a code-review question, which is why the id is spelled out on the spec.
+- ⚠️ **An out-of-tree plugin is shown as `probed` at most** unless every evidence path it
+  cites ships in its own distribution. The gateway runs nobody's test suite, so a claim it
+  cannot see the evidence for is displayed as the claim it can be checked down to, with a
+  note saying why.
+
 ## Attaching it
 
 A registry entry is a plugin name plus overrides:
@@ -496,6 +610,50 @@ the env line. It **never emits a credential**, only a placeholder. Then validate
 beherouter registry-lint --path registry.toml
 ```
 
+`attach <surface> <plugin> --config k=v,k=v` writes the same block into `registry.toml`
+**in place**, keeping the file's comments and layout (`detach` likewise). Values are
+coerced: integers, floats and `true`/`false` become TOML types; repeat a key for a list.
+
+## Importing from the MCP Registry
+
+The MCP Registry's `server.json` says how to **reach or launch** a server and which secrets
+it needs. It carries no tool list, no pins and no probe, so it is an import *source* for the
+generic plugins, never a plugin of its own:
+
+```bash
+beherouter catalog-import ./server.json acme               # a file
+beherouter catalog-import https://…/server.json acme        # a URL
+beherouter catalog-import io.github.acme/acme-mcp@1.4.0 acme   # a registry name
+beherouter catalog-import io.github.acme/acme-mcp acme --registry https://registry.internal
+```
+
+The verbs are flat and the surface is positional (beheaxi renders a required parameter as
+an argument, as `plugin-config <surface> <plugin>` does). A `remotes[]` entry becomes an
+`mcp-http` block, a `packages[]` entry an `mcp-stdio` one; like `plugin-config`, the output
+is the registry, proxy and env fragments, with a placeholder and never a credential.
+
+- ⚠️ **`pinned` and `probe` come out as TODOs that fail `registry-lint`**, so an imported
+  entry cannot be committed until someone has chosen them — the `gitea-home` rule surviving
+  the import path. A server that publishes an `io.beherouter/plugin` block under `_meta`
+  (`io.modelcontextprotocol.registry/publisher-provided`) gets them filled in instead. The
+  block is **advisory**: it becomes entry overrides an operator reviews, never trusted spec
+  data, and its identity modes count only where the target plugin already declares them.
+- ⚠️ **A package is pinned to its exact version**, never `latest`: an unpinned `npx` is a
+  different server on every restart, behind a probe chosen for the old one.
+- ⚠️ **The published image has no Node and no `uvx` alias**, so an imported `npm` or `pypi`
+  package needs a derived image (or a `cmd` override); the import says so.
+- ⚠️ **A generic plugin carries one credential (`api_key`).** A server declaring more is
+  imported with the first required one and a warning naming every other — a missing
+  second secret attaches green and fails on the first call that needs it.
+
+The reverse, for a private subregistry: `beherouter catalog-export <plugin>` emits a curated
+plugin as a `server.json` with its pins, probe and aliases in that `_meta` block
+(`--name`, `--server-version`, `--url`, `--package` fill what the spec cannot know).
+The plugin's credentials are **not** described — how the plugin sends one lives in its
+`build()` — so export warns, naming them, and you add `remotes[].headers` or
+`packages[].environmentVariables` yourself. What is imported is `declared`
+(§ Maturity) until a curated plugin proves more.
+
 ## Four warnings
 
 ⚠️ **A surface that fails to attach is isolated, not fatal.** A `build()` that raises, or
@@ -503,8 +661,11 @@ an attach that takes longer than `BEHEROUTER_ATTACH_TIMEOUT_S` (default 30 s), l
 one surface answering RFC 9457 `503` while the gateway retries it in the background (5 s,
 doubling to 300 s) and swaps it in on the first success. `/healthz` stays HTTP 200 but
 reports `"status": "degraded"` and lists the surface under `failed`; the error itself is
-only in the container logs. What `registry-lint` can see — an unknown plugin, a bad config
-value, an unset `${VAR}` — **still refuses boot**, so run it before a deploy.
+only in the container logs. A **configuration** fault found at attach (a `UsageError`, such
+as a bad `[surface.identity]`) is not retried — it will not fix itself — so the surface also
+appears under `needs_config_change` and its `503` says it will not be retried. What
+`registry-lint` can see — an unknown plugin, a bad config value, an unset `${VAR}` —
+**still refuses boot**, so run it before a deploy.
 
 ⚠️ **An entry may not be committed before its secret exists.** An unset or empty `${VAR}` is
 a `UsageError` raised during `build_surfaces` — i.e. at *startup* — so it does not yield a
@@ -515,7 +676,8 @@ together, or not at all.
 change.** A backend's catalogue advertises the **commercial** surface, so "the tool exists"
 says nothing about whether *this* deployment serves it. Since 2026-09-10 `health --deep`
 fails a surface whose pin list names a tool the backend no longer serves (`catalogue:
-"pinned_missing"`), so the *existence* half is mechanical — proving a served tool still
+"pinned_missing"`), and `/healthz` lists such pins under `pinned_missing` from attach on
+(a WARNING, not a status change), so the *existence* half is mechanical — proving a served tool still
 **works** is what `probe` is for.
 
 ⚠️ **One backend credential means one identity — unless the surface declares
@@ -524,7 +686,7 @@ attributed to the single account whose token or consent it carries, and making t
 surface available to every user did not make it per-user.
 
 A plugin can opt into per-user calls by declaring `IdentitySupport` on its spec:
-which of the four modes it can carry, which slot they land in, and which target
+which of the five modes it can carry, which slot they land in, and which target
 names it accepts.
 
 | `target` | For backing | The entry's map keys are | `accepts` |
@@ -581,10 +743,12 @@ plugins`, `plugin-config` and `registry-lint` see it like any other.
 
 Three rules worth knowing:
 
-- ⚠️ **An entry point that fails to import is logged and skipped**, not fatal.
-  One broken third-party dependency must not cost the gateway every other
-  plugin. Nothing is served by a plugin that did not load: a registry naming it
-  fails with `unknown plugin`, from `registry-lint`, before a deploy.
+- ⚠️ **An entry point that fails to import is logged, recorded and skipped**, not
+  fatal. One broken third-party dependency must not cost the gateway every other
+  plugin. It is not silent either: `beherouter plugins` lists it under `failed`,
+  `registry-lint` warns about it, and a registry naming it fails with
+  `unknown plugin` — an error that names the entry points that failed to load,
+  since that is the likeliest reason.
 - ⚠️ **An external plugin cannot shadow an in-tree one.** Discovery runs after
   the in-tree imports and `register()` refuses a duplicate name, so the in-tree
   plugin survives the attempt.
