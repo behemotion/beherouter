@@ -1,0 +1,11 @@
+# Keeps the SHA-pinned actions current (AUDIT-2026-09-22 §5.7): a pin without a
+# bump bot just freezes whatever was latest on the day it was written.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

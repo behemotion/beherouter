@@ -7,13 +7,27 @@ on:
   push:
     tags: ['v*']
 
+# Read-only by default; the image and chart jobs escalate to exactly what they
+# need (packages:write, contents:write for the GitHub Release).
+permissions:
+  contents: read
+
+# One release run per tag, never cancelled midway: a half-finished release
+# (image pushed, chart not) is worse than a slow one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Every action is pinned to a full commit SHA; this workflow can push to GHCR
+# and cut a release, so a moved tag must not be able to change what runs.
+
 jobs:
   # Same gate as CI, on the exact revision being released -- a tag cut from an
   # untested commit must not ship an image just because main was green.
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # The image tag (v stripped) is the chart's default image tag and the
       # pyproject version; drift means clients pull the wrong image silently.
@@ -27,16 +41,31 @@ jobs:
           [ "$tag" = "$appVersion" ] || { echo "::error::git tag v${tag} != chart appVersion ${appVersion} (the default image tag)"; exit 1; }
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.12"
 
       - name: Sync dependencies from the committed lockfile
         run: uv sync --frozen --extra dev
 
-      - name: Lint (ruff)
-        run: uv run ruff check .
+      - name: CLI version must equal the tag
+        run: |
+          cli="$(uv run beherouter --version)"
+          [ "$cli" = "beherouter ${GITHUB_REF_NAME#v}" ] \
+            || { echo "::error::'beherouter --version' says '${cli}' for tag ${GITHUB_REF_NAME}"; exit 1; }
 
-      - name: Test (pytest)
-        run: uv run pytest -q
+      # The same gates as ci.yml's check job, on the exact tagged revision.
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Type check (mypy)
+        run: uv run mypy src
+
+      - name: Test (pytest, with coverage floor)
+        run: uv run pytest -q --cov=beherouter --cov-report=term
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run pip-audit
 
       - name: Conformance (dogfood the harness standard)
         run: uv run beheaxi conformance "beherouter" --json
@@ -51,16 +80,16 @@ jobs:
       contents: write   # create the GitHub Release
       packages: write   # push to GHCR
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: arm64
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -70,14 +99,14 @@ jobs:
       # no leading v) and `latest` (the default flavor adds it on semver tags).
       - name: Image tags and OCI labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: ./Containerfile
@@ -108,7 +137,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           body: ${{ steps.changelog.outputs.body }}
           generate_release_notes: true
@@ -126,11 +155,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: image
     permissions:
-      packages: write
+      contents: read    # checkout
+      packages: write   # push the chart to GHCR
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
       - name: Log in to GHCR
         run: |

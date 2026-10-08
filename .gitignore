@@ -59,3 +59,9 @@ CLAUDE.md
 # e2e run artifacts: signed tokens and a generated registry, never committed
 tests/e2e/material.json
 tests/e2e/registry.toml
+
+# coverage (pytest-cov)
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

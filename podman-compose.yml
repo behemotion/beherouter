@@ -1,3 +1,6 @@
+# Local / development use. For a production single host, scripts/deploy.sh
+# runs the same container with the pre-deploy lint, health verification and
+# automatic rollback (docs/DEPLOYMENT.md § Single-host deploy).
 services:
   beherouter:
     build: .

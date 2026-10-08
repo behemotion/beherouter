@@ -4,15 +4,72 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The e2e job is slow (four images, a live plane-mcp-server); a manual run
+  # re-establishes it on demand, e.g. before cutting a release tag.
+  workflow_dispatch:
+
+# Least privilege by default: nothing in CI writes to the repository or a
+# registry. A job that needs more asks for it itself (none do today).
+permissions:
+  contents: read
+
+# A newer push to the same PR supersedes the older run. Pushes to main are
+# never cancelled: each one is a revision someone may tag.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every action is pinned to a full commit SHA (the tag comment is for humans
+# and for Dependabot): release.yml holds packages:write and contents:write, and
+# a moved tag is otherwise all it takes to run someone else's code there.
 
 jobs:
+  # Cheap, toolchain-free consistency gates -- they fail the PR that introduces
+  # drift instead of the tag push that would ship it.
+  repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The pyproject version is the image tag; the chart's appVersion is the
+      # chart's default image tag. If they disagree, a `helm install` with
+      # defaults pulls an image that is not this revision. release.yml repeats
+      # this against the git tag; here it runs on every push.
+      - name: pyproject version must equal chart appVersion
+        run: |
+          pyproject="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)"
+          appVersion="$(sed -n 's/^appVersion: "\(.*\)"$/\1/p' charts/beherouter/Chart.yaml)"
+          echo "pyproject=${pyproject} appVersion=${appVersion}"
+          [ -n "$pyproject" ] || { echo "::error::no version in pyproject.toml"; exit 1; }
+          [ "$pyproject" = "$appVersion" ] \
+            || { echo "::error::pyproject version ${pyproject} != chart appVersion ${appVersion}"; exit 1; }
+
+      # podman/buildah read .containerignore; BuildKit (which builds the
+      # published image) reads only .dockerignore. Two files, one content.
+      - name: .dockerignore must equal .containerignore
+        run: |
+          diff -u .containerignore .dockerignore \
+            || { echo "::error::.dockerignore and .containerignore differ; keep them identical"; exit 1; }
+
+      - name: Shellcheck
+        run: shellcheck scripts/deploy.sh tests/e2e/up.sh
+
+      - name: Lint Containerfile (hadolint)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Containerfile
+
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      # python-version pins the interpreter CI tests on; requires-python only
+      # sets a floor, and ruff's target-version asserts 3.12.
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.12"
 
       # --frozen, not a plain sync: this asserts the committed uv.lock is
       # self-sufficient in a checkout that has no sibling ../beheaxi. That is
@@ -21,11 +78,30 @@ jobs:
       - name: Sync dependencies from the committed lockfile
         run: uv sync --frozen --extra dev
 
-      - name: Lint (ruff)
-        run: uv run ruff check .
+      # The CLI reports the installed distribution's version; a drift here is
+      # what `describe --json` would publish to every consumer.
+      - name: CLI version must equal pyproject version
+        run: |
+          pyproject="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)"
+          cli="$(uv run beherouter --version)"
+          echo "pyproject=${pyproject} cli=${cli}"
+          [ "$cli" = "beherouter ${pyproject}" ] \
+            || { echo "::error::'beherouter --version' says '${cli}', pyproject says ${pyproject}"; exit 1; }
 
-      - name: Test (pytest)
-        run: uv run pytest -q
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Type check (mypy)
+        run: uv run mypy src
+
+      # The coverage floor lives in ONE place, pyproject.toml
+      # [tool.coverage.report] fail_under, which pytest-cov honours.
+      - name: Test (pytest, with coverage floor)
+        run: uv run pytest -q --cov=beherouter --cov-report=term
+
+      # The gateway holds a credential for every backend it fronts.
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run pip-audit
 
       # Exits non-zero if any AXI check fails, failing this step.
       - name: Conformance (dogfood the harness standard)
@@ -36,12 +112,15 @@ jobs:
   helm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install kubeconform
         run: |
-          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
-            | tar xz kubeconform
+          curl -sSfLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  kubeconform.tar.gz" \
+            | sha256sum -c -
+          tar xzf kubeconform.tar.gz kubeconform
           sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
 
       - name: Lint chart (all ci/ scenarios)
@@ -89,20 +168,96 @@ jobs:
           fi
           echo "OK: defaults refused with a required-values error"
 
+      # The scheduled deep-health Job writes through a hostPath on a pinned
+      # node; enabling it without one must be a render error, not a Job that
+      # writes its textfile nowhere a node_exporter reads.
+      - name: Health CronJob without a hostPath must refuse to render
+        run: |
+          if helm template beherouter charts/beherouter -f charts/beherouter/ci/minimal.yaml \
+               --set healthCronJob.enabled=true >/dev/null 2>&1; then
+            echo "::error::healthCronJob.enabled rendered without healthCronJob.textfile.hostPath"
+            exit 1
+          fi
+          echo "OK: healthCronJob without a hostPath refused"
+
   # The root Containerfile is a shipped artifact (release.yml builds the
   # published image from it); build it on every PR and main push so it cannot
-  # rot between releases. Native amd64, no push.
+  # rot between releases. BuildKit, exactly as release.yml builds it, so the
+  # .dockerignore context is what is exercised. Native amd64, no push.
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: ./Containerfile
           push: false
           cache-from: type=gha
+
+  # tests/e2e/: the image built with PODMAN (the supported runtime), four
+  # containers on one podman network, and the assertions that a per-user
+  # identity reaches a REAL plane-mcp-server. The unit suite proves the rules;
+  # this proves the deployment. GitHub's ubuntu runners ship rootless podman.
+  e2e:
+    runs-on: ubuntu-24.04
+    needs: check
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies from the committed lockfile
+        run: uv sync --frozen --extra dev
+
+      # The stack resolves its backends BY NAME on one podman network, which
+      # needs aardvark-dns; and the Containerfiles and up.sh use short image
+      # names (python:3.12-slim), which a non-interactive podman refuses to
+      # resolve without a search registry.
+      - name: Prepare podman
+        run: |
+          dpkg -s aardvark-dns >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends aardvark-dns
+          }
+          mkdir -p ~/.config/containers
+          printf '%s\n' 'unqualified-search-registries = ["docker.io"]' 'short-name-mode = "permissive"' \
+            > ~/.config/containers/registries.conf
+          podman version
+
+      - name: Mint the e2e key material
+        run: uv run python tests/e2e/mint.py
+
+      - name: Build images (podman)
+        run: |
+          podman build -t localhost/beherouter:e2e -f Containerfile .
+          podman build -t localhost/plane-mcp:e2e -f tests/e2e/Containerfile.plane-mcp tests/e2e
+          podman build -t localhost/plane-mcp-bearer:e2e \
+            -f contrib/plane-mcp-bearer/Containerfile contrib/plane-mcp-bearer
+
+      - name: Start the stack
+        run: bash tests/e2e/up.sh
+
+      - name: Run the e2e assertions
+        run: uv run python tests/e2e/e2e.py
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: |
+          for c in beherouter plane-mcp plane-mcp-bearer echo-mcp e2e-fixtures; do
+            echo "::group::$c"
+            podman logs --tail 200 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
+
+      - name: Tear down
+        if: always()
+        run: podman rm -f beherouter plane-mcp plane-mcp-bearer echo-mcp e2e-fixtures || true
