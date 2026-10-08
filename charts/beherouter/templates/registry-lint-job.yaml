@@ -23,8 +23,14 @@ spec:
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
+      # NOT the selector labels: the Service, the PDB and the NetworkPolicy all
+      # select on name+instance, so a hook pod carrying both would be counted
+      # as a gateway replica and could be routed gateway traffic. Same rule as
+      # the health CronJob. (The Deployment's selector is immutable, so the fix
+      # lives here, on the pods that must NOT match it.)
       labels:
-        {{- include "beherouter.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: beherouter
         app.kubernetes.io/component: registry-lint
     spec:
       restartPolicy: Never

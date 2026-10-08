@@ -58,7 +58,7 @@ helm install beherouter charts/beherouter \
 | `registry.toml` on disk | ConfigMap, checksum-annotated so edits roll the pods |
 | `.env` rendered from your secret store | Secret (`secret.create=true`) or any existing Secret (`secret.create=false` + `existingSecret.name`) |
 | `registry-lint` inside the new image, before switching | **pre-install/pre-upgrade hook Job** running the same image with the same env |
-| Caddy edge, per-surface token clauses | Ingress for routing only — **authentication is yours** (forward-auth, oauth2-proxy, Gateway API filters) |
+| A reverse proxy (e.g. Caddy) with per-surface token clauses | Ingress for routing only — **authentication is yours** (forward-auth, oauth2-proxy, Gateway API filters) |
 | loopback bind, only the proxy reaches the gateway | `networkPolicy.enabled` (off by default; selectors are cluster-specific) |
 | crash-loop takes the whole gateway down | `maxUnavailable: 0` rollout — the old revision keeps serving while the new pod fails |
 
@@ -104,6 +104,47 @@ to migrate.
 | `caBundle.enabled` / `.configMap` / `.keys` / `.systemBundle` | `false` / – / all keys / `/etc/ssl/certs/ca-certificates.crt` | A private CA for the IdP's JWKS or a backend. An init container appends the ConfigMap's PEMs to the system bundle; the gateway gets `SSL_CERT_FILE` + `REQUESTS_CA_BUNDLE`, and so do its stdio children. ⚠️ Without it every JWT fails while the shared token stays green |
 | `plugins.install` / `.indexUrl` / `.indexCredentialsSecret` / `.path` | `[]` / PyPI / – / `/opt/beherouter/plugins` | Out-of-tree plugins, installed by an init container onto `PYTHONPATH` for the gateway **and** the lint hook. Shared dependencies are pinned to the gateway's own versions, so a conflicting plugin fails its init container instead of shadowing the gateway. The Secret holds `username` + `password`. Makes the index a pod-start dependency |
 | `extraInitContainers` / `extraVolumes` / `extraVolumeMounts` | `[]` | Rendered into the Deployment and the lint hook alike, after the chart's own init containers |
+| `healthCronJob.enabled` / `.schedule` / `.textfile.hostPath` | `false` / `*/5 * * * *` / required | Scheduled `health --deep` into a node_exporter textfile; see below |
+
+## Scheduled deep health (optional)
+
+`/healthz` stays green through a revoked backend credential — catalogues are
+served from the attach-time cache. Only `beherouter health --deep` calls each
+backend's probe. `healthCronJob.enabled: true` runs it on a schedule and writes
+the verdict as a node_exporter **textfile-collector** file
+(`--textfile`), the contract in
+[`contrib/health-textfile/README.md`](../../contrib/health-textfile/README.md)
+(metrics, alert rules):
+
+```yaml
+healthCronJob:
+  enabled: true
+  textfile:
+    hostPath: /var/lib/node_exporter/textfile_collector   # required
+  nodeSelector:
+    kubernetes.io/hostname: node-running-node-exporter
+```
+
+- It runs with the gateway's **own** env helper, Secret, registry ConfigMap,
+  `extraEnv`, identity map, `caBundle` and `plugins.install` init containers —
+  the sweep attaches every backend fresh and needs every `${VAR}` the registry
+  names, exactly like the lint hook.
+- The file is written through a `hostPath` on **one** node, read by the
+  node_exporter pod there. Pin the Job with `nodeSelector` (add `tolerations`
+  if that node is tainted) so successive runs overwrite one file instead of
+  leaving a stale copy on every node a run ever landed on. The directory must
+  already exist and be writable by UID 1000.
+- `concurrencyPolicy: Forbid`, `backoffLimit: 0` — the next schedule is the
+  retry. Exit 6 (a red sweep, already recorded in the file) counts as Job
+  **success**, so a failed Job means "the sweep could not run"; alert on the
+  file's staleness for that.
+- `healthCronJob.bearerFile.secretName` + `.key` adds the **per-user** probe
+  (`--bearer-file`) from an existing Secret holding a monitoring identity's
+  token. ⚠️ An IdP JWT expires; refresh the Secret faster than it does or the
+  `user_probe` series reads `rejected`.
+- With your own egress-restricting NetworkPolicy, allow these Job pods the same
+  egress as the gateway. They deliberately do **not** carry the Service's
+  selector labels, so a Ready Job pod is never routed gateway traffic.
 
 ## Caveats carried over from the VM deployment
 

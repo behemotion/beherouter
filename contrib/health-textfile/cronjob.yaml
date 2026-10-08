@@ -1,0 +1,82 @@
+# Scheduled deep health for a beherouter installed from the Helm chart.
+# Chart-agnostic: replace RELEASE with your release's fullname (the chart's
+# `<release>-beherouter` unless fullnameOverride is set) and X.Y.Z with the
+# gateway's own version. See README.md for the metric contract.
+#
+# It writes a textfile-collector file on ONE node, read by the node_exporter
+# DaemonSet pod on that node. Pinned with nodeSelector so successive runs
+# overwrite one file instead of leaving a stale copy on every node a run ever
+# landed on (each would be exported, with its own `instance`, forever).
+# Prefer a Pushgateway? See README.md § Kubernetes.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: RELEASE-health
+spec:
+  schedule: "*/5 * * * *"
+  # Never two sweeps at once; a slow sweep delays the next instead.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A retry would just re-probe the same dead credential; the next
+      # schedule is the retry. The textfile, not the Job status, is the signal.
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeSelector:
+            kubernetes.io/hostname: NODE-RUNNING-NODE-EXPORTER
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          containers:
+            - name: health
+              image: ghcr.io/behemotion/beherouter:X.Y.Z
+              # Exit 6 is a red sweep, already recorded in the file: report the
+              # Job as succeeded so `kube_job_failed` means "could not run".
+              command: ["/bin/sh", "-c"]
+              args:
+                - >-
+                  beherouter health --deep --json
+                  --textfile /textfile/beherouter.prom;
+                  rc=$?; [ "$rc" -eq 0 ] || [ "$rc" -eq 6 ]
+              env:
+                - name: BEHEROUTER_REGISTRY
+                  value: /data/registry.toml
+              # The gateway's own Secret: the sweep attaches every backend and
+              # needs every ${VAR} the registry names. With existingSecret, or
+              # backend vars in extraEnv, mirror those here instead.
+              envFrom:
+                - secretRef:
+                    name: RELEASE-env
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: registry
+                  mountPath: /data
+                  readOnly: true
+                - name: textfile
+                  mountPath: /textfile
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: registry
+              configMap:
+                name: RELEASE-registry
+            # node_exporter's --collector.textfile.directory on that node.
+            # Must be writable by UID 1000.
+            - name: textfile
+              hostPath:
+                path: /var/lib/node_exporter/textfile_collector
+                type: Directory
+            - name: tmp
+              emptyDir: {}

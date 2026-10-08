@@ -1,0 +1,138 @@
+{{- if .Values.healthCronJob.enabled -}}
+{{/* Scheduled deep health -> Prometheus (contrib/health-textfile, made a chart
+       option). `/healthz` stays green through a revoked credential; only
+       `health --deep` calls each backend's probe. This runs it on a schedule
+       with the gateway's OWN env, registry, plugins and trust store, and writes
+       a node_exporter textfile through a hostPath on one pinned node. */}}
+{{- $hc := .Values.healthCronJob -}}
+{{- $dir := required "healthCronJob.textfile.hostPath is required when healthCronJob.enabled: the node_exporter --collector.textfile.directory on the node(s) nodeSelector pins the Job to" $hc.textfile.hostPath -}}
+{{- $bearer := $hc.bearerFile | default dict -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "beherouter.fullname" . }}-health
+  labels:
+    {{- include "beherouter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: health
+spec:
+  schedule: {{ $hc.schedule | quote }}
+  # Never two sweeps at once; a slow sweep delays the next instead.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $hc.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ $hc.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $hc.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: beherouter
+        app.kubernetes.io/component: health
+    spec:
+      # A retry would just re-probe the same dead credential; the next schedule
+      # is the retry. The textfile, not the Job status, is the signal.
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $hc.activeDeadlineSeconds }}
+      template:
+        metadata:
+          # NOT the selector labels: the Service selects on name+instance, and
+          # a Ready Job pod carrying both would be routed gateway traffic.
+          labels:
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/part-of: beherouter
+            app.kubernetes.io/component: health
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with (include "beherouter.initContainers" . | trim) }}
+          initContainers:
+            {{- . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: health
+              image: "{{ include "beherouter.image" . }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              # Exit 6 is a red sweep, already recorded in the file: report the
+              # Job as succeeded so `kube_job_failed` means "could not run".
+              command: ["/bin/sh", "-c"]
+              args:
+                - >-
+                  beherouter health --deep --json
+                  --textfile /textfile/{{ $hc.textfile.fileName }}
+                  {{- if $bearer.secretName }}
+                  --bearer-file /etc/beherouter/probe-user/token
+                  {{- end }};
+                  rc=$?; [ "$rc" -eq 0 ] || [ "$rc" -eq 6 ]
+              env:
+                {{- include "beherouter.env" (dict "root" . "secretName" (include "beherouter.secretName" .) "tokenKey" (include "beherouter.tokenKey" .)) | nindent 16 }}
+              resources:
+                {{- toYaml $hc.resources | nindent 16 }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: registry
+                  mountPath: /data
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: textfile
+                  mountPath: /textfile
+                {{- if $bearer.secretName }}
+                - name: probe-user
+                  mountPath: /etc/beherouter/probe-user
+                  readOnly: true
+                {{- end }}
+                {{- with (include "beherouter.sharedVolumeMounts" . | trim) }}
+                {{- . | nindent 16 }}
+                {{- end }}
+                {{- if .Values.identityMap.enabled }}
+                - name: identity-map
+                  mountPath: {{ .Values.identityMap.mountPath }}
+                  subPath: {{ base .Values.identityMap.mountPath }}
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: registry
+              configMap:
+                name: {{ include "beherouter.fullname" . }}-registry
+            - name: tmp
+              emptyDir: {}
+            # node_exporter's --collector.textfile.directory on the pinned node.
+            # Must already exist and be writable by the pod's UID.
+            - name: textfile
+              hostPath:
+                path: {{ $dir }}
+                type: Directory
+            {{- if $bearer.secretName }}
+            - name: probe-user
+              secret:
+                secretName: {{ $bearer.secretName }}
+                items:
+                  - key: {{ required "healthCronJob.bearerFile.key is required when healthCronJob.bearerFile.secretName is set" $bearer.key }}
+                    path: token
+            {{- end }}
+            {{- with (include "beherouter.sharedVolumes" . | trim) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.identityMap.enabled }}
+            - name: identity-map
+              secret:
+                secretName: {{ required "identityMap.secretName is required when identityMap.enabled" .Values.identityMap.secretName }}
+                items:
+                  - key: {{ base .Values.identityMap.mountPath }}
+                    path: {{ base .Values.identityMap.mountPath }}
+            {{- end }}
+          {{- with $hc.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $hc.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

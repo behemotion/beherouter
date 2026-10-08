@@ -182,6 +182,12 @@ extraVolumeMounts: []
 # Extra env appended verbatim to the gateway container AND the registry-lint
 # hook Job: {name, value} or {name, valueFrom}. This is the escape hatch for
 # credentials from ExternalSecrets/Reloader and for anything BEHE_<LAYER>_.
+# Logging, audit and call-timeout knobs (docs/DEPLOYMENT.md § Logs, audit and
+# metrics) are plain env vars, all optional:
+#   - {name: BEHEROUTER_LOG_FORMAT, value: json}         # text (default) | json
+#   - {name: BEHEROUTER_AUDIT, value: "on"}              # on (default) | off
+#   - {name: BEHEROUTER_AUDIT_CLAIMS, value: "email,preferred_username"}
+#   - {name: BEHEROUTER_CALL_TIMEOUT_S, value: "120"}    # unset = no limit
 extraEnv: []
 
 # --- pre-deploy gate ---------------------------------------------------------
@@ -200,6 +206,54 @@ preDeployLint:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# --- scheduled deep health ---------------------------------------------------
+#
+# /healthz stays green through a revoked backend credential (catalogues are
+# served from the attach-time cache); only `beherouter health --deep` calls each
+# backend's probe. This CronJob runs it on a schedule with the gateway's own
+# env, Secret, registry, plugins and CA bundle, and writes a node_exporter
+# textfile-collector file (`--textfile`) -- metric contract and alert rules in
+# contrib/health-textfile/README.md.
+#
+# The file lands on ONE node through a hostPath, read by the node_exporter pod
+# on that node: pin the Job with nodeSelector (kubernetes.io/hostname: <node>)
+# so successive runs overwrite one file instead of leaving a stale copy on every
+# node a run ever landed on. The directory must exist and be writable by
+# podSecurityContext.runAsUser (1000).
+#
+# Exit 6 (a red sweep, already in the file) counts as Job success, so a failed
+# Job means "the sweep could not run" -- alert on staleness for that.
+# With networkPolicy egress restrictions of your own, allow this Job the same
+# egress the gateway pods have.
+healthCronJob:
+  enabled: false
+  schedule: "*/5 * * * *"
+  textfile:
+    # REQUIRED when enabled: node_exporter's --collector.textfile.directory.
+    hostPath: ""            # e.g. /var/lib/node_exporter/textfile_collector
+    fileName: beherouter.prom
+  # Optional per-user probe (`--bearer-file`): an existing Secret holding a
+  # token for a dedicated monitoring identity. ⚠️ An IdP JWT expires; the
+  # user_probe series then reads `rejected` -- refresh the Secret (e.g. with an
+  # ExternalSecret minting a client-credentials token) faster than it expires.
+  bearerFile:
+    secretName: ""
+    key: ""
+  startingDeadlineSeconds: 120
+  activeDeadlineSeconds: 240
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  nodeSelector: {}
+  #   kubernetes.io/hostname: node-running-node-exporter
+  tolerations: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 service:
   type: ClusterIP

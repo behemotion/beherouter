@@ -1,0 +1,56 @@
+# Scheduled deep health for beherouter -> node_exporter textfile collector.
+# Pair with beherouter-health.timer; see README.md for the metric contract.
+#
+# Install (system unit; adjust paths):
+#   cp beherouter-health.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now beherouter-health.timer
+# Rootless podman deployments: install both as USER units instead
+# (~/.config/systemd/user/, `systemctl --user ...`, with linger enabled).
+
+[Unit]
+Description=beherouter deep health sweep (textfile collector)
+Documentation=https://github.com/behemotion/beherouter/tree/main/contrib/health-textfile
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The SAME registry and backend credentials the gateway serves with: the
+# sweep attaches every backend fresh and calls its probe, so it needs every
+# ${VAR} the registry names. Keep this file 0600.
+EnvironmentFile=/etc/beherouter/beherouter.env
+Environment=BEHEROUTER_REGISTRY=/etc/beherouter/registry.toml
+
+# Variant A — beherouter installed on the host (pip/uv tool install):
+ExecStart=/usr/local/bin/beherouter health --deep --json \
+    --textfile /var/lib/node_exporter/textfile_collector/beherouter.prom
+
+# Variant B — the published image, in a throwaway container. Comment out A.
+# Pin X.Y.Z to the gateway's own version rather than `latest`: the probe should
+# exercise the code that serves. The image runs as UID 1000, so the collector
+# directory must be writable by it. ⚠️ Join the SAME podman network the gateway
+# reaches its backends on: a rootless bridged container cannot reach a port
+# published on its own host, so a sweep on the default network reports a
+# co-located backend as dead while the gateway serves it fine.
+#ExecStart=/usr/bin/podman run --rm --network <gateway-network> \
+#    --env-file /etc/beherouter/beherouter.env \
+#    -e BEHEROUTER_REGISTRY=/data/registry.toml \
+#    -v /etc/beherouter/registry.toml:/data/registry.toml:ro,Z \
+#    -v /var/lib/node_exporter/textfile_collector:/textfile:Z \
+#    ghcr.io/behemotion/beherouter:X.Y.Z \
+#    beherouter health --deep --json --textfile /textfile/beherouter.prom
+
+# Exit 6 (Unavailable) is a RED SWEEP, already recorded in the textfile —
+# the metrics are the alert channel for it. Any other non-zero exit means the
+# sweep could not run at all (bad registry: 2, crash: 1); that leaves the
+# unit failed AND the file stale, which the staleness alert catches.
+SuccessExitStatus=6
+# Every backend is attached serially, each bounded by its own attach timeout;
+# keep this well under the timer interval so sweeps never overlap.
+TimeoutStartSec=4min
+# Hardening; the sweep needs the network and the collector directory only.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

@@ -1,0 +1,16 @@
+# Runs beherouter-health.service every 5 minutes. A revoked credential is
+# visible within one interval; the staleness alert in README.md assumes 5m.
+
+[Unit]
+Description=Run the beherouter deep health sweep every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# De-synchronise from other on-the-minute jobs hitting the same backends.
+RandomizedDelaySec=30s
+# Sweeps never overlap: systemd does not start a oneshot that is still
+# activating, so a slow sweep delays the next one rather than doubling up.
+
+[Install]
+WantedBy=timers.target

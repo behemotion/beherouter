@@ -1,0 +1,34 @@
+# Lint/render scenario: scheduled deep health with the per-user probe, on top
+# of the shared plumbing it must reuse (caBundle, plugins, identity map).
+secret:
+  gatewayToken: ci-token
+
+registry: |
+  [office]
+  plugin = "office-mcp"
+
+caBundle:
+  enabled: true
+  configMap: corp-ca
+
+plugins:
+  install: ["acme-beherouter-crm==0.1.0"]
+
+identityMap:
+  enabled: true
+  secretName: beherouter-identity-map
+
+healthCronJob:
+  enabled: true
+  textfile:
+    hostPath: /var/lib/node_exporter/textfile_collector
+  bearerFile:
+    secretName: beherouter-probe-user
+    key: token.jwt
+  nodeSelector:
+    kubernetes.io/hostname: node-1
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: monitoring
+      effect: NoSchedule
