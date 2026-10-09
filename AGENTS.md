@@ -31,6 +31,16 @@
 > boot. Anything matching `"status":"ok"` (`helm test`, a blackbox probe) fails
 > on a degraded gateway — intended.
 >
+> **Also on `main` (unreleased): hot reload, the kill switch and the admin API**
+> (client asks A4 and A11; spec
+> `docs/superpowers/specs/2026-10-09-hot-reload-and-kill-switch-design.md`). A
+> reload re-attaches only changed surfaces; `${file:/path}` registry values carry
+> rotated secrets; `BEHEROUTER_KILLSWITCH_PATH` stops everything, one surface or
+> one caller `sub` on the next call. All opt-in; **`admin`, `healthz` and
+> `metrics` are now reserved surface names** and an unknown path answers an
+> RFC 9457 404. Operator view: **`docs/DEPLOYMENT.md`** § Hot reload, § Kill
+> switch, § Admin API.
+>
 > Design background: **`docs/DESIGN.md`**; the plugin seam:
 > **`docs/superpowers/specs/2026-09-09-plugins-design.md`** and
 > **`docs/PLUGINS.md`**; FastMCP 3.x API notes: **`docs/FASTMCP-NOTES.md`**;
@@ -510,10 +520,35 @@ three** from the plugin's own spec; `registry-lint` checks the result.
 and `registry-lint` warns about it (for `cli` plugins too). A bind-mounted file
 the gateway reads must be readable by UID 1000.
 
+**Admin routes** (off unless `BEHEROUTER_ADMIN_TOKEN` or `BEHEROUTER_ADMIN_ROLE` is
+set; no credential = no `/admin` route, 404; the kill-switch ones also need
+`BEHEROUTER_KILLSWITCH_PATH`). ⚠️ Allow `/admin` at the proxy from the admin network
+only; the admin token must differ from the gateway token (boot refuses).
+
+| Route | Does |
+|---|---|
+| `POST /admin/reload` | reload the registry; 200 result, 422 when lint failed, 503 after shutdown began |
+| `GET /admin/killswitch` | the state (audited as `read_killswitch`) |
+| `PUT` / `DELETE /admin/killswitch/all` | stop / resume every surface |
+| `PUT` / `DELETE /admin/killswitch/surfaces/{name}` | quarantine / release one surface |
+| `POST /admin/killswitch/subjects/block` / `unblock` | block / unblock a caller; `{"sub"}` in the **body**, never the path |
+
+Other reload triggers: `kill -HUP`, `BEHEROUTER_REGISTRY_WATCH_S`. Drain:
+`BEHEROUTER_RELOAD_DRAIN_S` (30). The rate limiter carries over per surface on an equal
+`[rate_limit]`. A changed surface whose new app fails to attach **or start** keeps
+serving its old app (`reload_failed`). Gateway-wide environment is restart-only.
+
 **Operator signals.** `/healthz` (unauthenticated): `status` `ok`|`degraded`,
 `surfaces`, and when they apply `failed`, `needs_config_change` (failed surfaces
-no longer retried — a configuration fault) and `pinned_missing`
-(`{surface: [tools]}`). `GET /metrics` (unauthenticated): the five series
+no longer retried — a configuration fault), `pinned_missing`
+(`{surface: [tools]}`), `reload_failed` (still serving the pre-reload app),
+`last_reload` (`{status: failed, at}` while the last reload failed lint), `disabled`
+(quarantined names, `["*"]` for `all`) and `killswitch: "stale"` (malformed state
+file, last good in force). The kill switch never degrades `status`: alert on
+`disabled`. New series: `beherouter_reloads_total{trigger,outcome}`,
+`beherouter_reload_last_success_timestamp_seconds`,
+`beherouter_surface_disabled{surface}`, `beherouter_blocked_subjects`. Admin requests
+write an `event: admin` audit line (a subject's `target` as `sha256:<8 hex>`; `actor` is the admin's `sub`, `<admin-token>`, `<unknown-subject>` for a JWT without one, or `<refused>` for a refused request). `GET /metrics` (unauthenticated): the five original series
 `beherouter_tool_calls_total{surface,tool,outcome}`,
 `beherouter_tool_call_duration_seconds{surface,tool}`,
 `beherouter_active_sessions{surface}`, `beherouter_surface_up{surface}` and
@@ -527,7 +562,7 @@ the main log. `call_timeout_s` (registry entry) or `BEHEROUTER_CALL_TIMEOUT_S` b
 backend call, unset = no limit. A failed call returns `isError: true` with the human
 text and `_meta["io.beherouter/error"] = {type, code, reason, context}`; `reason` is one
 of `unauthenticated`, `missing_role`, `wrong_audience`, `identity_unavailable`,
-`rate_limited`, `confirmation_required`, `unknown_tool`, `bad_arguments`,
+`rate_limited`, `confirmation_required`, `surface_disabled`, `caller_blocked`, `unknown_tool`, `bad_arguments`,
 `edition_unsupported`, `backend_rejected`, `backend_unavailable`, `timeout`, `internal` (`errors.REASONS`; `context` names what was
 required, never what the caller had). Details: `docs/DEPLOYMENT.md` § Logs, audit and
 metrics. An expired JWT logs at WARNING and
@@ -610,7 +645,9 @@ and widening what is proven.
    a generic entry to a curated plugin once its catalogue warrants versioned pins.
    Before promising a sibling can be fronted, read `HARNESS-DIVERGENCES.md` §5:
    behelib's hand-rolled JSON-RPC should wait for its beheaxi migration.
-4. **Open questions carried from the umbrella** — the `fastmcp<4` cap vs
+4. **Hot reload, kill switch and admin API (sub-project 3) are done on `main`**;
+   ship them with the next release and run the e2e stack first.
+5. **Open questions carried from the umbrella** — the `fastmcp<4` cap vs
    behesid's FastMCP 4 (blocks only `inproc`), an optional `health` field in the
    beheaxi manifest, per-argument descriptions for `cli` search quality:
    `docs/handoffs/from-BEHEMOTION/PLANNED-BUT-UNBUILT-CAPABILITIES.STATUS.md`

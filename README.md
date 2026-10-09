@@ -206,6 +206,15 @@ Beyond the surface gate: `[surface.authz.tools.<name>] require_roles` gates sing
   single-line logs, `BEHEROUTER_CALL_TIMEOUT_S` / `call_timeout_s` bounds a call, and a failed
   call carries a stable `reason` in its `_meta`. See
   [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) § Logs, audit and metrics.
+- **Hot reload.** `kill -HUP`, `POST /admin/reload` or `BEHEROUTER_REGISTRY_WATCH_S`
+  re-attaches only the surfaces whose entry changed; the rest keep their sessions. A bad
+  registry changes nothing, and `${file:/path}` values carry rotated secrets. See
+  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) § Hot reload.
+- **Kill switch.** Stop every surface, quarantine one or block one caller `sub`,
+  effective on the next call with no restart, driven by an opt-in admin API
+  (`BEHEROUTER_ADMIN_TOKEN` / `BEHEROUTER_ADMIN_ROLE`, `BEHEROUTER_KILLSWITCH_PATH`).
+  `admin`, `healthz` and `metrics` are reserved surface names. See
+  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) § Kill switch.
 - **Kubernetes.** The chart's `auth.*`, `identityMap.*` and `caBundle.*` values feed
   both the Deployment and the `registry-lint` hook Job, so the pre-deploy gate sees the
   environment that will actually serve. `caBundle` covers an IdP or backend behind a
@@ -384,7 +393,8 @@ Artifacts:
 run `health --deep --textfile` on a schedule: [`contrib/health-textfile/`](contrib/health-textfile/README.md)
 has the systemd timer, a CronJob and the alert rules, and the chart has an opt-in
 `healthCronJob`. `/healthz` itself reports `degraded` with the `failed` surfaces, the
-ones that `needs_config_change` (no longer retried), and any `pinned_missing` tools.
+ones that `needs_config_change` (no longer retried), any `pinned_missing` tools, and, after a
+reload or kill-switch action, `reload_failed`, `last_reload`, `disabled` and `killswitch`.
 
 Full guide, including the pre-deploy `registry-lint` gate and the failure modes worth
 knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.

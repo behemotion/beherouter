@@ -76,10 +76,52 @@ auto-generated contributor appendix is appended below it). Releases before
   `contrib/health-textfile/` ships a systemd timer, a Kubernetes CronJob and
   alert rules, and the chart (0.1.7) has an opt-in `healthCronJob`.
 - **`beherouter --version`**, read from the installed package metadata.
+- **Hot reload (client ask A4).** `kill -HUP`, `POST /admin/reload` or
+  `BEHEROUTER_REGISTRY_WATCH_S` re-reads the registry and re-attaches only the
+  surfaces whose entry changed; unchanged surfaces keep their sessions and rate
+  limiter. A registry that fails lint changes nothing (`/healthz` `last_reload`).
+  A changed surface that fails to attach or start keeps serving its old app
+  (`/healthz` `reload_failed`). Swapped-out apps drain for
+  `BEHEROUTER_RELOAD_DRAIN_S` (default 30). Reloads coalesce. Gateway-wide
+  environment stays restart-only. See `docs/DEPLOYMENT.md` § Hot reload.
+- **`${file:/absolute/path}` registry values**: the file's content (one trailing
+  newline stripped), read at lint, attach and reload, so a rotated secret reaches
+  a running gateway. Missing, unreadable, empty and relative paths refuse by
+  path, never by content.
+- **Kill switch (client ask A11).** `BEHEROUTER_KILLSWITCH_PATH` names a JSON state
+  file that stops every surface, quarantines one, or blocks one caller `sub`,
+  effective on the next call (a JWT's remaining lifetime no longer matters).
+  New reasons `surface_disabled` (context `scope`) and `caller_blocked`, both
+  `refused`. A malformed file keeps the last good state (`/healthz`
+  `killswitch: "stale"`), and refuses boot when there is none. `/healthz` `disabled`.
+  See `docs/DEPLOYMENT.md` § Kill switch and `docs/IDENTITY.md`.
+- **Admin API**, off unless `BEHEROUTER_ADMIN_TOKEN` or `BEHEROUTER_ADMIN_ROLE` is
+  set: `POST /admin/reload` and the `/admin/killswitch` routes. Boot refuses an
+  admin token equal to the gateway token, and a role without `oidc`/`both` and a
+  roles claim. Every request writes one `event: admin` audit line (`target` for a
+  subject is `sha256:<8 hex>`, `actor` is the admin's own `sub`, `<admin-token>`, `<unknown-subject>` (an admin JWT
+  without a `sub`) or `<refused>` (a refused request);
+  never a body or reason).
+- **Metrics:** `beherouter_reloads_total{trigger,outcome}`,
+  `beherouter_reload_last_success_timestamp_seconds`,
+  `beherouter_surface_disabled{surface}`, `beherouter_blocked_subjects`. A removed
+  surface's gauges are removed. `beherouter_blocked_subjects` and
+  `beherouter_reload_last_success_timestamp_seconds` are exported on **every**
+  gateway, as `0` when no kill switch is configured or no reload has succeeded
+  yet; alert on them only where the feature is enabled.
+- **Chart:** `admin.token` (fails the render together with `secret.create=false`:
+  supply it through `extraEnv`), `admin.role`, `killswitch.{enabled,existingClaim,mountPath}`,
+  `secretFiles.{enabled,secretName,mountPath}` and `hotReload.{enabled,watchSeconds}`
+  (which drops the registry checksum annotation so a ConfigMap edit does not roll
+  the pods). New env vars: `BEHEROUTER_REGISTRY_WATCH_S`, `BEHEROUTER_RELOAD_DRAIN_S`,
+  `BEHEROUTER_ADMIN_TOKEN`, `BEHEROUTER_ADMIN_ROLE`, `BEHEROUTER_KILLSWITCH_PATH`.
 - **`scripts/deploy.sh`**: a single-host podman deploy that lints the registry
   inside the new image, snapshots the registry per deploy, verifies `/healthz`
   (and optionally `health --deep`) and rolls back to the previous container
-  and registry on failure. See `docs/DEPLOYMENT.md`.
+  and registry on failure. A repeatable `--volume SRC:DST[:OPTS]` reaches both the
+  lint run and the gateway, for `${file:}` secrets and a writable kill-switch
+  directory; a registry change still means re-running it (the snapshot is what
+  makes rollback restore the old config). See `docs/DEPLOYMENT.md`.
 - `/healthz` gains two optional keys: `needs_config_change` (failed surfaces
   the gateway has stopped retrying) and `pinned_missing` (per surface, pinned
   tools the backend no longer serves).
@@ -106,6 +148,11 @@ auto-generated contributor appendix is appended below it). Releases before
 
 ### Changed
 
+- **Behaviour change: `admin`, `healthz` and `metrics` are reserved surface
+  names.** `registry-lint`, boot and reload refuse them; a surface named
+  `healthz` used to be silently shadowed by the route.
+- **Behaviour change: an unknown path answers an RFC 9457 `404` problem body**
+  (it was Starlette's plain-text 404).
 - **A failed call returns an error result instead of raising**: `isError: true` with
   `_meta`, text unchanged apart from dropping FastMCP's `Error calling tool '<name>': `
   prefix. Backend refusals log one WARNING line instead of an ERROR traceback.

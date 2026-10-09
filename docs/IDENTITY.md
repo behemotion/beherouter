@@ -201,6 +201,32 @@ path degrades one surface's calls instead.
 
 `registry-lint` and `health --deep` are where an operator finds out early.
 
+### Blocking a caller
+
+A verified JWT stays valid until it expires, so offboarding someone used to mean waiting out
+the token's lifetime (900 s, for the client that asked for this). The kill switch closes that
+gap: block the caller's `sub` and their **next call is refused** (`caller_blocked`),
+regardless of how long their token stays valid (up to the IdP's token lifetime).
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN" -d '{"sub":"user-123","reason":"offboarded"}' \
+  https://<gateway>/admin/killswitch/subjects/block
+```
+
+- It is keyed on the **verified `sub`** only, read from the JWT the gateway checked, never a
+  header the client sent.
+- A **shared-token caller has no `sub`** and cannot be blocked by subject; stop the surface
+  (or `all`) instead.
+- The `sub` travels in the request body, and the value is never echoed: not in the refusal,
+  a log, a metric, `/healthz` or the admin audit line, which carries only `sha256:<8 hex>`.
+  One exception, not of the kill switch's making: the blocked caller's **own** refused call
+  writes its per-call `tool_call` audit line with its `sub`, as every caller's call does.
+- The block applies to every surface at once, and the refusal is a tool-level error, not an
+  HTTP 401.
+
+Setup, the state file, every route and the failure behaviour:
+`docs/DEPLOYMENT.md` § Kill switch and § Admin API.
+
 ## 5. The identity map
 
 A TOML file, keyed by the value of the surface's `key` claim:
