@@ -329,8 +329,80 @@ a caller who fails the gate sees an empty server:
   their calls refused. Neither is a bug.
 - `hide_tools = false` restores the old behaviour, for a host that would
   rather show the tools and let the call fail. `hide_tools` without
-  `require_roles` or `audience` beside it is refused: there is nothing to gate
-  the listing on. `health --deep --json` reports it under `identity.hide_tools`.
+  `require_roles`, `audience` or per-tool `tools` gates (§6c) beside it is
+  refused: there is nothing to gate the listing on. `health --deep --json` reports it under `identity.hide_tools`.
+
+### 6c. Per-tool gates and confirmation
+
+```toml
+[plane]
+plugin = "plane"
+  [plane.authz]
+  require_roles = ["ai-plane-access"]      # the surface gate, as before
+  confirm_mutating = true                  # a human says yes to every write
+  confirm_exempt = ["comment"]             # ...except these tools
+    [plane.authz.tools.workitem]
+    require_roles = ["plane-writer"]       # on top of the surface gate
+```
+
+**Per-tool role gates.** `[surface.authz.tools.<name>] require_roles` names tools
+by their catalogue name, `run_tool`'s inner tool included. **Every** role must be
+held, **in addition to** the surface gate, with the same roles claim
+(`BEHEROUTER_OIDC_ROLES_CLAIM`, no default). Boot and `registry-lint` refuse a
+tool gate when that claim is unset or the gateway is `shared`-only, like the
+surface gate.
+
+- **A tool gate does not make the surface require a verified user.** A
+  shared-token caller keeps every ungated tool and is refused only the gated
+  ones, with `unauthenticated`.
+- **Hiding.** Under `hide_tools` (default `true`; now valid beside `tools` alone)
+  a caller who fails a tool gate does not see that tool in `tools/list` or
+  `search_tools`. `describe_tool` and `run_tool` on it answer `missing_role` (or
+  `unauthenticated` for a shared-token or anonymous caller), not
+  `unknown_tool`: hiding is cosmetic, the call is the gate.
+- Like the surface gate it is ergonomics; the backend's verification is the control.
+
+**Confirming writes.** `confirm_mutating = true` makes the gateway ask the
+caller's human, through MCP elicitation, before a mutating call reaches the
+backend. A tool needs it when its `mutating` is true **or unknown** (the backend
+sent no `readOnlyHint`: unknown fails closed), unless named in `confirm_exempt`
+(valid only with `confirm_mutating`). The question names the tool and surface and
+shows the arguments **to the caller's own client only**; they are never logged.
+Every argument name is always shown; a long value is cut to its first 300
+characters (fewer when there are many arguments) and marked `…(+K chars)`, and
+the question then says `Arguments (truncated, N of M characters shown)`, so a
+human is never asked to approve arguments that were silently hidden. A
+refusal is `confirmation_required` (kind `refused`) with `context.confirmation`:
+
+| `confirmation` | Meaning |
+|---|---|
+| `unsupported` | the client has no elicitation capability, or errored when asked |
+| `declined` | the user declined, cancelled or answered no |
+| `timeout` | no answer within 300 s |
+
+`describe_tool` adds `"requires_confirmation": true`; the published pinned tool
+descriptions are unchanged.
+
+⚠️ **A client without elicitation is refused on every mutating call.** An agent
+re-sending a flag is not a human confirming, so there is no fallback. Consumer
+support for elicitation is **unknown (not verified)** for all five (LibreChat,
+Hermes, pi, OpenCode, Claude Code): test yours before turning this on.
+
+⚠️ **Elicitation needs a stateful session.** A stateless surface cannot ask.
+Refusing `stateless` together with `confirm_mutating` at lint is not built yet
+(planned with stateless sessions, sub-project 4).
+
+⚠️ **Check your client's MCP tool-call timeout.** The gateway waits up to 300 s
+for the human; a host that abandons the call sooner shows a failure while the
+question may still be open.
+
+`health --deep` probes call the backend directly and bypass the call gates, so a
+green probe says nothing about them.
+
+**Order.** Fixed: tool roles, then rate limit (`docs/DEPLOYMENT.md` § Rate
+limits), then confirmation. A role refusal spends no rate token; a rate-limited
+call asks no human; a declined confirmation spends a token. All three run outside
+`call_timeout_s`.
 
 ## 6b. Worked example — per-user Plane
 
@@ -424,7 +496,11 @@ Offline, from `registry-lint` (and from `validate_entry`, so also at boot):
 | `require_roles` that is not a non-empty array of names | Malformed gate |
 | `audience` that is not a non-empty string or array of strings | Malformed gate |
 | `hide_tools` that is not `true` or `false` | Malformed switch |
-| `hide_tools` with neither `require_roles` nor `audience` | Nothing to gate the listing on |
+| `hide_tools` with none of `require_roles`, `audience` or `tools` | Nothing to gate the listing on |
+| `tools.<name>.require_roles` that is not a non-empty array of names | Malformed gate (a gated or exempted name the backend does not serve logs a WARNING at attach; lint has no catalogue, and nothing is refused) |
+| A per-tool gate with `BEHEROUTER_OIDC_ROLES_CLAIM` unset, or on a `shared`-only gateway | Same as the surface gate: it could never pass |
+| `confirm_mutating` that is not `true` or `false`; `confirm_exempt` without `confirm_mutating = true`, or not a non-empty array of names | Malformed switch |
+| `[surface.rate_limit]` with an unknown key, or `calls`, `per_s`, `burst` not positive | Malformed limit |
 
 At boot, where the gateway's own environment is authoritative:
 

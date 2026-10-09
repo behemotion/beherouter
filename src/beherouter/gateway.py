@@ -275,8 +275,23 @@ async def _finish_attach(name, entry, auth, pinned_missing, backend) -> FastMCP:
             f"source cannot apply one — build its HTTP client with "
             f"`identity_client` (beherouter.plugin_api)"
         )
+    from .gates import gates_from_entry, unserved_names
+
+    unserved = unserved_names(entry, {d.name for d in backend.descriptors})
+    if unserved:
+        # Like a missing pin: a WARNING, never an attach failure. The gate has
+        # nothing to apply to, which is a typo or a backend that dropped a tool.
+        logger.warning(
+            "surface %r gates or exempts tool(s) its backend does not serve: %s",
+            name,
+            ", ".join(unserved),
+        )
     surface = build_surface(
-        backend, auth=auth, policy=policy, call_timeout_s=call_timeout_s(entry)
+        backend,
+        auth=auth,
+        policy=policy,
+        call_timeout_s=call_timeout_s(entry),
+        gates=gates_from_entry(entry),
     )
     try:
         surface.instructions = instructions_line(await surface_cost(surface, backend), name)
@@ -540,13 +555,9 @@ async def build_gateway_app(
     # A gateway that cannot verify a user cannot require one. Refused BEFORE
     # any attach: an entry-level mistake should fail on the configuration, not
     # after a backend has been connected.
-    from .identity import gates_on_caller
+    from .identity import gates_on_caller, role_gated
 
-    gated = sorted(
-        name
-        for name, entry in registry.items()
-        if (entry.authz or {}).get("require_roles")
-    )
+    gated = sorted(name for name, entry in registry.items() if role_gated(entry))
     if auth_mode() == "shared":
         per_user = sorted(
             name for name, entry in registry.items() if gates_on_caller(entry)

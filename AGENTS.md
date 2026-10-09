@@ -108,7 +108,7 @@ surface's own context cost. Identity is two halves: **in** is gateway-wide
 (`BEHEROUTER_AUTH_MODE` = `shared` | `oidc` | `both`, a JWKS-checked JWT), **out** is per
 surface (`[surface.identity]` mode `bearer` | `claims` | `client` | `lookup` | `exchange`,
 landing as per-call headers for `http`/`inproc`, subprocess env for `cli`, a per-identity
-credential provider for `native`; refused for `stdio`; `exchange` header targets only), plus an optional `[surface.authz]` role/audience gate. Header
+credential provider for `native`; refused for `stdio`; `exchange` header targets only), plus an optional `[surface.authz]` role/audience gate, per-tool role gates, `confirm_mutating` (human confirmation by MCP elicitation) and a per-caller `[surface.rate_limit]`. Header
 passthrough is arbitrary-width, so a backend needing two or more per-user headers is handled.
 Plugin-driven: adding a
 service = **a plugin** (an inert `PluginSpec` plus an `async build`) and one line in
@@ -527,8 +527,8 @@ the main log. `call_timeout_s` (registry entry) or `BEHEROUTER_CALL_TIMEOUT_S` b
 backend call, unset = no limit. A failed call returns `isError: true` with the human
 text and `_meta["io.beherouter/error"] = {type, code, reason, context}`; `reason` is one
 of `unauthenticated`, `missing_role`, `wrong_audience`, `identity_unavailable`,
-`unknown_tool`, `bad_arguments`, `edition_unsupported`, `backend_rejected`,
-`backend_unavailable`, `timeout`, `internal` (`errors.REASONS`; `context` names what was
+`rate_limited`, `confirmation_required`, `unknown_tool`, `bad_arguments`,
+`edition_unsupported`, `backend_rejected`, `backend_unavailable`, `timeout`, `internal` (`errors.REASONS`; `context` names what was
 required, never what the caller had). Details: `docs/DEPLOYMENT.md` § Logs, audit and
 metrics. An expired JWT logs at WARNING and
 its 401 carries RFC 6750 `error_description="token expired"`. **`/healthz`

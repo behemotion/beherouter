@@ -25,6 +25,8 @@ REASONS: dict[str, str] = {
     "unauthenticated": "refused",
     "missing_role": "refused",
     "wrong_audience": "refused",
+    "rate_limited": "refused",
+    "confirmation_required": "refused",
     "identity_unavailable": "unavailable",
     "unknown_tool": "not_found",
     "bad_arguments": "tool_error",

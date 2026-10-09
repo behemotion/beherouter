@@ -249,7 +249,7 @@ def registry_lint(path: str = "") -> None:
     from .. import auth
     from ..envexpand import PLACEHOLDER, expand
     from ..errors import UsageError
-    from ..identity import DEFAULT_MAP_VAR, SecretMap, gates_on_caller
+    from ..identity import DEFAULT_MAP_VAR, SecretMap, gates_on_caller, role_gated
     from ..maturity import lint_warning
     from ..pluginconfig import collision_warning
     from ..plugins import ENTRY_POINT_FAILURES
@@ -321,7 +321,7 @@ def registry_lint(path: str = "") -> None:
             expand(entry.name, entry.env)
         identity = entry.identity or {}
         mode = identity.get("mode")
-        gate = (entry.authz or {}).get("require_roles")
+        gate = role_gated(entry)
         if mode == "exchange":
             # A WARNING, unlike an unset [surface.env] ${VAR}: the exchange
             # secret is resolved per call, so the gateway boots without it and

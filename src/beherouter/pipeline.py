@@ -5,7 +5,7 @@
 
 A tool function hands `run` a `work(scope)` coroutine. `work` may read the
 catalogue (meta-tools) and reaches the backend only through
-`scope.execute(verb, args)`, which resolves the caller's identity per call —
+`scope.execute(descriptor, args)`, which resolves the caller's identity per call —
 `policy.resolve()` reads FastMCP's request context, which exists only here.
 
 Errors never leave as exceptions: FastMCP would log them as multi-line
@@ -13,8 +13,10 @@ tracebacks (outcomes.py). A non-AxiError is OUR bug, and is the one case
 logged with its traceback.
 
 `stages` is the seam later sub-projects extend (per-tool gates, rate limits,
-kill switch, confirmation): each is `async def stage(scope) -> None` that
-returns or raises a tagged AxiError.
+kill switch): each is `async def stage(scope) -> None` that returns or raises a
+tagged AxiError. `tool_stages` are the per-tool seam (gates.py): they run inside
+`scope.execute`, where `run_tool`'s inner tool is resolved, before identity and
+outside the call timeout.
 """
 
 import asyncio
@@ -28,6 +30,7 @@ from typing import Any
 from . import metrics
 from .audit import AuditSink, Caller, current_caller
 from .errors import Unavailable, tag
+from .models import ToolDescriptor
 from .outcomes import EXECUTE, GATE, OK, PREPARE, Outcome, classify, error_result
 
 logger = logging.getLogger("beherouter.calls")
@@ -46,11 +49,12 @@ class CallScope:
     inner_tool: str | None = None
     identity_keys: tuple[str, ...] = ()
 
-    async def execute(self, verb: str, args: dict) -> dict:
-        return await self.pipeline._execute(self, verb, args)
+    async def execute(self, d: ToolDescriptor, args: dict) -> dict:
+        return await self.pipeline._execute(self, d, args)
 
 
 Stage = Callable[[CallScope], Awaitable[None]]
+ToolStage = Callable[[CallScope, ToolDescriptor, dict], Awaitable[None]]
 
 
 class CallPipeline:
@@ -64,6 +68,7 @@ class CallPipeline:
         audit: AuditSink | None = None,
         audit_claim_names: tuple[str, ...] = (),
         stages: Sequence[Stage] = (),
+        tool_stages: Sequence[ToolStage] = (),
     ) -> None:
         self.surface = surface
         self.executor = executor
@@ -74,6 +79,7 @@ class CallPipeline:
         self.audit = audit if audit is not None else AuditSink.from_env()
         self.audit_claim_names = audit_claim_names
         self.stages = list(stages)
+        self.tool_stages = list(tool_stages)
 
     async def run(self, tool: str, work: Callable[[CallScope], Awaitable[Any]]) -> Any:
         scope = CallScope(
@@ -103,8 +109,13 @@ class CallPipeline:
         self._record(scope, outcome, failure, time.monotonic() - start)
         return result
 
-    async def _execute(self, scope: CallScope, verb: str, args: dict) -> dict:
+    async def _execute(self, scope: CallScope, d: ToolDescriptor, args: dict) -> dict:
         scope.phase = GATE
+        # Per-tool gates: the tool is known here even for run_tool, and the
+        # timeout below has not started -- a human answering a confirmation
+        # is not a backend that failed to answer.
+        for stage in self.tool_stages:
+            await stage(scope, d, args)
         identity = self.active.resolve() if self.active is not None else None
         if identity is not None and self.active is not None:
             # Names only. A value here would put a credential in the log.
@@ -114,10 +125,10 @@ class CallPipeline:
             )
         scope.phase = EXECUTE
         if self.call_timeout_s is None:
-            return await self.executor.run(verb, args, identity=identity)
+            return await self.executor.run(d.verb, args, identity=identity)
         try:
             async with asyncio.timeout(self.call_timeout_s):
-                return await self.executor.run(verb, args, identity=identity)
+                return await self.executor.run(d.verb, args, identity=identity)
         except TimeoutError:
             raise tag(
                 Unavailable(

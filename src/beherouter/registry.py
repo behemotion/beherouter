@@ -37,6 +37,8 @@ class RegistryEntry:
     # surface may gate without forwarding anything, and gating needs no
     # IdentitySupport from the plugin.
     authz: dict | None = None
+    # Per-caller token bucket on calls that reach the backend; see gates.py.
+    rate_limit: dict | None = None
     # Extra search words, ADDED to the plugin's own; see plugins.resolve_aliases.
     search_aliases: dict[str, list[str]] | None = None
 
@@ -82,6 +84,9 @@ def validate_entry(e: RegistryEntry) -> None:
 
     validate_identity(e.name, plugin.spec, e.identity)
     validate_authz(e.name, e.authz)
+    from .gates import validate_rate_limit
+
+    validate_rate_limit(e.name, e.rate_limit)
     ttl = e.catalogue_ttl_ms
     if ttl is not None and (not isinstance(ttl, int) or isinstance(ttl, bool) or ttl < 0):
         raise UsageError(

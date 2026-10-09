@@ -27,7 +27,8 @@ GATE, PREPARE, EXECUTE = "gate", "prepare", "execute"
 # What `context` may carry to a client. An allow-list, so a key added to some
 # raiser later cannot leak a caller value by accident.
 CONTEXT_KEYS = frozenset(
-    {"required_roles", "missing_roles", "expected_audience", "suggestions", "status", "limit_s"}
+    {"required_roles", "missing_roles", "expected_audience", "suggestions", "status", "limit_s",
+     "retry_after_s", "limit", "confirmation"}
 )
 
 

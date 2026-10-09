@@ -12,6 +12,20 @@ auto-generated contributor appendix is appended below it). Releases before
 
 ### Added
 
+- **Per-tool role gates.** `[surface.authz.tools.<name>] require_roles` (all roles,
+  on top of the surface gate). A shared-token caller keeps the ungated tools; a
+  caller failing a gate does not see the tool in `tools/list` or `search_tools`
+  (`hide_tools` is now valid beside `tools` alone), and `describe_tool` /
+  `run_tool` answer `missing_role` (`unauthenticated` for a shared-token caller). See `docs/IDENTITY.md` §6c.
+- **`[surface.rate_limit]`** (`calls`, `per_s`, `burst`): a per-caller token
+  bucket over calls that reach the backend. New reason `rate_limited` with
+  `retry_after_s` and `limit`. In memory, per replica. See `docs/DEPLOYMENT.md`
+  § Rate limits.
+- **`confirm_mutating` / `confirm_exempt`**: a human confirms mutating (or
+  unknown-`mutating`) calls through MCP elicitation. New reason
+  `confirmation_required` with `confirmation` `unsupported` | `declined` |
+  `timeout`; `describe_tool` reports `requires_confirmation`. Needs a stateful
+  session and an elicitation-capable client.
 - **Generic plugins: `mcp-http`, `mcp-stdio` and `beheaxi-cli`.** A backend with
   no curated plugin attaches by URL, by command, or as any beheaxi CLI.
   `beheaxi-cli` is the first production plugin on the `cli` backing. All three

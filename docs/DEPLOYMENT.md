@@ -276,6 +276,8 @@ from the beheaxi envelope). `context` names what was *required*, never what the 
 | `unauthenticated` | `refused` | no usable token | none |
 | `missing_role` | `refused` | `require_roles` gate | `required_roles`, `missing_roles` |
 | `wrong_audience` | `refused` | `[surface.authz] audience` | `expected_audience` |
+| `rate_limited` | `refused` | `[surface.rate_limit]` exhausted | `retry_after_s` (int, rounded up), `limit` (e.g. `"60/60s"`) |
+| `confirmation_required` | `refused` | `confirm_mutating` not satisfied | `confirmation`: `unsupported`, `declined` or `timeout` |
 | `identity_unavailable` | `unavailable` | lookup map or exchange failure | none |
 | `unknown_tool` | `not_found` | name not in the catalogue | `suggestions` |
 | `bad_arguments` | `tool_error` | arguments failed the schema or argument preparation | none |
@@ -284,6 +286,28 @@ from the beheaxi envelope). `context` names what was *required*, never what the 
 | `backend_unavailable` | `unavailable` | backend 5xx or transport failure | `status` when known |
 | `timeout` | `timeout` | `call_timeout_s` expired | `limit_s` |
 | `internal` | `internal` | a beherouter bug (logged with traceback) | none |
+
+### Rate limits
+
+```toml
+[plane]
+plugin = "plane"
+  [plane.rate_limit]
+  calls = 60        # tokens per window
+  per_s = 60        # window, seconds
+  burst = 10        # bucket size; defaults to `calls`
+```
+
+A token bucket per caller. It counts only calls that **reach the backend**
+(pinned tools and `run_tool`); `search_tools`, `describe_tool` and `context_cost`
+are free. The key is the OIDC `sub`; every shared-token or anonymous caller shares
+one bucket, `<shared>`. A refusal is `rate_limited` with `retry_after_s` and
+`limit`. It runs after the per-tool role gate and before confirmation, outside
+`call_timeout_s`.
+
+⚠️ **Limits are per replica and live in memory.** N replicas allow up to N times
+the limit, and a restart refills every bucket. It is a courtesy against a runaway
+agent, not quota enforcement.
 
 ### Call timeout
 

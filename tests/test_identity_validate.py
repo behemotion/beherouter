@@ -137,3 +137,31 @@ def test_registry_entry_rejects_a_bad_identity_table():
     )
     with pytest.raises(UsageError, match="identity"):
         validate_entry(entry)
+
+
+def test_role_gated_counts_a_tool_gate():
+    from beherouter.identity import gates_on_caller, role_gated, tool_roles
+    from beherouter.registry import RegistryEntry
+
+    e = RegistryEntry(
+        name="s", plugin="office-mcp",
+        authz={"tools": {"convert": {"require_roles": ["w", "x"]}}},
+    )
+    assert tool_roles(e) == {"convert": ("w", "x")}
+    assert role_gated(e) and gates_on_caller(e)
+    plain = RegistryEntry(name="s", plugin="office-mcp")
+    assert tool_roles(plain) == {} and not role_gated(plain)
+
+
+def test_check_roles_names_what_it_gates():
+    import pytest
+
+    from beherouter.errors import AuthError
+    from beherouter.identity import RequestIdentity, check_roles
+
+    req = RequestIdentity(
+        shared=False, subject="alice", claims={"roles": ["a"]}, raw_token="t"
+    )
+    with pytest.raises(AuthError, match="tool 'w' on surface 's': it requires role"):
+        check_roles("tool 'w' on surface 's'", ("a", "b"), "roles", req)
+    check_roles("tool 'w' on surface 's'", ("a",), "roles", req)

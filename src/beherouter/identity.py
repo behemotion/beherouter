@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from . import tokenexchange
+from .costing import META_TOOL_NAMES
 from .errors import AuthError, Unavailable, UsageError, tag
 from .tokenexchange import ExchangeConfig
 
@@ -103,6 +104,64 @@ def material_key(subject: str, material: Mapping[str, str]) -> str:
         h.update(b"\x00")
         h.update(str(material[name]).encode())
     return h.hexdigest()
+
+
+def check_roles(
+    what: str, required: tuple[str, ...], claim_path: str, req: RequestIdentity
+) -> None:
+    """Every role in `required` must be held. ALL, not any. `what` names the
+    gated thing in the refusal: "surface 'dwh'" or "tool 'x' on surface 'dwh'".
+
+    ⚠️ Carries no security weight: the backend's own verification is the
+    control. This exists so a caller without access gets a sentence naming
+    the surface instead of an opaque backend 401.
+    """
+    if not claim_path:
+        raise UsageError(
+            f"{what} requires role(s) "
+            f"{list(required)} but no roles claim is configured; "
+            f"set $BEHEROUTER_OIDC_ROLES_CLAIM to the dotted path of the "
+            f"claim your IdP puts them in (e.g. 'realm_access.roles')"
+        )
+    raw = claim_at(req.claims, claim_path)
+    if raw is None:
+        raise tag(
+            AuthError(
+                f"{what}: the caller's token carries no "
+                f"{claim_path!r} claim, which this surface gates on"
+            ),
+            "missing_role",
+            required_roles=list(required),
+        )
+    # A space-delimited string is what Entra and several proxies emit; a
+    # list is what Keycloak emits. Anything else is a misconfigured path.
+    if isinstance(raw, str):
+        held = set(raw.split())
+    elif isinstance(raw, (list, tuple)):
+        held = {str(v) for v in raw}
+    else:
+        raise tag(
+            AuthError(
+                f"{what}: claim {claim_path!r} is "
+                f"{type(raw).__name__}, not a list or a space-delimited string"
+            ),
+            "missing_role",
+            required_roles=list(required),
+        )
+    missing = [role for role in required if role not in held]
+    if missing:
+        # The MISSING role names, never the held ones: what a caller needs
+        # to be granted is actionable, what they already have is not, and
+        # echoing a token's full role list into an error is gratuitous.
+        raise tag(
+            AuthError(
+                f"you do not have access to {what}: it "
+                f"requires role(s) {missing}"
+            ),
+            "missing_role",
+            required_roles=list(required),
+            missing_roles=missing,
+        )
 
 
 @dataclass(frozen=True)
@@ -246,58 +305,7 @@ class IdentityPolicy:
             )
 
     def _check_roles(self, req: RequestIdentity) -> None:
-        """Every role in `require_roles` must be held. ALL, not any.
-
-        ⚠️ Carries no security weight: the backend's own verification is the
-        control. This exists so a caller without access gets a sentence naming
-        the surface instead of an opaque backend 401.
-        """
-        if not self.roles_claim:
-            raise UsageError(
-                f"surface '{self.surface}' requires role(s) "
-                f"{list(self.require_roles)} but no roles claim is configured; "
-                f"set $BEHEROUTER_OIDC_ROLES_CLAIM to the dotted path of the "
-                f"claim your IdP puts them in (e.g. 'realm_access.roles')"
-            )
-        raw = claim_at(req.claims, self.roles_claim)
-        if raw is None:
-            raise tag(
-                AuthError(
-                    f"surface '{self.surface}': the caller's token carries no "
-                    f"{self.roles_claim!r} claim, which this surface gates on"
-                ),
-                "missing_role",
-                required_roles=list(self.require_roles),
-            )
-        # A space-delimited string is what Entra and several proxies emit; a
-        # list is what Keycloak emits. Anything else is a misconfigured path.
-        if isinstance(raw, str):
-            held = set(raw.split())
-        elif isinstance(raw, (list, tuple)):
-            held = {str(v) for v in raw}
-        else:
-            raise tag(
-                AuthError(
-                    f"surface '{self.surface}': claim {self.roles_claim!r} is "
-                    f"{type(raw).__name__}, not a list or a space-delimited string"
-                ),
-                "missing_role",
-                required_roles=list(self.require_roles),
-            )
-        missing = [role for role in self.require_roles if role not in held]
-        if missing:
-            # The MISSING role names, never the held ones: what a caller needs
-            # to be granted is actionable, what they already have is not, and
-            # echoing a token's full role list into an error is gratuitous.
-            raise tag(
-                AuthError(
-                    f"you do not have access to surface '{self.surface}': it "
-                    f"requires role(s) {missing}"
-                ),
-                "missing_role",
-                required_roles=list(self.require_roles),
-                missing_roles=missing,
-            )
+        check_roles(f"surface '{self.surface}'", self.require_roles, self.roles_claim, req)
 
     # --- modes ------------------------------------------------------------
 
@@ -648,7 +656,22 @@ def validate_identity(surface: str, spec, raw: dict | None) -> None:
             )
 
 
-_AUTHZ_KEYS = ("require_roles", "audience", "hide_tools")
+_AUTHZ_KEYS = (
+    "require_roles",
+    "audience",
+    "hide_tools",
+    "tools",
+    "confirm_mutating",
+    "confirm_exempt",
+)
+
+
+def _role_list(value) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and bool(value)
+        and all(isinstance(r, str) and r for r in value)
+    )
 
 
 def validate_authz(surface: str, raw: dict | None) -> None:
@@ -682,20 +705,59 @@ def validate_authz(surface: str, raw: dict | None) -> None:
         raise UsageError(
             f"'{surface}': authz hide_tools must be true or false, got {hide!r}"
         )
-    if "hide_tools" in raw and not (raw.get("require_roles") or audience):
+    if "hide_tools" in raw and not (raw.get("require_roles") or audience or raw.get("tools")):
         raise UsageError(
-            f"'{surface}': authz hide_tools needs require_roles or audience "
+            f"'{surface}': authz hide_tools needs require_roles, audience or tools "
             f"beside it; without a gate there is no caller to hide the tools from"
         )
+    tools = raw.get("tools")
+    if tools is not None:
+        if not isinstance(tools, dict) or not tools:
+            raise UsageError(
+                f"'{surface}': authz tools must be [{surface}.authz.tools.<name>] "
+                f"tables, got {tools!r}"
+            )
+        for name, gate in tools.items():
+            if name in META_TOOL_NAMES:
+                raise UsageError(
+                    f"'{surface}': authz tools.{name} names a gateway meta-tool; "
+                    f"gate the backend tool it reaches instead"
+                )
+            if (
+                not isinstance(gate, dict)
+                or set(gate) != {"require_roles"}
+                or not _role_list(gate["require_roles"])
+            ):
+                raise UsageError(
+                    f"'{surface}': authz tools.{name} must hold exactly require_roles, "
+                    f"a non-empty array of role names; got {gate!r}"
+                )
+    confirm = raw.get("confirm_mutating", False)
+    if not isinstance(confirm, bool):
+        raise UsageError(
+            f"'{surface}': authz confirm_mutating must be true or false, got {confirm!r}"
+        )
+    exempt = raw.get("confirm_exempt")
+    if exempt is not None:
+        if not confirm:
+            raise UsageError(
+                f"'{surface}': authz confirm_exempt needs confirm_mutating = true"
+            )
+        if isinstance(exempt, str) or not _role_list(exempt):
+            raise UsageError(
+                f"'{surface}': authz confirm_exempt must be a non-empty array of "
+                f"tool names, got {exempt!r}"
+            )
+        reserved = sorted(set(exempt) & META_TOOL_NAMES)
+        if reserved:
+            raise UsageError(
+                f"'{surface}': authz confirm_exempt names gateway meta-tool(s) "
+                f"{reserved}; they are never confirmed, name backend tools"
+            )
     roles = raw.get("require_roles")
     if roles is None:
         return
-    if (
-        isinstance(roles, str)
-        or not isinstance(roles, (list, tuple))
-        or not roles
-        or not all(isinstance(r, str) and r for r in roles)
-    ):
+    if isinstance(roles, str) or not _role_list(roles):
         raise UsageError(
             f"'{surface}': authz require_roles must be a non-empty array of "
             f"role names, got {roles!r}"
@@ -713,11 +775,24 @@ def audiences_of(value) -> tuple[str, ...]:
     return ()
 
 
+def tool_roles(entry) -> dict[str, tuple[str, ...]]:
+    """`[surface.authz.tools.<name>] require_roles`, normalised. Validate first."""
+    tools = (entry.authz or {}).get("tools") or {}
+    return {name: tuple(gate["require_roles"]) for name, gate in tools.items()}
+
+
+def role_gated(entry) -> bool:
+    """Whether an entry reads roles anywhere: the surface gate or a tool gate.
+    Boot and lint both refuse such an entry with no roles claim configured."""
+    return bool((entry.authz or {}).get("require_roles")) or bool(tool_roles(entry))
+
+
 def gates_on_caller(entry) -> bool:
     """Whether an entry needs a VERIFIED user: an identity mode or any gate.
 
     One predicate for boot and lint, so the two cannot disagree about which
-    surfaces a shared-only gateway must refuse.
+    surfaces a shared-only gateway must refuse. A tool gate counts: on a
+    shared-only gateway it could only ever refuse.
     """
     mode = (entry.identity or {}).get("mode")
     authz = entry.authz or {}
@@ -725,6 +800,7 @@ def gates_on_caller(entry) -> bool:
         mode not in (None, "", "none")
         or bool(authz.get("require_roles"))
         or bool(authz.get("audience"))
+        or bool(authz.get("tools"))
     )
 
 

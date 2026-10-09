@@ -20,6 +20,7 @@ from .audit import AuditSink, audit_claims
 from .catalogue import Catalogue
 from .costing import META_TOOL_NAMES
 from .errors import AuthError, AxiError, NotFound, UsageError, tag
+from .gates import Gates
 from .indexing import search_hits
 from .metrics import UNKNOWN_TOOL
 from .models import Backend, ToolDescriptor
@@ -192,26 +193,34 @@ class _GateListing(Middleware):
     ⚠️ `FastMCP.list_tools()` runs middleware by default, so an in-process
     measurement with no request in hand would see `[]`. `costing.surface_cost`
     lists with `run_middleware=False` for that reason.
+
+    Per-tool role gates (gates.py) filter the list the same way, one tool at a time.
     """
 
-    def __init__(self, policy: Any) -> None:
+    def __init__(self, policy: Any | None, gates: Gates | None = None) -> None:
         self.policy = policy
+        self.gates = gates
 
     async def on_list_tools(self, context, call_next):
-        try:
-            self.policy.guard()
-        except AuthError:
-            return []
-        except AxiError as e:
-            # Not a caller's fault: a gate that cannot be evaluated. Logged,
-            # because unlike a role miss it is not routine.
-            logger.warning(
-                "tools/list hidden on surface=%s: gate misconfigured: %s",
-                self.policy.surface,
-                e,
-            )
-            return []
-        return await call_next(context)
+        if self.policy is not None:
+            try:
+                self.policy.guard()
+            except AuthError:
+                return []
+            except AxiError as e:
+                # Not a caller's fault: a gate that cannot be evaluated. Logged,
+                # because unlike a role miss it is not routine.
+                logger.warning(
+                    "tools/list hidden on surface=%s: gate misconfigured: %s",
+                    self.policy.surface,
+                    e,
+                )
+                return []
+        tools = await call_next(context)
+        if self.gates is None:
+            return tools
+        # Per tool (A7): `visible` fails closed and never raises.
+        return [t for t in tools if self.gates.visible(t.name)]
 
 
 def _invalid_arguments(tool: str, exc: ValidationError) -> UsageError:
@@ -269,6 +278,7 @@ def build_surface(
     *,
     call_timeout_s: float | None = None,
     audit: AuditSink | None = None,
+    gates: Gates | None = None,
 ) -> FastMCP:
     """Build the MCP surface for one attached backend.
 
@@ -280,13 +290,19 @@ def build_surface(
     disabled every dispatch passes `identity=None` and the call path is
     byte-identical to a gateway with no identity configuration at all — which is
     what makes this change invisible to the four static-token consumers.
+
+    `gates` is this surface's per-tool gates (gates.py); None means none.
     """
     mcp = FastMCP(backend.name, auth=auth)
     # None unless identity is configured AND enabled; one name, so the closures
     # below narrow on it instead of re-deriving it from a bool.
     active = policy if policy is not None and policy.enabled else None
-    if active is not None and active.hides_listing:
-        mcp.add_middleware(_GateListing(active))
+    hide_surface = active is not None and active.hides_listing
+    hide_tools = gates is not None and gates.roles is not None and gates.hide
+    if hide_surface or hide_tools:
+        mcp.add_middleware(
+            _GateListing(active if hide_surface else None, gates if hide_tools else None)
+        )
 
     # Every published tool -- pinned and meta alike -- goes through this one
     # pipeline. It gates WITHOUT materialising (`policy.guard()`, before any
@@ -300,11 +316,12 @@ def build_surface(
         call_timeout_s=call_timeout_s,
         audit=audit,
         audit_claim_names=audit_claims(),
+        tool_stages=gates.stages if gates is not None else (),
     )
 
     async def run_pinned(d: ToolDescriptor, kwargs: dict):
         async def work(scope):
-            return await scope.execute(d.verb, prepare_args(d, kwargs))
+            return await scope.execute(d, prepare_args(d, kwargs))
 
         return await pipeline.run(d.name, work)
 
@@ -373,9 +390,15 @@ def build_surface(
     async def search_tools(query: str, limit: int = DEFAULT_LIMIT) -> list[dict]:
         async def work(scope):
             await catalogue.ensure_fresh()
-            return search_hits(
-                catalogue.index, catalogue.by_name, query, limit, published_names
+            # Over-fetch by the number of gated tools, so hiding them does not
+            # shrink a page below `limit` when enough visible hits exist.
+            extra = len(gates.roles.tools) if gates is not None and gates.roles else 0
+            hits = search_hits(
+                catalogue.index, catalogue.by_name, query, limit + extra, published_names
             )
+            if gates is not None:
+                hits = [h for h in hits if gates.visible(h["name"])]
+            return hits[:limit]
 
         return await pipeline.run("search_tools", work)
 
@@ -386,6 +409,8 @@ def build_surface(
             d = catalogue.by_name.get(name)
             if d is None:
                 raise unknown_tool(name)
+            if gates is not None:
+                gates.check_visible(d.name)  # a hidden tool answers missing_role
             out = {
                 "name": d.name,
                 "summary": d.summary,
@@ -398,6 +423,8 @@ def build_surface(
             returns = wrapped_output_schema(d)
             if returns:
                 out["returns"] = returns
+            if gates is not None and gates.requires_confirmation(d):
+                out["requires_confirmation"] = True
             return out
 
         return await pipeline.run("describe_tool", work)
@@ -411,7 +438,7 @@ def build_surface(
                 scope.inner_tool = UNKNOWN_TOOL  # caller input never becomes a label
                 raise unknown_tool(name)
             scope.inner_tool = d.name
-            return await scope.execute(d.verb, prepare_args(d, args or {}))
+            return await scope.execute(d, prepare_args(d, args or {}))
 
         return await pipeline.run("run_tool", work)
 

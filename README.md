@@ -166,6 +166,11 @@ contacted, so an excluded caller can't drive traffic to it. They turn an opaque 
 `401` into a sentence that names the surface. **They are ergonomics, not the control:**
 the backend's own verification of the forwarded identity is what enforces access.
 
+Beyond the surface gate: `[surface.authz.tools.<name>] require_roles` gates single tools,
+`confirm_mutating = true` makes a human confirm writes through MCP elicitation, and
+`[surface.rate_limit]` caps calls per caller (per replica, in memory). See
+[`docs/IDENTITY.md`](docs/IDENTITY.md) §6c.
+
 ### Operating it
 
 - **Offline validation.** `registry-lint` rejects every misconfiguration it can see

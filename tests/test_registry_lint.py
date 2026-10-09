@@ -368,3 +368,110 @@ def test_lint_is_quiet_when_an_exchange_secret_is_set(tmp_path, monkeypatch, cap
     out = capsys.readouterr().out
     assert not any("client_secret" in w for w in json.loads(out)["warnings"])
     assert "s3cret-value" not in out
+
+
+def _office(extra):
+    return '[office]\nplugin = "office-mcp"\n' + extra
+
+
+def test_lint_accepts_a_tool_role_gate(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    monkeypatch.setenv("BEHEROUTER_OIDC_ROLES_CLAIM", "realm_access.roles")
+    body = _office('  [office.authz.tools.convert]\n  require_roles = ["w"]\n')
+    registry_lint(path=_write(tmp_path, body))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        '  [office.authz.tools.convert]\n  require_roles = []\n',
+        '  [office.authz.tools.convert]\n  require_roles = ["w"]\n  extra = 1\n',
+        '  [office.authz]\n  tools = "convert"\n',
+    ],
+)
+def test_lint_refuses_a_malformed_tool_role_gate(tmp_path, extra):
+    with pytest.raises(UsageError, match="authz tools"):
+        registry_lint(path=_write(tmp_path, _office(extra)))
+
+
+def test_lint_refuses_a_tool_role_gate_with_no_claim_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "both")
+    monkeypatch.delenv("BEHEROUTER_OIDC_ROLES_CLAIM", raising=False)
+    body = _office('  [office.authz.tools.convert]\n  require_roles = ["w"]\n')
+    with pytest.raises(UsageError, match="BEHEROUTER_OIDC_ROLES_CLAIM"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_a_tool_role_gate_on_a_shared_only_gateway(tmp_path, monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_AUTH_MODE", "shared")
+    monkeypatch.setenv("BEHEROUTER_OIDC_ROLES_CLAIM", "realm_access.roles")
+    body = _office('  [office.authz.tools.convert]\n  require_roles = ["w"]\n')
+    with pytest.raises(UsageError, match="requires a verified user"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_hide_tools_is_valid_beside_a_tool_gate_alone(tmp_path):
+    body = _office(
+        "  [office.authz]\n  hide_tools = false\n"
+        '  [office.authz.tools.convert]\n  require_roles = ["w"]\n'
+    )
+    registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_accepts_confirm_mutating_with_exemptions(tmp_path):
+    body = _office(
+        '  [office.authz]\n  confirm_mutating = true\n  confirm_exempt = ["discover"]\n'
+    )
+    registry_lint(path=_write(tmp_path, body))
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        ('  [office.authz]\n  confirm_mutating = "yes"\n', "confirm_mutating"),
+        ('  [office.authz]\n  confirm_exempt = ["discover"]\n', "confirm_exempt"),
+        (
+            '  [office.authz]\n  confirm_mutating = true\n  confirm_exempt = "discover"\n',
+            "confirm_exempt",
+        ),
+    ],
+)
+def test_lint_refuses_a_malformed_confirm_setting(tmp_path, extra, match):
+    with pytest.raises(UsageError, match=match):
+        registry_lint(path=_write(tmp_path, _office(extra)))
+
+
+def test_lint_accepts_a_rate_limit(tmp_path):
+    body = _office("  [office.rate_limit]\n  calls = 60\n  per_s = 60\n  burst = 10\n")
+    registry_lint(path=_write(tmp_path, body))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "  [office.rate_limit]\n  per_s = 60\n",
+        "  [office.rate_limit]\n  calls = 0\n  per_s = 60\n",
+        "  [office.rate_limit]\n  calls = 60\n  per_s = 0\n",
+        "  [office.rate_limit]\n  calls = 60\n  per_s = 60\n  burst = 1.5\n",
+        "  [office.rate_limit]\n  calls = 60\n  per_s = 60\n  window = 1\n",
+        "  [office.rate_limit]\n  calls = true\n  per_s = 60\n",
+    ],
+)
+def test_lint_refuses_a_malformed_rate_limit(tmp_path, extra):
+    with pytest.raises(UsageError, match="rate_limit"):
+        registry_lint(path=_write(tmp_path, _office(extra)))
+
+
+@pytest.mark.parametrize("meta", ["search_tools", "describe_tool", "run_tool", "context_cost"])
+def test_lint_refuses_a_gate_on_a_meta_tool(tmp_path, meta):
+    body = _office(f'  [office.authz.tools.{meta}]\n  require_roles = ["w"]\n')
+    with pytest.raises(UsageError, match=meta):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_refuses_exempting_a_meta_tool(tmp_path):
+    body = _office(
+        '  [office.authz]\n  confirm_mutating = true\n  confirm_exempt = ["run_tool"]\n'
+    )
+    with pytest.raises(UsageError, match="run_tool"):
+        registry_lint(path=_write(tmp_path, body))
