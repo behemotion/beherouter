@@ -104,6 +104,8 @@ auto-generated contributor appendix is appended below it). Releases before
   line.** It carries the same names-only identity fields (`subject`, `mode`,
   `keys`), but on every call of every surface, so `subject` now appears in the
   log for each call rather than only on identity-enabled surfaces.
+  A successful call's line is DEBUG while the audit is on, since the audit
+  line already records it; with `BEHEROUTER_AUDIT=off` it stays at INFO.
 - **`beherouter serve` takes over logging.** One plain handler (text or JSON)
   replaces FastMCP's Rich and uvicorn's own formats. Third-party loggers stay
   quiet below WARNING (`httpx`, `httpcore` and `mcp`, whose INFO lines carry

@@ -173,7 +173,10 @@ class CallPipeline:
         )
         extra = {"fields": fields}
         if failure is None:
-            logger.info(msg, *args, extra=extra)
+            # The audit line already records an OK call; at INFO this one would
+            # double the volume. With the audit off it is the only trace left.
+            level = logger.debug if self.audit.enabled else logger.info
+            level(msg, *args, extra=extra)
         elif outcome.kind == "internal":
             logger.error(msg, *args, exc_info=failure, extra=extra)
         elif outcome.reason in _CALLER_TEXT:

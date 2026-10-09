@@ -63,6 +63,22 @@ async def test_ok_pinned_call_writes_one_audit_line():
     assert "secret-argument-value" not in line
 
 
+@pytest.mark.parametrize(("audit_on", "level"), [(True, "DEBUG"), (False, "INFO")])
+async def test_an_ok_call_logs_at_debug_only_while_the_audit_records_it(caplog, audit_on, level):
+    """With the audit on, the audit line is the record of an OK call and the
+    calls line would only double the volume; with it off, the calls line is
+    the only trace left at the default level."""
+    caplog.set_level(logging.DEBUG)
+    backend = Backend(
+        name="sx", kind="mcp", executor=Recording(), descriptors=[_descriptor("find")],
+    )
+    surface = build_surface(backend, audit=AuditSink(enabled=audit_on, write=lambda _l: None))
+    async with Client(surface) as c:
+        await c.call_tool("find", {"q": "x"})
+    ours = [r for r in caplog.records if r.name == "beherouter.calls"]
+    assert [r.levelname for r in ours] == [level]
+
+
 async def test_run_tool_is_labelled_with_its_inner_tool():
     lines: list[str] = []
     surface, _ = _surface(lines=lines)

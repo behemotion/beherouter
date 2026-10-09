@@ -213,7 +213,8 @@ Four variables, all optional (an invalid value refuses boot):
 | `BEHEROUTER_AUDIT_CLAIMS` | empty | Claim names added to `caller`, read from the verified JWT only |
 | `BEHEROUTER_CALL_TIMEOUT_S` | unset | Per-call limit in seconds; unset = no limit |
 
-Log levels: a refusal, `backend_rejected`, `unknown_tool` and `bad_arguments` log one
+Log levels: a successful call logs at DEBUG while the audit is on (the audit line
+records it) and at INFO when `BEHEROUTER_AUDIT=off`; a refusal, `backend_rejected`, `unknown_tool` and `bad_arguments` log one
 WARNING line; `backend_unavailable` and `timeout` one ERROR line without a traceback;
 `internal` an ERROR with its traceback. The `beherouter.calls` line omits the error text
 for `unknown_tool` and `bad_arguments`, because those messages are built from caller input.
