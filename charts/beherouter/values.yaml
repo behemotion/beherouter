@@ -128,6 +128,50 @@ identityMap:
   secretName: ""
   mountPath: "/etc/beherouter/identity-map.toml"
 
+# --- admin API (reload, kill switch) ------------------------------------------
+#
+# Off unless one is set. token -> the chart Secret's BEHEROUTER_ADMIN_TOKEN;
+# with secret.create=false a token here FAILS the render: leave it empty and
+# supply BEHEROUTER_ADMIN_TOKEN through extraEnv instead. It must differ from
+# secret.gatewayToken or the gateway refuses to boot. role -> a verified JWT
+# with this role may use /admin; needs auth.mode oidc|both and rolesClaim.
+# No ingress path is rendered for /admin: expose it to the admin network only.
+admin:
+  token: ""
+  role: ""
+
+# --- kill switch ----------------------------------------------------------------
+#
+# State file on a PersistentVolumeClaim you provide. ⚠️ ReadWriteMany when
+# replicaCount > 1, or replicas disagree about who is blocked. The pod gets
+# fsGroup 1000 unless podSecurityContext sets one, so the gateway can write it.
+killswitch:
+  enabled: false
+  existingClaim: ""
+  mountPath: /var/lib/beherouter
+
+# --- secret files ---------------------------------------------------------------
+#
+# An existing Secret mounted as a DIRECTORY for ${file:/run/secrets/beherouter/<key>}
+# registry values. ⚠️ Never subPath: kubelet updates a projected directory, not a
+# subPath'd file, and rotation without a restart is the whole point.
+# The registry-lint hook mounts it too (it resolves every ${file:}), so the
+# Secret must exist BEFORE `helm install`: the hook runs pre-install and the
+# chart does not create it.
+secretFiles:
+  enabled: false
+  secretName: ""
+  mountPath: /run/secrets/beherouter
+
+# --- hot reload -----------------------------------------------------------------
+#
+# true: a registry ConfigMap edit is applied in place (the gateway polls it)
+# instead of rolling the pods. Changed surfaces re-attach; others keep their
+# sessions.
+hotReload:
+  enabled: false
+  watchSeconds: 30
+
 # --- private CA ----------------------------------------------------------------
 #
 # For an IdP (auth.mode oidc|both fetches JWKS over TLS) or a backend behind a

@@ -115,3 +115,22 @@ class AuditSink:
             "latency_ms": latency_ms,
         }
         self._write(json.dumps(line, separators=(",", ":")))
+
+    def emit_admin(
+        self, *, action: str, target_kind: str, target: str, actor: str, outcome: str
+    ) -> None:
+        """One line per admin request, refusals included (spec §4.3). `target`
+        for a subject is its digest (admin.subject_digest), never the value; no
+        body, no `reason`, no credential."""
+        if not self.enabled:
+            return
+        line = {
+            "ts": timestamp(time.time()),
+            "event": "admin",
+            "action": action,
+            "target_kind": target_kind,
+            "target": target,
+            "actor": actor,
+            "outcome": outcome,
+        }
+        self._write(json.dumps(line, separators=(",", ":")))

@@ -258,6 +258,11 @@ def registry_lint(path: str = "") -> None:
 
     target = Path(path) if path else _registry_path()
     reg = load_registry(target)
+    from ..killswitch import configured as killswitch_configured
+
+    ks = killswitch_configured()
+    if ks is not None:
+        ks.state()  # UsageError on a malformed file: the same refusal boot would give
     # A WARNING, not a refusal: a broken third-party package the registry
     # does not name costs nothing, and one it does name already fails below as
     # "unknown plugin" — with these entry points named in the message.

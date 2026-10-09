@@ -6,6 +6,7 @@ configuration. Counters reset on restart, as every Prometheus counter does;
 `rate()`/`increase()` handle that.
 """
 
+import contextlib
 from collections.abc import Callable
 
 from prometheus_client import (
@@ -48,10 +49,33 @@ SURFACE_UP = Gauge(
     ("surface",),
     registry=REGISTRY,
 )
+SURFACE_DISABLED = Gauge(
+    "beherouter_surface_disabled",
+    "1 while the kill switch stops the surface (directly or by 'all').",
+    ("surface",),
+    registry=REGISTRY,
+)
+BLOCKED_SUBJECTS = Gauge(
+    "beherouter_blocked_subjects",
+    "How many caller subjects the kill switch blocks. A count, never a name.",
+    registry=REGISTRY,
+)
 ACTIVE_SESSIONS = Gauge(
     "beherouter_active_sessions",
     "Open MCP sessions on the surface.",
     ("surface",),
+    registry=REGISTRY,
+)
+
+RELOADS = Counter(
+    "beherouter_reloads",
+    "Registry reloads, by what triggered them and how they ended.",
+    ("trigger", "outcome"),
+    registry=REGISTRY,
+)
+RELOAD_LAST_SUCCESS = Gauge(
+    "beherouter_reload_last_success_timestamp_seconds",
+    "Unix time of the last reload whose lint passed (ok or partial).",
     registry=REGISTRY,
 )
 
@@ -65,8 +89,25 @@ def render() -> tuple[bytes, str]:
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
 
 
+def forget_surface(surface: str) -> None:
+    """A removed surface's GAUGES go; its counters stay -- rate() over history
+    still means something, and a counter that vanishes mid-series is worse
+    than one that stops rising."""
+    for gauge in (SURFACE_UP, ACTIVE_SESSIONS, SURFACE_DISABLED):
+        with contextlib.suppress(KeyError):
+            gauge.remove(surface)
+
+
 def track_surface_up(surface: str, up: Callable[[], bool]) -> None:
     SURFACE_UP.labels(surface=surface).set_function(lambda: 1.0 if up() else 0.0)
+
+
+def track_killswitch(surface: str, ks) -> None:
+    """Read at scrape time; the state's stat-cache makes that one stat."""
+    SURFACE_DISABLED.labels(surface=surface).set_function(
+        lambda: 1.0 if ks.state().disabled(surface) else 0.0
+    )
+    BLOCKED_SUBJECTS.set_function(lambda: float(len(ks.state().subjects)))
 
 
 def _session_holder(app: object) -> object | None:

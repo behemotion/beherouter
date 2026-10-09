@@ -129,3 +129,14 @@ def test_preflight_refuses_a_bad_gateway_wide_limit(monkeypatch):
     monkeypatch.setenv("BEHEROUTER_CALL_TIMEOUT_S", "0")
     with pytest.raises(UsageError, match="BEHEROUTER_CALL_TIMEOUT_S"):
         preflight({})
+
+
+def test_preflight_refuses_a_missing_secret_file(tmp_path):
+    entry = RegistryEntry(
+        name="plane",
+        plugin="plane",
+        config={"workspace_slug": "acme"},
+        env={"api_key": f"${{file:{tmp_path}/absent}}"},
+    )
+    with pytest.raises(UsageError, match="absent"):
+        preflight({"plane": entry})

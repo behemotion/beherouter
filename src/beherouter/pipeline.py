@@ -154,6 +154,9 @@ class CallPipeline:
             latency_ms=latency_ms,
         )
         mode = self.active.mode if self.active is not None else ""
+        # A blocked caller's sub is the kill-switch file's content: it appears in
+        # the audit line (above) and nowhere else (spec §5.3).
+        subject = None if outcome.reason == "caller_blocked" else scope.caller.sub
         fields = {
             "call_id": scope.call_id,
             "surface": self.surface,
@@ -162,7 +165,7 @@ class CallPipeline:
             "outcome": outcome.kind,
             "reason": outcome.reason,
             "latency_ms": latency_ms,
-            "subject": scope.caller.sub,
+            "subject": subject,
             "mode": mode,
             "keys": list(scope.identity_keys),
         }
@@ -177,7 +180,7 @@ class CallPipeline:
             outcome.kind,
             outcome.reason,
             latency_ms,
-            scope.caller.sub,
+            subject,
             mode,
             list(scope.identity_keys),
             scope.call_id,

@@ -1,0 +1,23 @@
+# Lint/render scenario: hot reload, kill switch, admin API and a secret-files
+# directory (spec 2026-10-09 §7).
+secret:
+  create: true
+  gatewayToken: "ci-dummy-gateway-token"
+admin:
+  token: ci-admin-token
+  role: gw-admin
+auth:
+  mode: both
+  oidc:
+    issuer: https://idp.example.test/realms/x
+    audience: beherouter
+    jwksUri: https://idp.example.test/realms/x/certs
+    rolesClaim: realm_access.roles
+killswitch:
+  enabled: true
+  existingClaim: ks-claim
+secretFiles:
+  enabled: true
+  secretName: backend-secrets
+hotReload:
+  enabled: true

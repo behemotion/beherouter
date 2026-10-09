@@ -34,6 +34,7 @@ import hmac
 import json
 import os
 import re
+from collections.abc import Container
 
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -182,7 +183,7 @@ class RejectionMiddleware:
     telling a caller WHICH check its forged token failed helps nobody else.
     """
 
-    def __init__(self, app, surfaces: frozenset[str] = frozenset()) -> None:
+    def __init__(self, app, surfaces: Container[str] = frozenset()) -> None:
         self.app = app
         self.surfaces = surfaces
 

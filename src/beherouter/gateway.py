@@ -5,11 +5,9 @@ import contextlib
 import logging
 import math
 import os
-from collections.abc import Callable
 from pathlib import Path
 
 from fastmcp import FastMCP
-from starlette.types import ASGIApp
 
 from . import metrics
 from .audit import audit_enabled
@@ -83,7 +81,10 @@ def call_timeout_s(entry: RegistryEntry) -> float | None:
 
 
 def preflight(registry: dict[str, RegistryEntry]) -> None:
-    """Refuse to boot on what `registry-lint` can see. No I/O.
+    """Refuse to boot on what `registry-lint` can see. No network I/O.
+
+    The one read is local: a `${file:/…}` placeholder is resolved (by `expand`),
+    so a missing, unreadable or empty secret file refuses boot here.
 
     These are operator mistakes with a local fix — an unknown plugin, a bad
     config type, an unset `${VAR}` — and a gateway that booted around them
@@ -196,11 +197,13 @@ async def _attach_one(
     auth: object | None,
     pinned_missing: dict[str, list[str]] | None = None,
     backends: dict | None = None,
+    limiters: dict | None = None,
 ) -> FastMCP:
     """Attach one surface: backend, policy, surface, cost instructions.
 
     On success the backend is recorded in `backends[name]` (when given), so
-    whoever owns the surface can close it later. A backend built and then
+    whoever owns the surface can close it later. `limiters` is the gateway's
+    `{surface: RateLimiter}` (`gates_from_entry`). A backend built and then
     dropped HERE — refused, or cancelled mid-attach — is closed before the
     error propagates.
 
@@ -220,7 +223,7 @@ async def _attach_one(
     except TimeoutError as e:
         raise Unavailable(f"'{name}': attach timed out after {timeout:g}s") from e
     try:
-        surface = await _finish_attach(name, entry, auth, pinned_missing, backend)
+        surface = await _finish_attach(name, entry, auth, pinned_missing, backend, limiters)
     except BaseException:
         # BaseException: a cancel (shutdown during a retry attach) drops the
         # backend just as surely as a refusal does.
@@ -231,7 +234,9 @@ async def _attach_one(
     return surface
 
 
-async def _finish_attach(name, entry, auth, pinned_missing, backend) -> FastMCP:
+async def _finish_attach(
+    name, entry, auth, pinned_missing, backend, limiters: dict | None = None
+) -> FastMCP:
     """Everything `_attach_one` does after the backend is built."""
     from .costing import instructions_line, surface_cost
     from .identity import policy_from_entry
@@ -286,12 +291,16 @@ async def _finish_attach(name, entry, auth, pinned_missing, backend) -> FastMCP:
             name,
             ", ".join(unserved),
         )
+    from .killswitch import stage_for
+
+    stage = stage_for(name)
     surface = build_surface(
         backend,
         auth=auth,
         policy=policy,
         call_timeout_s=call_timeout_s(entry),
-        gates=gates_from_entry(entry),
+        gates=gates_from_entry(entry, limiters),
+        stages=(stage,) if stage else (),
     )
     try:
         surface.instructions = instructions_line(await surface_cost(surface, backend), name)
@@ -311,7 +320,7 @@ def _log_attach_failure(name: str, exc: Exception) -> None:
     if is_config_fault(exc):
         logger.error(
             "surface %r has a configuration fault; serving it as unavailable and "
-            "NOT retrying — fix the registry and restart the gateway",
+            "NOT retrying — fix the registry, then reload or restart the gateway",
             name,
             exc_info=exc,
         )
@@ -329,6 +338,7 @@ async def build_surfaces(
     config_faults: set[str] | None = None,
     pinned_missing: dict[str, list[str]] | None = None,
     backends: dict | None = None,
+    limiters: dict | None = None,
 ) -> dict[str, FastMCP]:
     """One FastMCP surface per attached backend, attached CONCURRENTLY.
 
@@ -351,13 +361,17 @@ async def build_surfaces(
     `backends`, when given, collects `{name: Backend}` for every attached
     surface: the caller owns them and closes them (`close_backend`) when it
     drops the surfaces. When this function raises, it closes the backends of
-    the surfaces that did attach itself — nobody else could.
+    the surfaces that did attach itself — nobody else could. `limiters`, when
+    given, is the gateway's `{surface: RateLimiter}`, passed to every attach.
     """
     preflight(registry)
     names = list(registry)
     built: dict = {}
     results = await asyncio.gather(
-        *(_attach_one(n, registry[n], auth, pinned_missing, built) for n in names),
+        *(
+            _attach_one(n, registry[n], auth, pinned_missing, built, limiters)
+            for n in names
+        ),
         return_exceptions=True,
     )
     surfaces: dict[str, FastMCP] = {}
@@ -378,180 +392,10 @@ async def build_surfaces(
     return surfaces
 
 
-def _combined_lifespan(
-    sub_apps: list, retries: list | None = None, backends: list | None = None
-):
-    """Run every mounted surface's own lifespan alongside the parent app's.
-
-    Each `http_app()` carries an MCP session manager that is started by its
-    lifespan. Starlette does NOT run the lifespan of sub-apps mounted via
-    `Mount`, so without this every request would fail with "Task group is not
-    initialized".
-
-    `retries` are zero-argument coroutine functions, one per surface that failed
-    to attach. Each runs as a task for the app's lifetime and is cancelled on
-    shutdown; see `_retry_attach` for why it owns its own sub-app lifespan.
-
-    `backends` are the boot-attached backends; each is closed on shutdown,
-    AFTER every sub-app lifespan has exited, so no session is still using a
-    client being closed. A retry-attached backend is closed by its own task.
-    """
-
-    @contextlib.asynccontextmanager
-    async def lifespan(app):
-        try:
-            async with contextlib.AsyncExitStack() as stack:
-                for sub in sub_apps:
-                    await stack.enter_async_context(sub.router.lifespan_context(sub))
-                tasks = [
-                    asyncio.create_task(retry(), name=f"beherouter-retry-{i}")
-                    for i, retry in enumerate(retries or [])
-                ]
-                try:
-                    yield
-                finally:
-                    for t in tasks:
-                        t.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            await _close_all(backends or [])
-
-    return lifespan
-
-
-class _PendingSurface:
-    """The ASGI app mounted for a surface whose attach failed.
-
-    Answers RFC 9457 503 until `_retry_attach` sets `app`, then delegates to it
-    for the rest of the process. The body names the surface only: an attach
-    error can carry internal hostnames, and this path is reachable before
-    authentication. The error itself is in the log.
-
-    A `config_fault` surface is never retried, so its 503 says so and carries
-    no Retry-After: telling a client to come back in 30 s would be a lie.
-    """
-
-    def __init__(self, name: str, *, config_fault: bool = False) -> None:
-        self.name = name
-        self.app: ASGIApp | None = None
-        self.config_fault = config_fault
-
-    async def __call__(self, scope, receive, send):
-        if self.app is not None:
-            await self.app(scope, receive, send)
-            return
-        if scope["type"] != "http":
-            return
-        from starlette.responses import JSONResponse
-
-        if self.config_fault:
-            detail = (
-                f"surface '{self.name}' is not attached and will not be retried: "
-                f"its configuration must be fixed"
-            )
-            headers = {}
-        else:
-            detail = f"surface '{self.name}' is not attached; the gateway is retrying"
-            headers = {"Retry-After": "30"}
-        response = JSONResponse(
-            {
-                "type": "about:blank",
-                "title": "Surface unavailable",
-                "status": 503,
-                "detail": detail,
-            },
-            status_code=503,
-            media_type="application/problem+json",
-            headers=headers,
-        )
-        await response(scope, receive, send)
-
-
-def _track_sessions(name: str, app) -> None:
-    if not metrics.track_sessions(name, app):
-        logger.warning(
-            "beherouter_active_sessions omitted for surface %r: this FastMCP "
-            "does not expose its session table",
-            name,
-        )
-
-
-async def _retry_attach(
-    name: str,
-    entry: RegistryEntry,
-    auth: object | None,
-    pending: _PendingSurface,
-    failed: dict[str, str],
-    *,
-    initial_s: float,
-    max_s: float,
-    config_faults: set[str] | None = None,
-    pinned_missing: dict[str, list[str]] | None = None,
-) -> None:
-    """Retry one failed attach with exponential backoff; swap it in ONCE.
-
-    A transient failure (refused connection, timeout) is retried forever, with
-    the delay capped at `max_s`. A configuration fault (`is_config_fault`) ends
-    the loop: it will not fix itself, so the surface stays 503 and /healthz
-    lists it under `needs_config_change`, logged once at ERROR.
-
-    ⚠️ The sub-app's lifespan is entered AND held here, in this task, until
-    shutdown cancels it. Pushing it onto the parent's exit stack instead would
-    exit an anyio task group from a different task than entered it, which
-    raises. The published tools array freezes at this first success, exactly
-    as it does for a surface that attached at boot. The backend is closed
-    when shutdown cancels this task, after the sub-app lifespan has exited.
-    """
-    delay = initial_s
-    while True:
-        await asyncio.sleep(delay)
-        attached: dict = {}
-        try:
-            surface = await _attach_one(name, entry, auth, pinned_missing, attached)
-        except Exception as e:
-            failed[name] = f"{type(e).__name__}: {e}"
-            if is_config_fault(e):
-                pending.config_fault = True
-                if config_faults is not None:
-                    config_faults.add(name)
-                _log_attach_failure(name, e)
-                return
-            delay = min(delay * 2, max_s)
-            logger.warning(
-                "surface %r still failing to attach; next try in %gs",
-                name,
-                delay,
-                exc_info=True,
-            )
-            continue
-        try:
-            app = surface.http_app(path="/mcp")
-            async with app.router.lifespan_context(app):
-                pending.app = app
-                _track_sessions(name, app)
-                failed.pop(name, None)
-                logger.info("surface %r attached on retry", name)
-                await asyncio.Event().wait()  # until shutdown cancels this task
-        finally:
-            await _close_all(attached.values())
-
-
-async def build_gateway_app(
-    registry: dict[str, RegistryEntry] | Path | str,
-    *,
-    strict_auth: bool = True,
-    retry_initial_s: float = 5.0,
-    retry_max_s: float = 300.0,
-):
-    """Build the ASGI app mounting each surface's http_app() at /<tool>/mcp."""
-    from starlette.applications import Starlette
-    from starlette.middleware import Middleware
-    from starlette.responses import JSONResponse, Response
-    from starlette.routing import Mount, Route
-
-    if not isinstance(registry, dict):
-        registry = load_registry(Path(registry))
-
+def check_registry(registry: dict[str, RegistryEntry]) -> None:
+    """Everything that refuses a registry before any attach: `preflight` plus the
+    auth-mode rules that depend on the registry. Shared by boot and reload, so a
+    reload refuses exactly what boot would."""
     # A gateway that cannot verify a user cannot require one. Refused BEFORE
     # any attach: an entry-level mistake should fail on the configuration, not
     # after a backend has been connected.
@@ -576,46 +420,62 @@ async def build_gateway_app(
             f"unset; set it to the dotted path of the claim your IdP puts roles "
             f"in (e.g. 'realm_access.roles')"
         )
+    preflight(registry)
 
+
+async def build_gateway_app(
+    registry: dict[str, RegistryEntry] | Path | str,
+    *,
+    strict_auth: bool = True,
+    retry_initial_s: float = 5.0,
+    retry_max_s: float = 300.0,
+):
+    """Build the ASGI app serving each surface's http_app() at /<tool>/mcp.
+
+    Every surface is a slot in the runtime's `SurfaceTable` (`runtime.py`), so
+    it can be retried, and later swapped, without rebuilding the app.
+    """
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.responses import JSONResponse, Response
+    from starlette.routing import Route
+
+    from . import killswitch
+    from .admin import AdminAuth, admin_routes, check_admin_config
+    from .audit import AuditSink
+    from .reload import drain_s, watch_s, watch_stamp
+    from .runtime import GatewayRuntime
+
+    path: Path | None = None
+    registry_stamp: tuple | None = None
+    if not isinstance(registry, dict):
+        path = Path(registry)
+        # Stamped BEFORE the read: an edit landing between the two is then
+        # seen by the watch instead of being mistaken for the baseline.
+        registry_stamp = watch_stamp([path])
+        registry = load_registry(path)
+    # preflight runs here and AGAIN in build_surfaces (via boot): intentional,
+    # build_surfaces stays self-checking for its other callers, and it is offline.
+    check_registry(registry)
+    admin = AdminAuth.from_env()
+    check_admin_config(admin)  # an admin token equal to the shared one refuses boot
+
+    ks = killswitch.configured()
+    if ks is not None:
+        ks.state()  # a malformed file with no last-good state refuses boot (§5.2)
+
+    watch_s()  # a bad BEHEROUTER_REGISTRY_WATCH_S refuses boot, not the first tick
     auth = ObservedVerifier(build_verifier(strict=strict_auth))
-    failed: dict[str, str] = {}
-    config_faults: set[str] = set()
-    pinned_missing: dict[str, list[str]] = {}
-    backends: dict = {}
-    surfaces = await build_surfaces(
+    runtime = GatewayRuntime(
         registry,
         auth=auth,
-        failed=failed,
-        config_faults=config_faults,
-        pinned_missing=pinned_missing,
-        backends=backends,
+        path=path,
+        retry_initial_s=retry_initial_s,
+        retry_max_s=retry_max_s,
+        drain_s=drain_s(),
+        registry_stamp=registry_stamp,
     )
-
-    sub_apps = {name: s.http_app(path="/mcp") for name, s in surfaces.items()}
-    pending = {
-        name: _PendingSurface(name, config_fault=name in config_faults)
-        for name in failed
-    }
-    def _up_of(n: str) -> Callable[[], bool]:
-        return lambda: n not in failed
-
-    for name in [*sub_apps, *pending]:
-        metrics.track_surface_up(name, _up_of(name))
-    for name, sub_app in sub_apps.items():
-        _track_sessions(name, sub_app)
-    # A config fault at boot gets no retry task at all: there is nothing for
-    # one to wait for.
-    retries = [
-        (
-            lambda n=name, p=pending[name]: _retry_attach(
-                n, registry[n], auth, p, failed,
-                initial_s=retry_initial_s, max_s=retry_max_s,
-                config_faults=config_faults, pinned_missing=pinned_missing,
-            )
-        )
-        for name in pending
-        if name not in config_faults
-    ]
+    await runtime.boot()
 
     async def healthz(_request):
         """Unauthenticated liveness (CONVENTIONS §Health).
@@ -644,19 +504,17 @@ async def build_gateway_app(
         `health --deep` is the check that fails on it. Pin names are not
         secret — they are the plugin's or the registry's own vocabulary, not
         anything a backend or a caller supplied.
+
+        Four more, also present only when non-empty (spec §6.2), none of which
+        makes `status` degraded: `reload_failed` — surfaces still serving their
+        pre-reload app because the new entry failed to attach; `last_reload` —
+        `{"status": "failed", "at": ...}` while the last reload failed at lint;
+        `disabled` — the kill switch's quarantined surface names, or `["*"]`
+        while `all` is set (a deliberate stop is not a fault: alert on this
+        key); `killswitch` — `"stale"` while a malformed state file is ignored.
+        No blocked subject ever appears here.
         """
-        attached = sorted(
-            [*sub_apps, *(n for n, p in pending.items() if p.app is not None)]
-        )
-        body: dict[str, object] = {"status": "degraded" if failed else "ok", "surfaces": attached}
-        if failed:
-            body["failed"] = sorted(failed)
-        stuck = sorted(n for n in config_faults if n in failed)
-        if stuck:
-            body["needs_config_change"] = stuck
-        if pinned_missing:
-            body["pinned_missing"] = {n: pinned_missing[n] for n in sorted(pinned_missing)}
-        return JSONResponse(body)
+        return JSONResponse(runtime.health_body())
 
     async def metrics_route(_request):
         """Unauthenticated, like /healthz: labelled by surface, tool, outcome
@@ -667,24 +525,39 @@ async def build_gateway_app(
         body, content_type = metrics.render()
         return Response(body, media_type=content_type)
 
-    # /healthz and /metrics first: a surface may not be named either, but an
-    # explicit Route ahead of the Mounts makes that collision impossible rather
-    # than merely unlikely.
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        # start() installs every boot-attached app before `yield`, so the first
+        # request already finds each one's session manager running.
+        try:
+            await runtime.start()
+            yield
+        finally:
+            await runtime.shutdown()
+
+    # /healthz, /metrics and /admin first: a surface may not be named any of
+    # them, but explicit Routes ahead of the Mounts make that collision
+    # impossible rather than merely unlikely. No admin credential configured
+    # means no /admin route at all (spec §4.2): an upgrade adds no network surface.
     routes = [
         Route("/healthz", healthz, methods=["GET"]),
         Route("/metrics", metrics_route, methods=["GET"]),
-        *[Mount(f"/{name}", app=app) for name, app in sub_apps.items()],
-        *[Mount(f"/{name}", app=p) for name, p in pending.items()],
+        *(admin_routes(runtime, admin, auth, AuditSink.from_env()) if admin else []),
     ]
     # Around every route, so each surface's verifier reports into the slot it
-    # opens and an expired token's 401 says so on the way out.
-    return Starlette(
+    # opens and an expired token's 401 says so on the way out. The table is the
+    # label set, so a surface added by a reload is a label at once.
+    app = Starlette(
         routes=routes,
-        middleware=[Middleware(RejectionMiddleware, surfaces=frozenset(registry))],
-        lifespan=_combined_lifespan(
-            list(sub_apps.values()), retries, list(backends.values())
-        ),
+        middleware=[Middleware(RejectionMiddleware, surfaces=runtime.table)],
+        lifespan=lifespan,
     )
+    # The table publishes onto the app's own router (fixed routes + one Mount
+    # per slot), rather than living behind a nested Mount(""): the surfaces stay
+    # top-level routes, exactly as before, and an unknown path is an RFC 9457 404.
+    runtime.table.bind(app.router, routes)
+    app.state.runtime = runtime  # tests and the admin API reach it here
+    return app
 
 
 def serve(
@@ -707,6 +580,6 @@ def serve(
     from .logsetup import configure
 
     configure()
-    registry = load_registry(Path(registry_path))
-    app = asyncio.run(build_gateway_app(registry))
+    # The path, not a loaded dict: the runtime keeps it, to reload from.
+    app = asyncio.run(build_gateway_app(Path(registry_path)))
     uvicorn.run(app, host=host, port=port, log_config=None)

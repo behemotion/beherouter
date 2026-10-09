@@ -8,6 +8,7 @@ reached through `search_tools` -> `describe_tool` -> `run_tool`.
 
 import inspect
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from fastmcp import FastMCP
@@ -24,7 +25,7 @@ from .gates import Gates
 from .indexing import search_hits
 from .metrics import UNKNOWN_TOOL
 from .models import Backend, ToolDescriptor
-from .pipeline import CallPipeline
+from .pipeline import CallPipeline, Stage
 from .search import DEFAULT_LIMIT, suggest
 
 logger = logging.getLogger(__name__)
@@ -279,6 +280,7 @@ def build_surface(
     call_timeout_s: float | None = None,
     audit: AuditSink | None = None,
     gates: Gates | None = None,
+    stages: Sequence[Stage] = (),
 ) -> FastMCP:
     """Build the MCP surface for one attached backend.
 
@@ -292,6 +294,9 @@ def build_surface(
     what makes this change invisible to the four static-token consumers.
 
     `gates` is this surface's per-tool gates (gates.py); None means none.
+
+    `stages` are surface-wide stages, run before every published tool, meta-tools
+    included (the kill switch, killswitch.stage_for).
     """
     mcp = FastMCP(backend.name, auth=auth)
     # None unless identity is configured AND enabled; one name, so the closures
@@ -316,6 +321,7 @@ def build_surface(
         call_timeout_s=call_timeout_s,
         audit=audit,
         audit_claim_names=audit_claims(),
+        stages=stages,
         tool_stages=gates.stages if gates is not None else (),
     )
 

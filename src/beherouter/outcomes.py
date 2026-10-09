@@ -28,7 +28,7 @@ GATE, PREPARE, EXECUTE = "gate", "prepare", "execute"
 # raiser later cannot leak a caller value by accident.
 CONTEXT_KEYS = frozenset(
     {"required_roles", "missing_roles", "expected_audience", "suggestions", "status", "limit_s",
-     "retry_after_s", "limit", "confirmation"}
+     "retry_after_s", "limit", "confirmation", "scope"}
 )
 
 

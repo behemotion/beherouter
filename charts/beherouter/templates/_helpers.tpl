@@ -299,6 +299,11 @@ BEHEROUTER_GATEWAY_TOKEN
 - name: plugins
   emptyDir: {}
 {{- end }}
+{{- if .Values.secretFiles.enabled }}
+- name: secret-files
+  secret:
+    secretName: {{ required "secretFiles.secretName is required when secretFiles.enabled=true" .Values.secretFiles.secretName }}
+{{- end }}
 {{- with .Values.extraVolumes }}
 {{ toYaml . }}
 {{- end }}
@@ -315,6 +320,12 @@ BEHEROUTER_GATEWAY_TOKEN
 {{- if .Values.plugins.install }}
 - name: plugins
   mountPath: {{ .Values.plugins.path }}
+  readOnly: true
+{{- end }}
+{{- if .Values.secretFiles.enabled }}
+# A directory mount, never subPath: only a directory is updated on rotation.
+- name: secret-files
+  mountPath: {{ .Values.secretFiles.mountPath }}
   readOnly: true
 {{- end }}
 {{- with .Values.extraVolumeMounts }}

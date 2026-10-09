@@ -11,6 +11,10 @@ from tomlkit.items import Table
 
 from .errors import UsageError
 
+# Explicit gateway routes. A surface of one of these names would be shadowed by
+# the route (healthz, metrics) or collide with the admin API, silently.
+RESERVED_NAMES = frozenset({"admin", "healthz", "metrics"})
+
 
 @dataclass
 class RegistryEntry:
@@ -49,6 +53,11 @@ def validate_entry(e: RegistryEntry) -> None:
     Performs NO I/O: this is what `registry-lint` runs on a workstation, because
     an attach failure crash-loops the gateway and takes /healthz with it.
     """
+    if e.name in RESERVED_NAMES:
+        raise UsageError(
+            f"'{e.name}' is a reserved path on the gateway and cannot name a surface; "
+            f"reserved: {sorted(RESERVED_NAMES)}"
+        )
     # Deferred so that importing the registry SCHEMA does not drag in every
     # plugin — and, through them, fastmcp. `load_registry`/`save_registry` stay
     # cheap for callers that only read or write the file.

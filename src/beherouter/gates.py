@@ -257,6 +257,16 @@ class RateLimiter:
         calls = int(raw["calls"])
         return cls(surface, calls, float(raw["per_s"]), int(raw.get("burst", calls)))
 
+    def matches(self, raw: Mapping) -> bool:
+        """Whether `raw` (a [surface.rate_limit] table) configures this exact limit:
+        a reload keeps an equal limiter, so a reload is never a free refill."""
+        calls = int(raw["calls"])
+        return (calls, float(raw["per_s"]), int(raw.get("burst", calls))) == (
+            self.calls,
+            self.per_s,
+            self.burst,
+        )
+
     @property
     def limit(self) -> str:
         return f"{self.calls}/{self.per_s:g}s"
@@ -303,9 +313,12 @@ class RateLimiter:
             )
 
 
-def gates_from_entry(entry) -> Gates | None:
+def gates_from_entry(entry, limiters: dict | None = None) -> Gates | None:
     """The gates one registry entry configures, in their FIXED order -- roles, rate
     limit, confirm -- or None. Validate the entry first.
+
+    `limiters`, when given, is the gateway's `{surface: RateLimiter}`; an equal
+    limit reuses the existing limiter (spec §2.5).
 
     The order is a contract: a caller without the role spends no token, a
     rate-limited call puts no question in front of a human, and a declined
@@ -321,7 +334,12 @@ def gates_from_entry(entry) -> Gates | None:
         roles = ToolRoleGate(entry.name, tools, roles_claim())
         stages.append(roles)
     if entry.rate_limit:
-        stages.append(RateLimiter.from_table(entry.name, entry.rate_limit))
+        limiter = limiters.get(entry.name) if limiters is not None else None
+        if limiter is None or not limiter.matches(entry.rate_limit):
+            limiter = RateLimiter.from_table(entry.name, entry.rate_limit)
+        if limiters is not None:
+            limiters[entry.name] = limiter
+        stages.append(limiter)
     confirm = None
     if authz.get("confirm_mutating"):
         confirm = ConfirmGate(entry.name, frozenset(authz.get("confirm_exempt") or ()))

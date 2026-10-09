@@ -30,8 +30,11 @@ spec:
         {{- end }}
       annotations:
         # Registry and secret edits roll the pods even when the image is
-        # unchanged -- the gateway reads both only at boot.
+        # unchanged -- the gateway reads both only at boot. With hotReload the
+        # gateway polls the registry instead, so a registry edit must NOT roll.
+        {{- if not .Values.hotReload.enabled }}
         checksum/configmap-registry: {{ include (print .Template.BasePath "/configmap-registry.yaml") . | sha256sum }}
+        {{- end }}
         {{- if .Values.secret.create }}
         checksum/secret-env: {{ include (print .Template.BasePath "/secret-env.yaml") . | sha256sum }}
         {{- end }}
@@ -46,8 +49,12 @@ spec:
       serviceAccountName: {{ include "beherouter.serviceAccountName" . }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- $psc := deepCopy .Values.podSecurityContext }}
+      {{- if and .Values.killswitch.enabled (not (hasKey $psc "fsGroup")) }}
+      {{- $_ := set $psc "fsGroup" 1000 }}
+      {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml $psc | nindent 8 }}
       {{- with (include "beherouter.initContainers" . | trim) }}
       initContainers:
         {{- . | nindent 8 }}
@@ -58,6 +65,29 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             {{- include "beherouter.env" (dict "root" . "secretName" (include "beherouter.secretName" .) "tokenKey" (include "beherouter.tokenKey" .)) | nindent 12 }}
+            {{- if and .Values.admin.token (not .Values.secret.create) }}
+            {{- fail "admin.token needs secret.create=true (it is stored in the chart Secret); with secret.create=false, leave admin.token empty and supply BEHEROUTER_ADMIN_TOKEN through extraEnv from your own Secret" }}
+            {{- end }}
+            {{- if .Values.admin.token }}
+            # The chart Secret is delivered key by key, like secret.env.
+            - name: BEHEROUTER_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "beherouter.secretName" . }}
+                  key: BEHEROUTER_ADMIN_TOKEN
+            {{- end }}
+            {{- if .Values.admin.role }}
+            - name: BEHEROUTER_ADMIN_ROLE
+              value: {{ .Values.admin.role | quote }}
+            {{- end }}
+            {{- if .Values.killswitch.enabled }}
+            - name: BEHEROUTER_KILLSWITCH_PATH
+              value: {{ printf "%s/killswitch.json" .Values.killswitch.mountPath | quote }}
+            {{- end }}
+            {{- if .Values.hotReload.enabled }}
+            - name: BEHEROUTER_REGISTRY_WATCH_S
+              value: {{ .Values.hotReload.watchSeconds | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 47100
@@ -107,6 +137,10 @@ spec:
               subPath: {{ base .Values.identityMap.mountPath }}
               readOnly: true
             {{- end }}
+            {{- if .Values.killswitch.enabled }}
+            - name: killswitch
+              mountPath: {{ .Values.killswitch.mountPath }}
+            {{- end }}
       volumes:
         - name: registry
           configMap:
@@ -123,6 +157,11 @@ spec:
             items:
               - key: {{ base .Values.identityMap.mountPath }}
                 path: {{ base .Values.identityMap.mountPath }}
+        {{- end }}
+        {{- if .Values.killswitch.enabled }}
+        - name: killswitch
+          persistentVolumeClaim:
+            claimName: {{ required "killswitch.existingClaim is required when killswitch.enabled=true" .Values.killswitch.existingClaim }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -263,3 +263,9 @@ def test_a_value_the_writer_cannot_represent_is_refused_not_mangled(tmp_path):
 def test_malformed_search_aliases_are_refused(bad):
     with pytest.raises(UsageError, match="search_aliases"):
         validate_entry(RegistryEntry(name="t", plugin="office-mcp", search_aliases=bad))
+
+
+@pytest.mark.parametrize("name", ["admin", "healthz", "metrics"])
+def test_reserved_surface_names_are_refused(name):
+    with pytest.raises(UsageError, match="reserved"):
+        validate_entry(RegistryEntry(name=name, plugin="office-mcp"))

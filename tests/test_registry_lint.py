@@ -475,3 +475,58 @@ def test_lint_refuses_exempting_a_meta_tool(tmp_path):
     )
     with pytest.raises(UsageError, match="run_tool"):
         registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_resolves_a_file_placeholder_and_never_prints_the_secret(
+    tmp_path, capsys
+):
+    secret = tmp_path / "plane-key"
+    secret.write_text("distinctive-file-secret-91x\n")
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        '  [plane.config]\n  workspace_slug = "acme"\n'
+        f'  [plane.env]\n  api_key = "${{file:{secret}}}"\n'
+    )
+    from beherouter.cli.app import app
+
+    assert app.main(["registry-lint", "--path", _write(tmp_path, body), "--json"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["ok"] is True
+    assert "distinctive-file-secret-91x" not in captured.out + captured.err
+
+
+def test_lint_refuses_a_missing_secret_file(tmp_path):
+    body = (
+        '[plane]\nplugin = "plane"\n'
+        '  [plane.config]\n  workspace_slug = "acme"\n'
+        f'  [plane.env]\n  api_key = "${{file:{tmp_path}/absent}}"\n'
+    )
+    with pytest.raises(UsageError, match="absent"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_registry_lint_refuses_a_malformed_killswitch_file(tmp_path, monkeypatch):
+    from beherouter import killswitch
+
+    ks = tmp_path / "ks.json"
+    ks.write_text("[]")
+    monkeypatch.setenv("BEHEROUTER_KILLSWITCH_PATH", str(ks))
+    killswitch._SWITCHES.clear()
+    try:
+        with pytest.raises(UsageError, match="kill-switch"):
+            registry_lint(path=_write(tmp_path, '[office]\nplugin = "office-mcp"\n'))
+    finally:
+        killswitch._SWITCHES.clear()
+
+
+def test_registry_lint_passes_a_valid_killswitch_file(tmp_path, monkeypatch):
+    from beherouter import killswitch
+
+    ks = tmp_path / "ks.json"
+    ks.write_text('{"surfaces": {"office": {}}}')
+    monkeypatch.setenv("BEHEROUTER_KILLSWITCH_PATH", str(ks))
+    killswitch._SWITCHES.clear()
+    try:
+        registry_lint(path=_write(tmp_path, '[office]\nplugin = "office-mcp"\n'))
+    finally:
+        killswitch._SWITCHES.clear()

@@ -62,6 +62,18 @@ Configuration:
                         the reverse proxy is the network surface)
   --network NET         also join a podman network (e.g. a shared one that
                         same-host backends are reachable on by name)
+  --volume SRC:DST[:OPTS]
+                        an extra mount, repeatable, given to BOTH the lint
+                        run and the gateway container (podman -v syntax).
+                        Use it for a \${file:/...} secret (mount the file or
+                        its directory read-only) and for a persistent kill
+                        switch (a writable directory holding the file named
+                        by BEHEROUTER_KILLSWITCH_PATH). The registry is NOT
+                        one of these: it stays a per-deploy snapshot, which
+                        is what makes rollback restore the old config, so a
+                        registry change still means re-running $PROG (SIGHUP,
+                        POST /admin/reload and the watch re-read an unchanged
+                        snapshot)
 
 Verification:
   --deep                also run 'beherouter health --deep --json' in the
@@ -82,6 +94,8 @@ container existed); 2 usage error.
 Examples:
   $PROG --tag 0.2.5 --deep
   $PROG --build --registry /srv/beherouter/registry.toml --env-file /srv/beherouter/.env
+  $PROG --tag 0.2.5 --volume /srv/beherouter/secrets:/run/secrets:ro,z \\
+        --volume /srv/beherouter/killswitch:/var/lib/beherouter:z
 EOF
 }
 
@@ -101,6 +115,7 @@ ENV_FILE="./.env"
 NAME="beherouter"
 PUBLISH="127.0.0.1:${APP_PORT}"
 NETWORK=""
+VOLUMES=()
 DEEP=0
 ALLOW_DEGRADED=0
 TIMEOUT=90
@@ -121,6 +136,7 @@ while [[ $# -gt 0 ]]; do
     --name)           need_arg "$@"; NAME="$2"; shift 2 ;;
     --publish)        need_arg "$@"; PUBLISH="$2"; shift 2 ;;
     --network)        need_arg "$@"; NETWORK="$2"; shift 2 ;;
+    --volume)         need_arg "$@"; VOLUMES+=("$2"); shift 2 ;;
     --deep)           DEEP=1; shift ;;
     --allow-degraded) ALLOW_DEGRADED=1; shift ;;
     --timeout)        need_arg "$@"; TIMEOUT="$2"; shift 2 ;;
@@ -131,6 +147,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+for v in ${VOLUMES[@]+"${VOLUMES[@]}"}; do
+  [[ "$v" =~ ^[^:]+:/[^:]*(:[^:]+)?$ ]] \
+    || usage_error "--volume must be SRC:DST[:OPTS] with an absolute DST, got: $v"
+  dst="${v#*:}"; dst="${dst%%:*}"; dst="${dst%/}"
+  [[ "$dst" != "/data" && "$dst" != "/data/registry.toml" ]] \
+    || usage_error "--volume must not mount over the registry ($dst); pass --registry (it is snapshotted per deploy)"
+done
 [[ "$TIMEOUT" =~ ^[0-9]+$ && "$TIMEOUT" -gt 0 ]] || usage_error "--timeout must be a positive integer"
 [[ "$PUBLISH" =~ ^(.+):([0-9]+)$ ]] || usage_error "--publish must be ADDR:PORT, e.g. 127.0.0.1:${APP_PORT}"
 HOST_ADDR="${BASH_REMATCH[1]}"
@@ -229,6 +252,11 @@ fi
 if [[ -n "$NETWORK" ]]; then
   COMMON_ARGS+=(--network "$NETWORK")
 fi
+# Extra mounts (--volume): a ${file:} secret must be visible to the lint run
+# too, or registry-lint refuses a registry that references it.
+for v in ${VOLUMES[@]+"${VOLUMES[@]}"}; do
+  COMMON_ARGS+=(-v "$v")
+done
 
 # Poll /healthz until it answers. Prints the body; returns 0 on "ok", 0 on
 # "degraded" only with --allow-degraded, 1 otherwise.

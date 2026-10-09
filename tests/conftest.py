@@ -51,3 +51,50 @@ def catalogue_descriptors():
         ]
 
     return load
+
+
+class _Exec:
+    """A backend executor that answers every verb and counts its closes."""
+
+    def __init__(self):
+        self.closed = 0
+
+    async def run(self, verb, args, *, identity=None):
+        return {"result": "ok"}
+
+    async def aclose(self):
+        self.closed += 1
+
+
+@pytest.fixture
+def gateway_plugin():
+    """Register throwaway `inproc` plugins by name; unregistered at teardown."""
+    from beherouter.plugins import PLUGINS, register
+    from beherouter.plugins.spec import PluginSpec
+
+    names = []
+
+    def _register(name, build):
+        register(PluginSpec(name=name, summary="t", backing="inproc"), build)
+        names.append(name)
+
+    yield _register
+    for n in names:
+        PLUGINS.pop(n, None)
+
+
+@pytest.fixture
+def exec_builder():
+    """`exec_builder(execs)` is a plugin build that appends each executor it
+    makes to `execs`, so a test can see which backends were closed."""
+    from beherouter.models import Backend
+
+    def builder(execs):
+        async def build(ctx):
+            ex = _Exec()
+            execs.append(ex)
+            return Backend(name=ctx.surface, kind="mcp", descriptors=[], executor=ex)
+
+        return build
+
+    return builder
