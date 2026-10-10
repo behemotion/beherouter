@@ -8,7 +8,7 @@ released is the body of its GitHub Release (`release.yml` extracts it, and the
 auto-generated contributor appendix is appended below it). Releases before
 0.2.0 were not tagged; their history is the git log.
 
-## [Unreleased]
+## [0.2.6] - 2026-10-10
 
 ### Added
 
