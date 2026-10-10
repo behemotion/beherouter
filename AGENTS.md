@@ -592,11 +592,11 @@ any template or values change bumps it). **A release also writes its
 main when the tag is cut — it runs from the tagged commit. Every action is
 pinned to a commit SHA (Dependabot bumps them).
 
-⚠️ **The `/deploy` skill (`.claude/skills/deploy/SKILL.md`, untracked) is half
-obsolete.** Its release half — verify consistency, cut the tag, let CI publish —
-still applies. Its homelab half (re-vendor into the homelab repo, ansible
-playbooks, verify `https://beherouter.<domain>`) describes the retired
-deployment; skip it until the skill is rewritten.
+The `/deploy` skill (`.claude/skills/deploy/SKILL.md`, untracked) covers the
+public release only: green main, version consistency, the release commit, the
+tag, artifact verification. It no longer carries homelab steps — there is no
+first-party deployment to push a release to; a deployer follows
+`docs/DEPLOYMENT.md`.
 
 **Versioning — patch by default, minor only when asked.** A routine release
 bumps the **third** register (`0.2.0 → 0.2.1`); the **second** register moves
