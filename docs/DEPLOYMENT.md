@@ -566,7 +566,7 @@ Send `Authorization: Bearer <credential>`. Either passes:
 | Status | When |
 |---|---|
 | `200` | done. A reload returns its result; a kill-switch write returns `{"state": …}` (plus `"warning"` for an unknown surface); `GET /admin/killswitch` returns the state object itself, unwrapped |
-| `400` | bad JSON, a wrong shape, an over-long `reason`, or a missing/over-long `sub` |
+| `400` | bad JSON, a wrong shape, an over-long `reason`, a missing/over-long `sub`, or a write that would leave an invalid state file |
 | `401` | no credential, or one that is not an admin credential |
 | `403` | a valid JWT without the admin role |
 | `404` | no admin credential configured, or the kill-switch routes without a state file |

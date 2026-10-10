@@ -246,6 +246,9 @@ def admin_routes(runtime, admin: AdminAuth, verifier, audit) -> list[Route]:
         except Conflict as e:
             audited(action, target_kind, shown, actor, "conflict")
             return problem(409, "Conflict", str(e))
+        except UsageError as e:  # the change itself would leave an invalid file
+            audited(action, target_kind, shown, actor, "bad_request")
+            return problem(400, "Bad request", str(e))
         audited(action, target_kind, shown, actor, "ok")
         body: dict = {"state": state.as_json()}
         if target_kind == "surface" and target not in runtime.table:

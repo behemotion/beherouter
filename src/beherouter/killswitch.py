@@ -24,6 +24,7 @@ audit line with its `sub`, as every caller's call does.)
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -40,6 +41,7 @@ KILLSWITCH_VAR = "BEHEROUTER_KILLSWITCH_PATH"
 logger = logging.getLogger("beherouter.killswitch")
 
 _KINDS = ("all", "surfaces", "subjects")
+_NONE_BAD = object()
 
 
 @dataclass(frozen=True)
@@ -60,10 +62,11 @@ class KillState:
         return self.all is None and not self.surfaces and not self.subjects
 
     def as_json(self) -> dict:
+        """A deep copy: the state is cached and shared by every call."""
         out: dict = {"surfaces": self.surfaces, "subjects": self.subjects}
         if self.all is not None:
             out["all"] = self.all
-        return out
+        return copy.deepcopy(out)
 
 
 def _table(data: dict, kind: str) -> dict[str, dict]:
@@ -103,44 +106,51 @@ class KillSwitch:
         self.path = Path(path)
         self._stamp: tuple[int, int, int] | None = None
         self._good: KillState | None = None
-        self._bad_stamp: tuple[int, int, int] | None = None
+        # The stamp last found malformed; _NONE_BAD = none yet (a None stamp is
+        # itself a value: the file could not even be stat'ed).
+        self._bad_stamp: object = _NONE_BAD
         self.stale = False
         self._lock = asyncio.Lock()
 
-    def _read(self) -> tuple[tuple[int, int, int] | None, KillState]:
-        """(stamp, state) straight from disk. A missing file is empty state.
-        Raises ValueError (bad JSON or shape) or OSError (unreadable)."""
+    def _stamp_now(self) -> tuple[int, int, int] | None:
+        """(mtime_ns, size, ino), or None for a missing file. OSError otherwise."""
         try:
             st = self.path.stat()
         except FileNotFoundError:
-            return None, KillState()
-        stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
-        if stamp == self._stamp and self._good is not None:
-            return stamp, self._good
-        return stamp, parse_state(json.loads(self.path.read_text()))
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
 
     def state(self) -> KillState:
+        """One stat per call; a read and a parse only when the stamp changed.
+        A missing file is empty state. A file already found malformed is not
+        re-parsed until it changes again."""
+        stamp: tuple[int, int, int] | None = None
         try:
-            stamp, state = self._read()
+            stamp = self._stamp_now()
+            if stamp is None:
+                state = KillState()
+            elif stamp == self._stamp and self._good is not None:
+                state = self._good
+            elif stamp == self._bad_stamp and self._good is not None:
+                self.stale = True
+                return self._good
+            else:
+                state = parse_state(json.loads(self.path.read_text()))
         except (OSError, ValueError) as e:
+            # The exception TYPE, plus a ValueError's message (parse_state names
+            # keys only; a JSONDecodeError gives a position): never file content.
+            why = f"{type(e).__name__}: {e}" if isinstance(e, ValueError) else type(e).__name__
             if self._good is None:
                 raise UsageError(
-                    f"kill-switch file '{self.path}' is malformed or unreadable "
-                    f"({type(e).__name__}: {e if isinstance(e, ValueError) else ''})"
+                    f"kill-switch file '{self.path}' is malformed or unreadable ({why})"
                 ) from e
-            try:
-                bad = self.path.stat()
-                bad_stamp = (bad.st_mtime_ns, bad.st_size, bad.st_ino)
-            except OSError:
-                bad_stamp = None
-            if bad_stamp != self._bad_stamp:
-                self._bad_stamp = bad_stamp
-                # The exception TYPE only: a JSONDecodeError message quotes the file.
+            if stamp != self._bad_stamp:
                 logger.error(
                     "kill-switch file %r is malformed (%s); keeping the last good state",
                     str(self.path),
                     type(e).__name__,
                 )
+            self._bad_stamp = stamp
             self.stale = True
             return self._good
         if stamp is None and self._good is not None and not self._good.empty():
@@ -156,8 +166,27 @@ class KillSwitch:
                 len(self._good.surfaces),
                 len(self._good.subjects),
             )
-        self._stamp, self._good, self.stale, self._bad_stamp = stamp, state, False, None
+        self._stamp, self._good, self.stale, self._bad_stamp = stamp, state, False, _NONE_BAD
         return state
+
+    def _load_raw(self) -> dict:
+        return json.loads(self.path.read_text()) if self.path.exists() else {}
+
+    def _write_raw(self, raw: dict) -> None:
+        """Atomically: a temp file in the same directory, fsync'd, mode 0600,
+        then renamed over the old one."""
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".killswitch.")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(raw, f, indent=2, sort_keys=True)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
 
     async def update(self, change: Callable[[dict], None], *, actor: str) -> KillState:
         """Read-modify-write the file under a process lock, atomically.
@@ -167,28 +196,23 @@ class KillSwitch:
         API writes."""
         async with self._lock:
             try:
-                raw = json.loads(self.path.read_text()) if self.path.exists() else {}
+                raw = await asyncio.to_thread(self._load_raw)
                 parse_state(raw)
             except (OSError, ValueError) as e:
                 raise Conflict(
                     f"kill-switch file '{self.path}' is malformed or unreadable "
                     f"({type(e).__name__}); fix it by hand before writing through the API"
                 ) from e
-            change(raw)
-            parse_state(raw)  # our own change must leave a valid file
             try:
-                fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".killswitch.")
-                try:
-                    with os.fdopen(fd, "w") as f:
-                        json.dump(raw, f, indent=2, sort_keys=True)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    os.chmod(tmp, 0o600)
-                    os.replace(tmp, self.path)
-                except BaseException:
-                    with contextlib.suppress(OSError):
-                        os.unlink(tmp)
-                    raise
+                change(raw)
+                parse_state(raw)  # our own change must leave a valid file
+            except ValueError as e:
+                raise UsageError(
+                    f"that change would leave an invalid kill-switch file ({e})"
+                ) from e
+            try:
+                # fsync and replace off the loop: a slow volume must not stall calls
+                await asyncio.to_thread(self._write_raw, raw)
             except OSError as e:
                 raise Conflict(
                     f"kill-switch file '{self.path}' cannot be written "

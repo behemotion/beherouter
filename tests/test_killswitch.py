@@ -162,3 +162,48 @@ def test_configured_is_none_when_unset_and_shared_per_path(tmp_path, monkeypatch
     assert configured() is None
     monkeypatch.setenv("BEHEROUTER_KILLSWITCH_PATH", str(tmp_path / "ks.json"))
     assert configured() is configured()
+
+
+def test_a_stale_file_is_not_reparsed_on_every_call(tmp_path, monkeypatch):
+    """While the file stays malformed, each call costs one stat, not a read
+    and a parse plus a second stat."""
+    p = tmp_path / "ks.json"
+    p.write_text('{"surfaces": {"dwh": {}}}')
+    ks = KillSwitch(p)
+    ks.state()
+    p.write_text("{not json")
+    assert ks.state().disabled("dwh") == "surface" and ks.stale
+    reads = []
+    real = type(p).read_text
+    monkeypatch.setattr(type(p), "read_text", lambda self, *a, **k: reads.append(1) or real(self))
+    for _ in range(3):
+        assert ks.state().disabled("dwh") == "surface"
+    assert reads == [] and ks.stale
+
+
+def test_an_unreadable_file_names_the_error_type_cleanly(tmp_path):
+    p = tmp_path / "ks.json"
+    p.mkdir()  # reading a directory is an OSError
+    with pytest.raises(UsageError) as e:
+        KillSwitch(p).state()
+    assert "(IsADirectoryError)" in str(e.value)
+
+
+def test_as_json_cannot_mutate_the_cached_state(tmp_path):
+    p = tmp_path / "ks.json"
+    p.write_text('{"surfaces": {"dwh": {"reason": "r"}}}')
+    ks = KillSwitch(p)
+    ks.state().as_json()["surfaces"]["office"] = {}
+    ks.state().as_json()["surfaces"]["dwh"]["reason"] = "changed"
+    assert ks.state().surfaces == {"dwh": {"reason": "r"}}
+
+
+async def test_a_change_leaving_an_invalid_file_is_a_usage_error(tmp_path):
+    ks = KillSwitch(tmp_path / "ks.json")
+
+    def bad(raw):
+        raw["surfaces"] = []
+
+    with pytest.raises(UsageError, match="invalid"):
+        await ks.update(bad, actor="a")
+    assert not (tmp_path / "ks.json").exists()

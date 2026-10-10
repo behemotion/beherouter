@@ -24,10 +24,11 @@ def ks_file(tmp_path, monkeypatch):
 
 
 class _Exec:
-    calls = 0
+    def __init__(self):
+        self.calls = 0
 
     async def run(self, verb, args, *, identity=None):
-        _Exec.calls += 1
+        self.calls += 1
         return {"ok": True}
 
 
@@ -36,12 +37,9 @@ async def _call(stage, caller=None):
     from beherouter import pipeline as p
 
     pipe = CallPipeline("dwh", _Exec(), audit=AuditSink(enabled=False), stages=[stage])
-    orig = p.current_caller
-    p.current_caller = lambda names: caller
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(p, "current_caller", lambda names: caller)
         return await pipe.run("search_tools", lambda scope: _ok())
-    finally:
-        p.current_caller = orig
 
 
 async def _ok():
@@ -100,7 +98,13 @@ def test_the_gauges_follow_the_file(ks_file):
     ks_file.write_text(json.dumps({"surfaces": {"dwh": {}}, "subjects": {"a": {}, "b": {}}}))
     metrics.track_killswitch("dwh", configured())
     metrics.track_killswitch("office", configured())
-    body = metrics.render()[0].decode()
+    try:
+        body = metrics.render()[0].decode()
+    finally:
+        # global registry: leave no series reading this test's file behind
+        metrics.forget_surface("dwh")
+        metrics.forget_surface("office")
+        metrics.BLOCKED_SUBJECTS.set_function(lambda: 0.0)
     assert 'beherouter_surface_disabled{surface="dwh"} 1.0' in body
     assert 'beherouter_surface_disabled{surface="office"} 0.0' in body
     assert "beherouter_blocked_subjects 2.0" in body
@@ -113,9 +117,9 @@ def test_the_gauges_follow_the_file(ks_file):
 
 async def test_a_stopped_surface_refuses_pinned_and_meta_tools_but_still_lists(ks_file):
     ks_file.write_text(json.dumps({"surfaces": {"dwh": {"reason": "INC-42"}}}))
-    _Exec.calls = 0
+    ex = _Exec()
     d = ToolDescriptor(name="w", verb="w", summary="w", schema={}, pinned=True, mutating=False)
-    backend = Backend(name="dwh", kind="mcp", executor=_Exec(), descriptors=[d])
+    backend = Backend(name="dwh", kind="mcp", executor=ex, descriptors=[d])
     stage = stage_for("dwh")
     surface = build_surface(
         backend, audit=AuditSink(enabled=False), stages=(stage,) if stage else ()
@@ -128,4 +132,4 @@ async def test_a_stopped_surface_refuses_pinned_and_meta_tools_but_still_lists(k
     for r in (pinned, meta):
         assert r.isError
         assert r.meta[META_KEY]["reason"] == "surface_disabled"
-    assert _Exec.calls == 0
+    assert ex.calls == 0

@@ -255,6 +255,10 @@ auto-generated contributor appendix is appended below it). Releases before
 - `stateless = false` written out no longer counts as a change at reload.
 - A reload that fails after every requester has gone is logged, and asyncio no
   longer reports an unretrieved exception for it.
+- Kill switch: a malformed file is not re-parsed on every call while it stays
+  unchanged; an unreadable file's error names its type cleanly; the state file
+  is written off the event loop; an admin write that would leave an invalid
+  file answers `400`; the state returned by the admin API is a copy.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no
