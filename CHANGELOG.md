@@ -248,6 +248,10 @@ auto-generated contributor appendix is appended below it). Releases before
   answering HTTP 4xx is `backend_rejected` (it was `backend_unavailable`); a
   5xx stays `backend_unavailable`. An MCP `isError` result has no status and
   stays `backend_rejected`.
+- **An app that dies while serving is no longer reported live.** Its surface
+  answers `503`, appears under `/healthz` `failed`, and is retried.
+- A retry cancelled by a reload's removal can no longer re-create the removed
+  surface's `beherouter_active_sessions` series.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no

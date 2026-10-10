@@ -24,7 +24,7 @@ import contextlib
 import logging
 import signal
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from starlette.responses import JSONResponse
@@ -192,6 +192,9 @@ class Supervisor:
         self.stateless = stateless
         self.task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self._app = None  # the raw http app, once its lifespan is serving
+        # Set by the install: called once if the app dies after it was serving.
+        self.on_failed: Callable[[], None] | None = None
 
     async def start(self) -> ASGIApp:
         """Run the app's lifespan in a new task; return the installed app once
@@ -215,6 +218,22 @@ class Supervisor:
             await task  # _run handed its error over; this waits for its close
             raise
 
+    def track(self) -> None:
+        """Point the surface's active_sessions series at this app. Called by
+        the install that put it in its slot, NEVER from inside `_run`: a
+        supervisor whose start() was cancelled (a retry cancelled by a reload's
+        `_remove`) must not re-create a removed surface's series, or repoint a
+        live one at an app that never serves."""
+        if self.stateless:
+            metrics.untrack_sessions(self.name)
+            logger.info(
+                "surface %r is stateless: no MCP sessions, so no "
+                "beherouter_active_sessions series",
+                self.name,
+            )
+        elif self._app is not None:
+            _track_sessions(self.name, self._app)
+
     def stop(self) -> None:
         """Stop taking requests is the caller's job (swap the slot first); this
         lets in-flight ones finish for up to drain_s, then closes."""
@@ -227,15 +246,7 @@ class Supervisor:
                 if ready.done():  # start()'s caller gave up while we entered
                     return
                 counted = _Counted(app)
-                if self.stateless:
-                    metrics.untrack_sessions(self.name)
-                    logger.info(
-                        "surface %r is stateless: no MCP sessions, so no "
-                        "beherouter_active_sessions series",
-                        self.name,
-                    )
-                else:
-                    _track_sessions(self.name, app)
+                self._app = app
                 ready.set_result(counted)
                 await self._stop.wait()
                 await counted.drained(self.drain_s)
@@ -248,6 +259,8 @@ class Supervisor:
                 ready.set_exception(e)
             else:
                 logger.error("surface %r app failed while serving", self.name, exc_info=True)
+                if self.on_failed is not None and not self._stop.is_set():
+                    self.on_failed()
         finally:
             await close_backend(self.backend)
 
@@ -408,10 +421,31 @@ class GatewayRuntime:
             slot.name, surface, backend, drain_s=self.drain_s, stateless=stateless
         )
         app = await sup.start()
+        if self.table.get(slot.name) is not slot:
+            # Removed while its app was starting: never install, never track.
+            self._retire(sup)
+            return
         old = slot.supervisor
         slot.app, slot.supervisor, slot.config_fault = app, sup, False
+        sup.track()
+        sup.on_failed = lambda: self._serving_failed(slot, sup)
         if old is not None:
             self._retire(old)
+
+    def _serving_failed(self, slot: SurfaceSlot, sup: Supervisor) -> None:
+        """An installed app died while serving: answer 503 again, as a pending
+        surface does, and retry the entry in force. Only if `sup` still holds
+        the slot -- a retired or replaced app failing is no one's concern."""
+        if self.table.get(slot.name) is not slot or slot.supervisor is not sup:
+            return
+        slot.app, slot.supervisor = None, None
+        metrics.untrack_sessions(slot.name)
+        self.failed[slot.name] = "RuntimeError: the surface's app failed while serving"
+        entry = self.registry.get(slot.name)
+        if entry is not None and slot.retry is None:
+            slot.retry = asyncio.create_task(
+                self._retry(slot, entry), name=f"beherouter-retry-{slot.name}"
+            )
 
     def _retire(self, sup: Supervisor) -> None:
         sup.stop()

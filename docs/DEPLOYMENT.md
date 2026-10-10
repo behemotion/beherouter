@@ -177,7 +177,7 @@ appear only when they have something to say, so a clean gateway answers exactly
 
 | Key | Present when | Meaning |
 |---|---|---|
-| `failed` | a surface failed to attach | the surfaces answering `503`; transient faults are retried in the background |
+| `failed` | a surface failed to attach, or its app died while serving | the surfaces answering `503`; transient faults are retried in the background |
 | `needs_config_change` | a failure is a configuration fault (`UsageError`, e.g. a bad `[surface.identity]`) | the subset of `failed` the gateway has **stopped retrying**: it will not fix itself, so fix the registry, then reload (SIGHUP, `POST /admin/reload` or the watch) or restart; an env change needs a restart. That surface's `503` says so and carries no `Retry-After` |
 | `pinned_missing` | a surface attached but its backend no longer serves some pinned tools | `{surface: [tool names]}`. The surface stays up and the status unchanged (logged at WARNING); `health --deep` fails it |
 | `reload_failed` | a [reload](#hot-reload) changed a surface whose new entry failed to attach or start | the surfaces **still serving their pre-reload app**. Status stays `ok`: they are serving |

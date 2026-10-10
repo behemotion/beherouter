@@ -291,3 +291,96 @@ async def test_a_retired_supervisor_drains_in_flight_requests_up_to_its_deadline
     call.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await call
+
+
+async def test_a_supervisor_registers_its_session_series_only_once_installed():
+    """A retry cancelled by a reload's `_remove` can leave a supervisor that
+    entered its lifespan but was never installed. Registering the
+    active_sessions series inside the supervisor let that half-started app
+    re-create the series of a REMOVED surface (or repoint a live one at an app
+    that never serves). The series is registered at install, never by start()."""
+    from fastmcp import FastMCP
+
+    from beherouter import metrics
+
+    labels = {"surface": "race-x"}
+    ex = _Exec()
+    sup = Supervisor(
+        "race-x", FastMCP("x"), Backend(name="race-x", kind="mcp", descriptors=[], executor=ex)
+    )
+    await sup.start()
+    assert metrics.REGISTRY.get_sample_value("beherouter_active_sessions", labels) is None
+    sup.track()
+    assert metrics.REGISTRY.get_sample_value("beherouter_active_sessions", labels) == 0.0
+    sup.stop()
+    await asyncio.wait_for(sup.task, 1)
+    metrics.forget_surface("race-x")
+
+
+async def test_install_onto_a_removed_slot_retires_the_new_supervisor():
+    from fastmcp import FastMCP
+
+    from beherouter import metrics
+    from beherouter.runtime import GatewayRuntime
+
+    rt = GatewayRuntime(
+        {}, auth=None, path=None, retry_initial_s=1, retry_max_s=1, drain_s=0
+    )
+    slot = SurfaceSlot("gone")  # never in the table: removed while starting
+    ex = _Exec()
+    await rt._install(
+        slot, FastMCP("x"), Backend(name="gone", kind="mcp", descriptors=[], executor=ex)
+    )
+    assert slot.app is None
+    await asyncio.wait_for(asyncio.gather(*rt._retiring), 1)
+    assert ex.closed == 1
+    labels = {"surface": "gone"}
+    assert metrics.REGISTRY.get_sample_value("beherouter_active_sessions", labels) is None
+
+
+async def test_an_app_that_fails_while_serving_is_pending_and_retried(caplog):
+    """FastMCP's lifespan runs the session manager's task group; if that group
+    crashes, the app is dead. The slot used to keep pointing at it, so
+    /healthz and beherouter_surface_up said live while every call failed."""
+    import anyio
+    from starlette.applications import Starlette
+
+    from beherouter.runtime import GatewayRuntime
+
+    boom = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def crashing(app):
+        async with anyio.create_task_group() as tg:
+
+            async def crash():
+                await boom.wait()
+                raise RuntimeError("session manager died")
+
+            tg.start_soon(crash)
+            yield
+
+    class _Surface:
+        def http_app(self, path, stateless_http=False):
+            return Starlette(lifespan=crashing)
+
+    rt = GatewayRuntime(
+        {"x": RegistryEntry(name="x", plugin="t-ok")},
+        auth=None, path=None, retry_initial_s=3600, retry_max_s=3600, drain_s=0,
+    )
+    slot = SurfaceSlot("x")
+    rt.table.put(slot)
+    ex = _Exec()
+    await rt._install(slot, _Surface(), Backend(name="x", kind="mcp", descriptors=[], executor=ex))
+    sup = slot.supervisor
+    assert slot.app is not None
+    with caplog.at_level(logging.ERROR, logger="beherouter.gateway"):
+        boom.set()
+        await asyncio.wait_for(sup.task, 1)
+    assert slot.app is None and slot.supervisor is None
+    assert "x" in rt.failed
+    assert slot.retry is not None  # retried with the entry in force
+    assert ex.closed == 1
+    slot.retry.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await slot.retry
