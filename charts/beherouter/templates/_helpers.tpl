@@ -153,7 +153,7 @@ BEHEROUTER_GATEWAY_TOKEN
 - name: REQUESTS_CA_BUNDLE
   value: /etc/beherouter/ca/ca-bundle.crt
 {{- end }}
-{{- if .root.Values.plugins.install }}
+{{- if include "beherouter.pluginsEnabled" .root }}
 - name: PYTHONPATH
   value: {{ .root.Values.plugins.path | quote }}
 {{- end }}
@@ -181,6 +181,26 @@ BEHEROUTER_GATEWAY_TOKEN
        private CA or a plugin install costs no extra image pull). */}}
 {{- define "beherouter.image" -}}
 {{ required "image.repository is required (default: the published ghcr.io image; override only for a mirror or a self-built image)" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+{{- end -}}
+
+{{/* Non-empty when the `plugins` init container renders: something to install
+       from an index (plugins.install) or from a ConfigMap (plugins.local). */}}
+{{- define "beherouter.pluginsEnabled" -}}
+{{- if or .Values.plugins.install (.Values.plugins.local | default dict).wheels -}}true{{- end -}}
+{{- end -}}
+
+{{/* Where plugins.local's ConfigMap is mounted in the init container. The
+       ConfigMap's name is IN the path, so plugininstall's "wheel not found"
+       names both the ConfigMap and the file. */}}
+{{- define "beherouter.pluginsLocalPath" -}}
+/etc/beherouter/plugins-local/{{ .Values.plugins.local.configMap }}
+{{- end -}}
+
+{{/* plugins.indexes as uv's UV_INDEX: space-separated `name=url`. */}}
+{{- define "beherouter.pluginIndexes" -}}
+{{- $out := list }}
+{{- range . }}{{ $out = append $out (printf "%s=%s" .name .url) }}{{ end }}
+{{- join " " $out }}
 {{- end -}}
 
 {{/* Init containers, shared VERBATIM by the Deployment and the lint hook:
@@ -217,7 +237,30 @@ BEHEROUTER_GATEWAY_TOKEN
       mountPath: /etc/beherouter/ca-extra
       readOnly: true
 {{- end }}
-{{- if .Values.plugins.install }}
+{{- if include "beherouter.pluginsEnabled" . }}
+{{- $seen := dict }}
+{{- range .Values.plugins.indexes }}
+{{- $name := required "every plugins.indexes entry needs a name" .name }}
+{{- if not (regexMatch "^[a-z0-9-]+$" $name) }}
+{{- fail (printf "plugins.indexes name %q must match [a-z0-9-]+ (it becomes UV_INDEX_<NAME>_*)" $name) }}
+{{- end }}
+{{- if eq $name "plugins" }}
+{{- fail "plugins.indexes name \"plugins\" is reserved: it names plugins.indexUrl" }}
+{{- end }}
+{{- if hasKey $seen $name }}
+{{- fail (printf "duplicate plugins.indexes name %q" $name) }}
+{{- end }}
+{{- $_ := set $seen $name true }}
+{{- $_ := required (printf "plugins.indexes %q needs a url" $name) .url }}
+{{- end }}
+{{- with .Values.plugins.local.wheels }}
+{{- $_ := required "plugins.local.configMap is required when plugins.local.wheels is set" $.Values.plugins.local.configMap }}
+{{- range . }}
+{{- if or (not (hasSuffix ".whl" .)) (contains "/" .) }}
+{{- fail (printf "plugins.local.wheels: %q is not a wheel filename (a plain *.whl key of the ConfigMap)" .) }}
+{{- end }}
+{{- end }}
+{{- end }}
 - name: plugins
   image: "{{ include "beherouter.image" . }}"
   imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -229,6 +272,9 @@ BEHEROUTER_GATEWAY_TOKEN
     - {{ .Values.plugins.path | quote }}
     {{- range .Values.plugins.install }}
     - {{ . | quote }}
+    {{- end }}
+    {{- range .Values.plugins.local.wheels }}
+    - {{ printf "%s/%s" (include "beherouter.pluginsLocalPath" $) . | quote }}
     {{- end }}
   env:
     # uv needs somewhere writable; /tmp is the only such place under
@@ -255,6 +301,28 @@ BEHEROUTER_GATEWAY_TOKEN
           name: {{ . }}
           key: password
     {{- end }}
+    {{- with .Values.plugins.indexes }}
+    # Further named indexes, searched before the default one; uv's default
+    # first-index strategy keeps a package on the first index that has it
+    # (dependency-confusion protection), so the chart never sets another.
+    - name: UV_INDEX
+      value: {{ include "beherouter.pluginIndexes" . | quote }}
+    {{- range . }}
+    {{- if .credentialsSecret }}
+    {{- $env := .name | upper | replace "-" "_" }}
+    - name: UV_INDEX_{{ $env }}_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: {{ .credentialsSecret }}
+          key: username
+    - name: UV_INDEX_{{ $env }}_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ .credentialsSecret }}
+          key: password
+    {{- end }}
+    {{- end }}
+    {{- end }}
     {{- if .Values.caBundle.enabled }}
     - name: SSL_CERT_FILE
       value: /etc/beherouter/ca/ca-bundle.crt
@@ -271,6 +339,11 @@ BEHEROUTER_GATEWAY_TOKEN
     {{- if .Values.caBundle.enabled }}
     - name: ca-bundle
       mountPath: /etc/beherouter/ca
+      readOnly: true
+    {{- end }}
+    {{- if .Values.plugins.local.wheels }}
+    - name: plugins-local
+      mountPath: {{ include "beherouter.pluginsLocalPath" . }}
       readOnly: true
     {{- end }}
 {{- end }}
@@ -295,9 +368,17 @@ BEHEROUTER_GATEWAY_TOKEN
       {{- end }}
     {{- end }}
 {{- end }}
-{{- if .Values.plugins.install }}
+{{- if include "beherouter.pluginsEnabled" . }}
 - name: plugins
   emptyDir: {}
+{{- end }}
+{{- if .Values.plugins.local.wheels }}
+# optional: a missing ConfigMap must not hold the pod in ContainerCreating;
+# the init container then fails, naming the ConfigMap and the wheel.
+- name: plugins-local
+  configMap:
+    name: {{ .Values.plugins.local.configMap }}
+    optional: true
 {{- end }}
 {{- if .Values.secretFiles.enabled }}
 - name: secret-files
@@ -317,7 +398,7 @@ BEHEROUTER_GATEWAY_TOKEN
   mountPath: /etc/beherouter/ca
   readOnly: true
 {{- end }}
-{{- if .Values.plugins.install }}
+{{- if include "beherouter.pluginsEnabled" . }}
 - name: plugins
   mountPath: {{ .Values.plugins.path }}
   readOnly: true

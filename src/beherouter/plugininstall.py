@@ -26,7 +26,8 @@ itself. So:
 
 The index and its credentials come from uv's own environment variables
 (`UV_DEFAULT_INDEX`, `UV_INDEX_<NAME>_USERNAME`/`_PASSWORD`), which the chart
-sets; nothing credential-shaped passes through argv.
+sets; nothing credential-shaped passes through argv. A spec may also be the
+path of a local wheel (`plugins.local`); it gets the same three rules.
 """
 
 import argparse
@@ -107,6 +108,15 @@ def prune(target: Path, have: dict) -> list[str]:
 def install(target: Path, specs: list[str], run=subprocess.run) -> dict:
     if not specs:
         return {"target": str(target), "added": [], "shared_with_gateway": []}
+    # A local wheel (the chart's plugins.local) comes from an `optional`
+    # ConfigMap mount whose path carries the ConfigMap's name: say which file
+    # is missing, rather than leave it to uv's resolver error.
+    for spec in specs:
+        if spec.endswith(".whl") and "/" in spec and not Path(spec).is_file():
+            raise SystemExit(
+                f"plugin wheel not found: {spec} (is its ConfigMap missing, or "
+                f"the file not in it?)"
+            )
     target = target.resolve()
     target.mkdir(parents=True, exist_ok=True)
     have = gateway_distributions(exclude=target)

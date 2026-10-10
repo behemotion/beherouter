@@ -101,3 +101,35 @@ def test_a_failed_install_stops_the_init_container(tmp_path):
 def test_nothing_to_install_is_a_no_op(tmp_path):
     assert pi.install(tmp_path / "p", [])["added"] == []
     assert not (tmp_path / "p").exists()
+
+
+def test_a_local_wheel_is_passed_to_uv_as_a_path(tmp_path):
+    wheel = tmp_path / "local" / "dwh-0.3.0-py3-none-any.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"")
+    seen = {}
+
+    class P:
+        returncode = 0
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return P()
+
+    pi.install(tmp_path / "plugins", ["acme-crm==0.1.0", str(wheel)], run=fake_run)
+    assert seen["cmd"][-2:] == ["acme-crm==0.1.0", str(wheel)]
+
+
+def test_a_missing_local_wheel_fails_before_uv_naming_the_file(tmp_path):
+    # The chart mounts plugins.local's ConfigMap as `optional`, at a path that
+    # carries the ConfigMap's name: a missing ConfigMap or file must fail the
+    # init container with a log that names both, not leave the pod stuck in
+    # ContainerCreating.
+    missing = tmp_path / "plugins-local" / "dwh-wheels" / "dwh-0.3.0-py3-none-any.whl"
+
+    def never(cmd, **kw):  # pragma: no cover - must not run
+        raise AssertionError("uv ran")
+
+    with pytest.raises(SystemExit) as e:
+        pi.install(tmp_path / "plugins", [str(missing)], run=never)
+    assert "dwh-wheels" in str(e.value) and "dwh-0.3.0-py3-none-any.whl" in str(e.value)

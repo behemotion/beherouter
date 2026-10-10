@@ -97,12 +97,14 @@ to migrate.
 | `auth.oidc.rolesClaim` | `""` | Dotted path to the roles claim (`realm_access.roles`, `roles`, `groups`). Required by any surface using `[surface.authz]` |
 | `identityMap.enabled` / `.secretName` / `.mountPath` | `false` / – / `/etc/beherouter/identity-map.toml` | For identity mode `lookup`. The Secret's **key must be the basename** of `mountPath`; a `subPath` mount does not hot-reload, so rotation needs a pod restart |
 | `preDeployLint.enabled` | `true` | The hook gate described above |
-| `service.sessionAffinity` | `ClientIP` | MCP sessions are in-process; do not remove if `replicaCount > 1` |
+| `service.sessionAffinity` | `ClientIP` | MCP sessions are in-process; do not remove if `replicaCount > 1` while any surface is stateful (see `docs/DEPLOYMENT.md` § Stateless sessions) |
 | `networkPolicy.enabled` | `false` | Default-deny ingress except `ingressFrom` sources |
 | `replicaCount` / `autoscaling` / `podDisruptionBudget` | `1` / off / off | Replicas are safe but each one re-attaches backends (stdio children included) |
 | `securityContext.readOnlyRootFilesystem` | `true` | The gateway writes nothing; `/tmp` is an emptyDir. The image itself runs as UID 1000 (`USER` in the Containerfile), so it is non-root even without this chart's `podSecurityContext` |
 | `caBundle.enabled` / `.configMap` / `.keys` / `.systemBundle` | `false` / – / all keys / `/etc/ssl/certs/ca-certificates.crt` | A private CA for the IdP's JWKS or a backend. An init container appends the ConfigMap's PEMs to the system bundle; the gateway gets `SSL_CERT_FILE` + `REQUESTS_CA_BUNDLE`, and so do its stdio children. ⚠️ Without it every JWT fails while the shared token stays green |
 | `plugins.install` / `.indexUrl` / `.indexCredentialsSecret` / `.path` | `[]` / PyPI / – / `/opt/beherouter/plugins` | Out-of-tree plugins, installed by an init container onto `PYTHONPATH` for the gateway **and** the lint hook. Shared dependencies are pinned to the gateway's own versions, so a conflicting plugin fails its init container instead of shadowing the gateway. The Secret holds `username` + `password`. Makes the index a pod-start dependency |
+| `plugins.indexes` | `[]` | More named uv indexes (`name`, `url`, optional `credentialsSecret` with `username` + `password`), searched before `indexUrl`/PyPI, first index wins. `name` is `[a-z0-9-]+` and not `plugins` |
+| `plugins.local.configMap` / `.wheels` | – / `[]` | Plugin wheels from a ConfigMap (≤ 1 MiB), installed by the same init container. List each versioned filename: an upgrade then rolls the pods. Mounted `optional`: a missing ConfigMap or wheel fails the init container by name |
 | `extraInitContainers` / `extraVolumes` / `extraVolumeMounts` | `[]` | Rendered into the Deployment and the lint hook alike, after the chart's own init containers |
 | `healthCronJob.enabled` / `.schedule` / `.textfile.hostPath` | `false` / `*/5 * * * *` / required | Scheduled `health --deep` into a node_exporter textfile; see below |
 

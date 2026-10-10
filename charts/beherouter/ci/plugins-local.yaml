@@ -1,0 +1,11 @@
+# Lint/render scenario: an out-of-tree plugin shipped as a wheel in a
+# ConfigMap (client ask A1), with no package index needed for the plugin
+# itself. The listed filename carries the version, so an upgrade rolls the pod.
+secret:
+  gatewayToken: ci-token
+
+plugins:
+  local:
+    configMap: dwh-wheels
+    wheels:
+      - "beherouter_dwh-0.3.0-py3-none-any.whl"

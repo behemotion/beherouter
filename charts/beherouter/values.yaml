@@ -7,10 +7,11 @@
 #                                (or set secret.create=false + existingSecret.name to bring your own)
 
 replicaCount: 1
-# >1 replica works (each pod attaches its own backends, stdio children included),
-# but MCP sessions are in-process: every replica needs client affinity (see
-# service.sessionAffinity) and each one re-attaches, so a stdio backend means N
-# subprocesses. Keep 1 unless you need the availability.
+# >1 replica works (each pod attaches its own backends, stdio children included).
+# A stateful surface's MCP sessions are in-process, so it needs client affinity
+# (see service.sessionAffinity); a surface with `stateless = true` in the
+# registry does not (docs/DEPLOYMENT.md § Stateless sessions). Each replica
+# re-attaches, so a stdio backend means N subprocesses.
 
 image:
   # The published image; every release tag exists there (git tag vX.Y.Z ->
@@ -194,7 +195,8 @@ caBundle:
 # environment (a --with on a stdio surface's cmd reaches only that child). An
 # init container installs these into an emptyDir on PYTHONPATH, for the gateway
 # AND the registry-lint hook, so lint validates the registry against the same
-# plugins that will serve. Pin exact versions.
+# plugins that will serve. Pin exact versions. Sources: an index (install),
+# more indexes (indexes), or wheels from a ConfigMap (local).
 #
 # Shared dependencies are pinned to the gateway's own versions: a plugin that
 # needs a different httpx or fastmcp fails its install, before the pod starts,
@@ -206,6 +208,28 @@ plugins:
   indexUrl: ""            # optional; replaces PyPI (uv's default index)
   # Optional Secret with keys `username` and `password` for indexUrl.
   indexCredentialsSecret: ""
+  # Further named indexes (uv's UV_INDEX), searched BEFORE indexUrl/PyPI. A
+  # package is taken from the FIRST index that has it (uv's first-index
+  # strategy), so a public package cannot shadow a private one. `name` is
+  # [a-z0-9-]+ and not "plugins" (indexUrl's name); `credentialsSecret` is an
+  # optional Secret with keys `username` and `password`, passed as
+  # UV_INDEX_<NAME>_USERNAME/_PASSWORD (upper-cased, "-" -> "_").
+  indexes: []
+  #  - name: back-office
+  #    url: https://gitlab.example.com/api/v4/projects/1234/packages/pypi/simple
+  #    credentialsSecret: gitlab-back-office
+  # Plugins shipped as WHEELS in a ConfigMap (binaryData, under 1 MiB in all),
+  # installed by the same init container with the same safeguards. Wheels
+  # only: a plugin registers through entry-point metadata, which a bare .py
+  # lacks. List each filename, VERSION INCLUDED: changing the list changes
+  # the pod template, so an upgrade rolls the pods (a ConfigMap edit alone
+  # rolls nothing). The ConfigMap is mounted `optional`: if it or a listed
+  # wheel is missing, the init container fails with a log naming both,
+  # instead of the pod waiting in ContainerCreating. The wheels' own
+  # dependencies still come from the indexes above.
+  local:
+    configMap: ""
+    wheels: []            # e.g. ["beherouter_dwh-0.3.0-py3-none-any.whl"]
   path: /opt/beherouter/plugins
   resources:
     requests:
@@ -302,9 +326,10 @@ healthCronJob:
 service:
   type: ClusterIP
   port: 80
-  # MCP sessions live in the pod (FastMCP session managers), so requests from
-  # one client must keep hitting one pod. ClientIP affinity makes replicaCount>1
-  # safe; it is harmless at replicaCount=1.
+  # A stateful surface's MCP sessions live in the pod (FastMCP session managers),
+  # so one client's requests must keep hitting one pod. ClientIP affinity makes
+  # replicaCount>1 safe for those; with every surface `stateless = true` it is
+  # unnecessary. Harmless at replicaCount=1.
   sessionAffinity: ClientIP
 
 ingress:
@@ -379,8 +404,8 @@ securityContext:
 terminationGracePeriodSeconds: 30
 revisionHistoryLimit: 3
 
-# Horizontal scaling is supported but rarely what you want here: replicas add
-# stdio subprocesses and depend on ClientIP affinity. Off by default.
+# Horizontal scaling: replicas add stdio subprocesses, and stateful surfaces
+# depend on ClientIP affinity (stateless ones do not). Off by default.
 autoscaling:
   enabled: false
   minReplicas: 1

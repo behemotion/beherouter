@@ -1,0 +1,18 @@
+# Lint/render scenario: out-of-tree plugins from more than one index (client
+# ask A1). indexUrl stays the default index; each plugins.indexes entry is a
+# named uv index with an optional credential Secret of its own.
+secret:
+  gatewayToken: ci-token
+
+plugins:
+  install:
+    - "beherouter-back-office==0.1.0"
+    - "acme-beherouter-crm==0.1.0"
+  indexUrl: https://pypi.corp.example.com/simple
+  indexCredentialsSecret: corp-pypi
+  indexes:
+    - name: back-office
+      url: https://gitlab.example.com/api/v4/projects/1234/packages/pypi/simple
+      credentialsSecret: gitlab-back-office
+    - name: mirror2
+      url: https://mirror.example.com/simple
