@@ -530,3 +530,23 @@ def test_registry_lint_passes_a_valid_killswitch_file(tmp_path, monkeypatch):
         registry_lint(path=_write(tmp_path, '[office]\nplugin = "office-mcp"\n'))
     finally:
         killswitch._SWITCHES.clear()
+
+
+def test_lint_accepts_a_stateless_surface(tmp_path):
+    registry_lint(path=_write(tmp_path, _office("stateless = true\n")))
+
+
+def test_lint_refuses_a_non_bool_stateless(tmp_path):
+    with pytest.raises(UsageError, match="stateless must be true or false"):
+        registry_lint(path=_write(tmp_path, _office('stateless = "yes"\n')))
+
+
+def test_lint_refuses_stateless_with_confirm_mutating(tmp_path):
+    body = _office("stateless = true\n  [office.authz]\n  confirm_mutating = true\n")
+    with pytest.raises(UsageError, match="needs a session"):
+        registry_lint(path=_write(tmp_path, body))
+
+
+def test_lint_accepts_stateless_false_with_confirm_mutating(tmp_path):
+    body = _office("stateless = false\n  [office.authz]\n  confirm_mutating = true\n")
+    registry_lint(path=_write(tmp_path, body))

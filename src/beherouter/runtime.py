@@ -182,11 +182,14 @@ def _track_sessions(name: str, app) -> None:
 class Supervisor:
     """Owns one installed app: its lifespan, its drain, its backend's close."""
 
-    def __init__(self, name: str, surface, backend, *, drain_s: float = 0.0) -> None:
+    def __init__(
+        self, name: str, surface, backend, *, drain_s: float = 0.0, stateless: bool = False
+    ) -> None:
         self.name = name
         self.surface = surface
         self.backend = backend
         self.drain_s = drain_s
+        self.stateless = stateless
         self.task: asyncio.Task | None = None
         self._stop = asyncio.Event()
 
@@ -219,12 +222,20 @@ class Supervisor:
 
     async def _run(self, ready: asyncio.Future) -> None:
         try:
-            app = self.surface.http_app(path="/mcp")
+            app = self.surface.http_app(path="/mcp", stateless_http=self.stateless)
             async with app.router.lifespan_context(app):
                 if ready.done():  # start()'s caller gave up while we entered
                     return
                 counted = _Counted(app)
-                _track_sessions(self.name, app)
+                if self.stateless:
+                    metrics.untrack_sessions(self.name)
+                    logger.info(
+                        "surface %r is stateless: no MCP sessions, so no "
+                        "beherouter_active_sessions series",
+                        self.name,
+                    )
+                else:
+                    _track_sessions(self.name, app)
                 ready.set_result(counted)
                 await self._stop.wait()
                 await counted.drained(self.drain_s)
@@ -332,7 +343,12 @@ class GatewayRuntime:
         # install's supervisor has already closed its own backend).
         for name in list(self._booted):
             surface, backend = self._booted.pop(name)
-            await self._install(self.table.slots[name], surface, backend)
+            await self._install(
+                self.table.slots[name],
+                surface,
+                backend,
+                stateless=bool(self.registry[name].stateless),
+            )
         for name in self.failed:
             if name not in self.config_faults:
                 slot = self.table.slots[name]
@@ -385,8 +401,12 @@ class GatewayRuntime:
                 self._watch(interval, baseline), name="beherouter-registry-watch"
             )
 
-    async def _install(self, slot: SurfaceSlot, surface, backend) -> None:
-        sup = Supervisor(slot.name, surface, backend, drain_s=self.drain_s)
+    async def _install(
+        self, slot: SurfaceSlot, surface, backend, *, stateless: bool = False
+    ) -> None:
+        sup = Supervisor(
+            slot.name, surface, backend, drain_s=self.drain_s, stateless=stateless
+        )
         app = await sup.start()
         old = slot.supervisor
         slot.app, slot.supervisor, slot.config_fault = app, sup, False
@@ -454,7 +474,9 @@ class GatewayRuntime:
                 )
                 continue
             try:
-                await self._install(slot, surface, attached[slot.name])
+                await self._install(
+                    slot, surface, attached[slot.name], stateless=bool(entry.stateless)
+                )
             except Exception:
                 # the app's lifespan failed; its supervisor closed the backend
                 delay = min(delay * 2, self.retry_max_s)
@@ -535,7 +557,9 @@ class GatewayRuntime:
                 if not isinstance(res, Exception):
                     # popped first: from here on the supervisor owns (and closes) it
                     try:
-                        await self._install(slot, res, built.pop(name))
+                        await self._install(
+                            slot, res, built.pop(name), stateless=bool(new[name].stateless)
+                        )
                     except Exception as e:  # noqa: BLE001 -- its app failed to start
                         result["failed"].append(name)
                         self._attach_failed(slot, new[name], e)

@@ -141,7 +141,7 @@ async def test_a_drain_ends_with_the_last_request_or_at_the_deadline():
 
 async def test_a_supervisor_whose_app_fails_raises_from_start_and_closes():
     class _Broken:
-        def http_app(self, path):
+        def http_app(self, path, stateless_http=False):
             raise RuntimeError("boom")
 
     ex = _Exec()
@@ -198,7 +198,7 @@ async def test_a_failed_boot_install_still_closes_every_other_booted_backend(
     booted = app.state.runtime._booted
     first, second = booted["a"][1].executor, booted["b"][1].executor
 
-    def broken(path):
+    def broken(path, **kw):
         raise RuntimeError("boom")
 
     booted["a"][0].http_app = broken
@@ -220,7 +220,7 @@ async def test_a_cancelled_start_leaves_no_orphan_supervisor(caplog):
         yield
 
     class _Slow:
-        def http_app(self, path):
+        def http_app(self, path, stateless_http=False):
             return Starlette(lifespan=blocked)
 
     ex = _Exec()
@@ -253,7 +253,7 @@ async def test_a_retired_supervisor_drains_in_flight_requests_up_to_its_deadline
         return PlainTextResponse("done")
 
     class _Surface:
-        def http_app(self, path):
+        def http_app(self, path, stateless_http=False):
             return Starlette(routes=[Route(path, slow)])
 
     async def in_flight(app):

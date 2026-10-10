@@ -357,8 +357,8 @@ def _held_supervisors(monkeypatch, hold: dict):
             if how is not None:
                 orig = self.surface.http_app
 
-                def http_app(path):
-                    app = orig(path=path)
+                def http_app(path, **kw):
+                    app = orig(path=path, **kw)
                     inner = app.router.lifespan_context
 
                     @contextlib.asynccontextmanager

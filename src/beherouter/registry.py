@@ -36,6 +36,10 @@ class RegistryEntry:
     # Seconds one backend call may take; falls back to $BEHEROUTER_CALL_TIMEOUT_S,
     # and to no limit at all — an upgrade must not start cutting slow backends off.
     call_timeout_s: float | None = None
+    # Serve this surface with no MCP session (FastMCP stateless streamable-HTTP):
+    # a rollout or reload drops nothing, replicas need no affinity. Opt-in; it
+    # cannot carry elicitation, so confirm_mutating is refused beside it.
+    stateless: bool | None = None
     identity: dict | None = None  # per-request identity; see identity.py
     # Per-surface role gating. Separate from `identity` on purpose: a
     # surface may gate without forwarding anything, and gating needs no
@@ -110,6 +114,14 @@ def validate_entry(e: RegistryEntry) -> None:
     ):
         raise UsageError(
             f"'{e.name}': call_timeout_s must be a positive number of seconds, got {limit!r}"
+        )
+    if e.stateless is not None and not isinstance(e.stateless, bool):
+        raise UsageError(f"'{e.name}': stateless must be true or false, got {e.stateless!r}")
+    if e.stateless and (e.authz or {}).get("confirm_mutating"):
+        raise UsageError(
+            f"'{e.name}': stateless = true cannot be combined with authz "
+            "confirm_mutating: confirmation asks the user through MCP elicitation, "
+            "which needs a session"
         )
     # `pinned` and `probe_args` are hand-edited far more often than they are
     # generated, and neither fails loudly downstream. A `pinned` string is

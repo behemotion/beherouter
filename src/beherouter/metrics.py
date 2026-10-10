@@ -89,6 +89,13 @@ def render() -> tuple[bytes, str]:
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
 
 
+def untrack_sessions(surface: str) -> None:
+    """A stateless surface has no session table: drop its series rather than
+    report a constant 0 that reads as 'nobody connected'."""
+    with contextlib.suppress(KeyError):
+        ACTIVE_SESSIONS.remove(surface)
+
+
 def forget_surface(surface: str) -> None:
     """A removed surface's GAUGES go; its counters stay -- rate() over history
     still means something, and a counter that vanishes mid-series is worse
