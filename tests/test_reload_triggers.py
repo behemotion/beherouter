@@ -185,3 +185,48 @@ async def test_a_bad_watch_interval_refuses_boot(tmp_path, monkeypatch, bad):
     write(reg, "")
     with pytest.raises(UsageError, match="BEHEROUTER_REGISTRY_WATCH_S"):
         await build_gateway_app(reg)
+
+
+async def test_a_broken_registry_is_reloaded_once_not_on_every_tick(
+    tmp_path, gateway_plugin, exec_builder, monkeypatch
+):
+    """The watch moves its baseline BEFORE the reload: a registry that fails
+    lint is tried (and logged) once, not re-linted every 20 ms."""
+    from beherouter import metrics
+
+    monkeypatch.setenv("BEHEROUTER_REGISTRY_WATCH_S", "0.02")
+    gateway_plugin("t-ok", exec_builder([]))
+    reg = tmp_path / "r.toml"
+    write(reg, "")
+    labels = {"trigger": "watch", "outcome": "failed"}
+    before = metrics.REGISTRY.get_sample_value("beherouter_reloads_total", labels) or 0.0
+    async with running(reg) as (rt, _c):
+        write(reg, "this is not toml [")
+        await _until(lambda: rt.last_reload_failure is not None)
+        await asyncio.sleep(0.15)  # several more ticks
+    after = metrics.REGISTRY.get_sample_value("beherouter_reloads_total", labels)
+    assert after == before + 1
+
+
+async def test_an_edit_landing_during_a_reload_is_not_swallowed(
+    tmp_path, gateway_plugin, exec_builder, monkeypatch
+):
+    monkeypatch.setenv("BEHEROUTER_REGISTRY_WATCH_S", "0.02")
+    gateway_plugin("t-ok", exec_builder([]))
+    reg = tmp_path / "r.toml"
+    write(reg, "")
+    async with running(reg) as (rt, _c):
+        real = rt.reloader._apply
+        edited = asyncio.Event()
+
+        async def slow_apply(trigger):
+            result = await real(trigger)
+            if not edited.is_set():
+                # the operator saves again while the first reload runs
+                write(reg, '[a]\nplugin = "t-ok"\n\n[b]\nplugin = "t-ok"\n')
+                edited.set()
+            return result
+
+        rt.reloader._apply = slow_apply
+        write(reg, '[a]\nplugin = "t-ok"\n')
+        await _until(lambda: "b" in rt.table)

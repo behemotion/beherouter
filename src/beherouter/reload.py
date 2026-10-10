@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 from collections.abc import Awaitable, Callable
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from .envexpand import expand, file_refs
 from .errors import UsageError
+
+logger = logging.getLogger("beherouter.gateway")
 
 DRAIN_VAR = "BEHEROUTER_RELOAD_DRAIN_S"
 WATCH_VAR = "BEHEROUTER_REGISTRY_WATCH_S"
@@ -34,7 +37,11 @@ def fingerprint(entry) -> str:
     rotated ${file:} secret changes its own surface's fingerprint. Only the
     digest is kept, never a value."""
     resolved = expand(entry.name, entry.env) if entry.env else {}
-    doc = {"entry": asdict(entry), "resolved": resolved}
+    fields = asdict(entry)
+    # An explicit `stateless = false` is the default spelled out; it must not
+    # read as a change and re-attach the surface.
+    fields["stateless"] = bool(fields.get("stateless"))
+    doc = {"entry": fields, "resolved": resolved}
     return hashlib.sha256(
         json.dumps(doc, sort_keys=True, default=str).encode()
     ).hexdigest()
@@ -92,6 +99,14 @@ def watch_s() -> float | None:
     return value or None
 
 
+def _fail(fut: asyncio.Future, exc: BaseException) -> None:
+    """Hand `exc` to whoever still awaits `fut`. Marked retrieved at once: every
+    requester may already have given up; the caller has logged the failure,
+    so asyncio must not add a 'Future exception was never retrieved'."""
+    fut.set_exception(exc)
+    fut.exception()
+
+
 class Reloader:
     """Serializes reloads and COALESCES the requests that arrive during one:
     however many come in, exactly one follow-up runs, and each of them gets its
@@ -143,8 +158,9 @@ class Reloader:
         try:
             try:
                 first.set_result(await self._apply(trigger))
-            except Exception as e:  # noqa: BLE001 -- handed to its requester
-                first.set_exception(e)
+            except Exception as e:  # handed to its requester, logged
+                logger.error("registry reload (%s) raised", trigger, exc_info=e)
+                _fail(first, e)
             # the follow-up runs even when the first apply failed, or its
             # waiters would hang
             while self._next is not None:
@@ -152,15 +168,15 @@ class Reloader:
                 follow_up = self._next_trigger
                 try:
                     pending.set_result(await self._apply(follow_up))
-                except Exception as e:  # noqa: BLE001 -- handed to every waiter
-                    pending.set_exception(e)
+                except Exception as e:  # handed to every waiter, logged
+                    logger.error("registry reload (%s) raised", follow_up, exc_info=e)
+                    _fail(pending, e)
         finally:
             # a cancellation cannot finish the reload or run the follow-up:
             # fail their waiters instead of leaving them to hang
             for fut in (pending, self._next):
                 if fut is not None and not fut.done():
-                    fut.set_exception(RuntimeError("reload cancelled"))
-                    fut.exception()  # retrieved: a waiter may already be gone
+                    _fail(fut, RuntimeError("reload cancelled"))
             self._next = None
 
     async def cancel(self) -> None:

@@ -375,6 +375,8 @@ class GatewayRuntime:
         task = asyncio.ensure_future(self.reloader.request("sighup"))
         self._signal_tasks.add(task)
         task.add_done_callback(self._signal_tasks.discard)
+        # Retrieved: the reload has already logged an exception it raised.
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
 
     async def _watch(self, interval: float, last: tuple) -> None:
         """Poll the registry file and every ${file:} it references (spec §2.2).
@@ -384,7 +386,8 @@ class GatewayRuntime:
         assert path is not None  # only started with a file to watch
         while True:
             await asyncio.sleep(interval)
-            stamp = watch_stamp(watched_paths(path, self.registry))
+            # stat() off the loop: a slow or hung volume must not stall calls
+            stamp = await asyncio.to_thread(watch_stamp, watched_paths(path, self.registry))
             if stamp == last:
                 continue
             # Updated BEFORE the reload: a registry that fails lint is reported

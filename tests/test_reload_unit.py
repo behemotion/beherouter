@@ -241,3 +241,83 @@ async def test_cancel_does_not_swallow_its_callers_own_cancellation():
         await closer
     with pytest.raises(RuntimeError, match="cancelled"):
         await asyncio.wait_for(waiter, 1)
+
+
+def test_an_explicit_stateless_false_keeps_the_fingerprint():
+    """`stateless = false` says what the default already says: writing it out
+    must not count as a change and re-attach the surface."""
+    implicit = RegistryEntry(name="a", plugin="p")
+    explicit = RegistryEntry(name="a", plugin="p", stateless=False)
+    assert fingerprint(implicit) == fingerprint(explicit)
+    assert fingerprint(implicit) != fingerprint(RegistryEntry(name="a", plugin="p", stateless=True))
+
+
+@pytest.mark.parametrize("fail", ["first", "follow_up"])
+async def test_a_failure_nobody_awaits_is_not_reported_as_unretrieved(fail):
+    """Every requester gave up (an admin client disconnected) before its reload
+    failed: the exception has nowhere to go, and asyncio must not log
+    'Future exception was never retrieved' for it."""
+    import gc
+
+    loop = asyncio.get_running_loop()
+    reported: list[dict] = []
+    loop.set_exception_handler(lambda _loop, ctx: reported.append(ctx))
+    gate = asyncio.Event()
+    runs: list[str] = []
+
+    async def apply(trigger):
+        runs.append(trigger)
+        if len(runs) == 1:
+            await gate.wait()
+            if fail == "first":
+                raise RuntimeError("first failed")
+            return {}
+        raise RuntimeError("follow-up failed")
+
+    try:
+        r = Reloader(apply)
+        waiters = [asyncio.create_task(r.request("admin"))]
+        await asyncio.sleep(0)
+        waiters.append(asyncio.create_task(r.request("watch")))
+        await asyncio.sleep(0)
+        for w in waiters:
+            w.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        gate.set()
+        await asyncio.wait_for(asyncio.gather(r._task, return_exceptions=True), 1)
+        del waiters
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+    assert not [c for c in reported if "never retrieved" in c.get("message", "")]
+
+
+async def test_a_request_during_the_follow_up_gets_a_second_follow_up():
+    """A request arriving while the follow-up runs must not be answered with a
+    reload that started before it: it gets a reload of its own."""
+    gates = [asyncio.Event(), asyncio.Event()]
+    follow_up_started = asyncio.Event()
+    runs: list[str] = []
+
+    async def apply(trigger):
+        runs.append(trigger)
+        if len(runs) == 2:
+            follow_up_started.set()
+        if len(runs) <= 2:
+            await gates[len(runs) - 1].wait()
+        return {"outcome": "ok", "n": len(runs)}
+
+    r = Reloader(apply)
+    first = asyncio.create_task(r.request("sighup"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(r.request("admin"))
+    await asyncio.sleep(0)
+    gates[0].set()
+    await asyncio.wait_for(follow_up_started.wait(), 1)
+    third = asyncio.create_task(r.request("watch"))
+    await asyncio.sleep(0)
+    gates[1].set()
+    results = await asyncio.wait_for(asyncio.gather(first, second, third), 1)
+    assert runs == ["sighup", "admin", "watch"]
+    assert [res["n"] for res in results] == [1, 2, 3]

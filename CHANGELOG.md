@@ -252,6 +252,9 @@ auto-generated contributor appendix is appended below it). Releases before
   answers `503`, appears under `/healthz` `failed`, and is retried.
 - A retry cancelled by a reload's removal can no longer re-create the removed
   surface's `beherouter_active_sessions` series.
+- `stateless = false` written out no longer counts as a change at reload.
+- A reload that fails after every requester has gone is logged, and asyncio no
+  longer reports an unretrieved exception for it.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no
