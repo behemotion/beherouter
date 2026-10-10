@@ -140,12 +140,19 @@ def wrapped_output_schema(d: ToolDescriptor) -> dict | None:
 
     Wrapping keeps the wire format unchanged for all five wired consumers while
     still giving a code-mode host precise types instead of `any`.
+
+    `notes` is optional: the backend's extra text blocks that a structured
+    result would otherwise drop (`backends.mcp.envelope`). Declared so output
+    validation passes when they are present.
     """
     if not d.output_schema:
         return None
     return {
         "type": "object",
-        "properties": {"result": d.output_schema},
+        "properties": {
+            "result": d.output_schema,
+            "notes": {"type": "array", "items": {"type": "string"}},
+        },
         "required": ["result"],
     }
 

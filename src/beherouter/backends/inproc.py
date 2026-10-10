@@ -49,7 +49,7 @@ from ..errors import Unavailable, UsageError
 from ..identity import settle
 from ..models import Backend, ToolDescriptor
 from .backing import McpBacking
-from .mcp import _payload, backend_from_client
+from .mcp import _payload, backend_from_client, envelope
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ class InprocExecutor:
             raise UsageError(f"backend rejected '{verb}': {e}") from e
         except Exception as e:
             raise Unavailable(f"backend call '{verb}' failed: {e}") from e
-        return {"result": _unwrapped(res)}
+        return envelope(res, _unwrapped(res))
 
     async def aclose(self) -> None:
         """Release the httpx clients this backend's server owns. Idempotent.

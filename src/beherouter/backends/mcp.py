@@ -8,6 +8,7 @@ Tool names are used verbatim (no `flatten()`): they are already flat MCP names
 chosen by the upstream server, and rewriting them would break `call_tool`.
 """
 
+import json
 import os
 import shlex
 import shutil
@@ -106,6 +107,53 @@ def _payload(res):
     return None
 
 
+def _notes(res) -> list[str]:
+    """The text blocks a structured result would otherwise drop, in order.
+
+    Once `.data` or `.structured_content` is the payload, `.content` is not
+    forwarded, and FastMCP's `content[0]` is only that payload serialized. But
+    a backend may append a block the structured value does not carry — found
+    2026-10-08 by a deployment whose Plane middleware appends "NOT ASSIGNED:
+    …" when Plane silently drops an assignee; the model never saw it and told
+    the user the assignment was done. So every text block that is NOT a
+    serialization of the structured value travels beside the result.
+
+    A block is redundant when it equals the structured value, as text or once
+    parsed as JSON, or equals the `result` of FastMCP's `{"result": v}`
+    envelope for a non-object return. Non-text blocks (images, resources) are
+    still dropped. A text-only result has no notes: its text IS the payload.
+    """
+    structured = getattr(res, "structured_content", None)
+    if structured is None:
+        structured = getattr(res, "data", None)
+    if structured is None:
+        return []
+    same = [structured]
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        same.append(structured["result"])
+    notes = []
+    for block in getattr(res, "content", None) or []:
+        text = getattr(block, "text", None)
+        if not text or text in same:
+            continue
+        try:
+            if json.loads(text) in same:
+                continue
+        except ValueError:
+            pass
+        notes.append(text)
+    return notes
+
+
+def envelope(res, value) -> dict:
+    """What an MCP-backed executor returns: `{"result": value}`, plus `notes`
+    (see `_notes`) only when there are any, so a result with nothing extra is
+    byte-identical to the pre-notes shape. `wrapped_output_schema` declares
+    both keys."""
+    notes = _notes(res)
+    return {"result": value, "notes": notes} if notes else {"result": value}
+
+
 class MCPClientExecutor:
     """Forward calls over an already-connected client."""
 
@@ -141,7 +189,7 @@ class MCPClientExecutor:
             raise UsageError(f"backend rejected '{verb}': {e}") from e
         except Exception as e:
             raise Unavailable(f"backend call '{verb}' failed: {e}") from e
-        return {"result": _payload(res)}
+        return envelope(res, _payload(res))
 
 
 class ReconnectingMCPExecutor:
@@ -187,7 +235,7 @@ class ReconnectingMCPExecutor:
             raise UsageError(f"backend rejected '{verb}': {e}") from e
         except Exception as e:
             raise Unavailable(f"backend call '{verb}' failed: {e}") from e
-        return {"result": _payload(res)}
+        return envelope(res, _payload(res))
 
 
 def _with_note(description: str, note: str | None) -> str:

@@ -387,6 +387,27 @@ tool is still pinned, listed and called; a code-mode host just loses the typed r
 is per plugin, never global, so no other surface's declared shape changes. The TTL
 re-list honours it too. Set it back to `True` once the backend's schemas match its replies.
 
+## A backend's extra text blocks: the result's `notes`
+
+An MCP backend's reply has a structured value (`structuredContent`) and a list of content
+blocks. FastMCP's first text block is just that value serialized, so the gateway forwards
+the structured value as `result` and drops the duplicate. A backend may append **more**
+text blocks the value does not carry — a warning to the model, such as a Plane middleware's
+"NOT ASSIGNED: … do not report the assignment as done". Those travel beside the result, in
+order, under `notes`:
+
+```json
+{"result": {"id": "wi-1", "assignees": ["a"]}, "notes": ["NOT ASSIGNED: b -- not a member"]}
+```
+
+The key appears only when there is a note, so every other reply is unchanged, and
+`wrapped_output_schema` declares it as an optional string array (output validation passes,
+a code-mode host sees it). A block is a duplicate, and not a note, when it equals the
+structured value as text or as parsed JSON, or equals the `result` of FastMCP's
+`{"result": v}` wrapper for a non-object return. A text-only reply has no notes: its text
+is the `result`. ⚠️ **Non-text blocks (images, audio, embedded resources) are still
+dropped.** Unrelated to `McpBacking.notes` below, which annotates tool *descriptions*.
+
 ## A tool the deployment serves only in part: `guard` and `notes`
 
 A pinned tool can be served while some of its argument shapes are not. Plane

@@ -231,6 +231,74 @@ async def test_executor_empty_result_stays_none():
     assert await ex.run("t", {}) == {"result": None}
 
 
+# --- extra text blocks beside a structured result ----------------------------
+
+
+async def test_a_structured_result_keeps_an_extra_text_block():
+    """REQUEST 2026-10-08: a Plane middleware appends "NOT ASSIGNED: …" to a
+    structured `workitem` result; `_payload` picked `.data` and the note never
+    reached the model, which reported the assignment as done."""
+    item = {"id": "wi-1", "assignees": ["a"]}
+    res = _Res(
+        data=item,
+        structured_content=item,
+        content=[_Blob('{"id":"wi-1","assignees":["a"]}'), _Blob("NOT ASSIGNED: b")],
+    )
+    ex = MCPClientExecutor(_FakeClient(res))
+    assert await ex.run("t", {}) == {"result": item, "notes": ["NOT ASSIGNED: b"]}
+
+
+async def test_a_structured_result_alone_has_no_notes():
+    item = {"id": "wi-1"}
+    res = _Res(data=item, structured_content=item, content=[_Blob('{\n  "id": "wi-1"\n}')])
+    assert await MCPClientExecutor(_FakeClient(res)).run("t", {}) == {"result": item}
+
+
+@pytest.mark.parametrize("value, text", [("hello", "hello"), (3, "3"), ([1, 2], "[1,2]")])
+async def test_fastmcps_wrapped_primitive_is_not_a_note(value, text):
+    res = _Res(data=value, structured_content={"result": value}, content=[_Blob(text)])
+    assert await MCPClientExecutor(_FakeClient(res)).run("t", {}) == {"result": value}
+
+
+async def test_a_text_only_result_is_unchanged():
+    res = _Res(content=[_Blob("one"), _Blob("two")])
+    assert await MCPClientExecutor(_FakeClient(res)).run("t", {}) == {"result": "one\ntwo"}
+
+
+async def test_notes_survive_a_real_fastmcp_round_trip():
+    """The request's reproduction, through a real Client session and the
+    reconnecting executor every attached http/stdio surface uses."""
+    from fastmcp.client.transports import FastMCPTransport
+    from fastmcp.server.middleware import Middleware
+    from mcp.types import TextContent
+    from pydantic import BaseModel
+
+    from beherouter.backends.mcp import ReconnectingMCPExecutor
+
+    class WorkItem(BaseModel):
+        id: str
+        assignees: list[str]
+
+    srv = FastMCP("plane-like")
+
+    @srv.tool
+    def create_work_item(name: str) -> WorkItem:
+        return WorkItem(id="wi-1", assignees=["a"])
+
+    class AddNote(Middleware):
+        async def on_call_tool(self, context, call_next):
+            r = await call_next(context)
+            r.content = [*r.content, TextContent(type="text", text="NOT ASSIGNED: b")]
+            return r
+
+    srv.add_middleware(AddNote())
+    out = await ReconnectingMCPExecutor(FastMCPTransport(srv)).run(
+        "create_work_item", {"name": "x"}
+    )
+    assert out["notes"] == ["NOT ASSIGNED: b"]
+    assert out["result"].id == "wi-1"
+
+
 @pytest.fixture
 def annotated_server():
     """A backend that annotates some tools and not others.

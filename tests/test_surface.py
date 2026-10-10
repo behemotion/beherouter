@@ -298,6 +298,8 @@ def test_wrapped_output_schema_describes_the_result_envelope():
     assert wrapped["type"] == "object"
     assert wrapped["required"] == ["result"]
     assert wrapped["properties"]["result"]["properties"]["entries"]["type"] == "array"
+    # optional: the backend's extra text blocks (backends.mcp.envelope)
+    assert wrapped["properties"]["notes"] == {"type": "array", "items": {"type": "string"}}
 
 
 def test_no_backend_schema_means_no_published_schema():
@@ -362,6 +364,30 @@ async def test_declared_output_schema_validates_a_real_call():
         assert tool.outputSchema["properties"]["result"]["type"] == "object"
         res = await c.call_tool("lister", {})
     assert "result" in (res.structured_content or {})
+
+
+class _Noted:
+    async def run(self, verb, args, *, identity=None):
+        return {"result": {"entries": []}, "notes": ["NOT ASSIGNED: b"]}
+
+
+async def test_notes_pass_output_validation_and_reach_the_client():
+    """A pinned tool with an output schema, and `run_tool`, both carry the
+    backend's extra text blocks to the host (REQUEST 2026-10-08)."""
+    d = ToolDescriptor(
+        name="lister", verb="lister", summary="List",
+        schema={"type": "object", "properties": {}},
+        pinned=True, mutating=False,
+        output_schema={"type": "object",
+                       "properties": {"entries": {"type": "array"}}},
+    )
+    backend = Backend(name="anno", kind="mcp", descriptors=[d], executor=_Noted())
+    async with Client(build_surface(backend)) as c:
+        pinned = await c.call_tool("lister", {})
+        via_run = await c.call_tool("run_tool", {"name": "lister"})
+    for res in (pinned, via_run):
+        assert res.structured_content["notes"] == ["NOT ASSIGNED: b"]
+        assert "NOT ASSIGNED: b" in res.content[0].text
 
 
 async def test_search_tools_omits_unknown_mutating():

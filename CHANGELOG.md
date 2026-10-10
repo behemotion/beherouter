@@ -231,6 +231,15 @@ auto-generated contributor appendix is appended below it). Releases before
 
 ### Fixed
 
+- **A backend's extra text blocks reach the model.** Once a backend returned a
+  structured value, every content block was dropped, so a warning appended to a
+  structured reply (a Plane middleware's "NOT ASSIGNED: …") never left the
+  gateway and the model reported a partly failed call as done. Text blocks that
+  are not the structured value serialized now travel beside it as `notes` (a
+  string array, present only when non-empty, declared in the published output
+  schema), for pinned tools and `run_tool`, on `http`, `stdio` and `inproc`
+  backings. Non-text blocks are still dropped. See `docs/PLUGINS.md` § A
+  backend's extra text blocks.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no

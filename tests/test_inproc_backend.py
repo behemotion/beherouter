@@ -82,6 +82,27 @@ async def test_a_call_returns_the_payload():
     assert out == {"result": {"order_id": "o-1", "count": 1}}
 
 
+async def test_an_extra_text_block_travels_as_a_note():
+    """Same rule as an http/stdio backend (backends.mcp.envelope)."""
+    from fastmcp.tools.tool import ToolResult
+    from mcp.types import TextContent
+
+    server = FastMCP("t")
+
+    @server.tool
+    def assign() -> dict:
+        """Assign."""
+        return ToolResult(
+            content=[TextContent(type="text", text='{"id":"wi-1"}'),
+                     TextContent(type="text", text="NOT ASSIGNED: b")],
+            structured_content={"id": "wi-1"},
+        )
+
+    backend = await load_inproc_backend(_backing(server))
+    out = await backend.executor.run("assign", {})
+    assert out == {"result": {"id": "wi-1"}, "notes": ["NOT ASSIGNED: b"]}
+
+
 async def test_a_primitive_return_is_not_double_wrapped():
     """FastMCP wraps a non-object return as {"result": v} and marks it; the
     Client session unwraps it, so every http/stdio backend returns v. Calling
