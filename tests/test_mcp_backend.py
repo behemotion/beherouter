@@ -1,3 +1,4 @@
+import asyncio
 from typing import ClassVar
 
 import pytest
@@ -592,3 +593,127 @@ async def test_a_tool_error_carries_no_status():
     with pytest.raises(UsageError) as caught:
         await ex.run("t", {})
     assert "status" not in caught.value.context
+
+
+async def test_closing_a_stdio_backend_stops_its_warm_subprocess():
+    """`keep_alive=True` keeps a stdio child running between calls; nothing
+    stopped it when the gateway dropped the backend, so every reload that
+    changed or removed a stdio surface left its old subprocess running."""
+    import sys
+    from pathlib import Path
+
+    from beherouter.backends.mcp import load_mcp_backend
+    from beherouter.gateway import close_backend
+
+    server = Path(__file__).parent / "fixtures" / "generic_mcp.py"
+    backend = await load_mcp_backend(
+        McpBacking(name="g", transport="stdio", cmd=f"{sys.executable} {server} stdio")
+    )
+    transport = backend.executor._transport
+    await backend.executor.run(backend.descriptors[0].name, {})
+    assert transport._connect_task is not None  # warm: the child is running
+    await close_backend(backend)
+    assert transport._connect_task is None
+
+
+@pytest.mark.parametrize("exc", [RuntimeError("list failed"), asyncio.CancelledError()])
+async def test_a_failed_stdio_attach_stops_the_child_it_spawned(monkeypatch, exc):
+    """A child spawned for the attach's own session, then dropped because the
+    listing failed or the attach was cancelled (a reload removing a retrying
+    surface), must not stay alive behind `keep_alive`."""
+    import sys
+    from pathlib import Path
+
+    from beherouter.backends import mcp as mcp_backend
+
+    seen = {}
+    real_build = mcp_backend.build_transport
+
+    def build(backing, headers=None):
+        seen["t"] = real_build(backing, headers)
+        return seen["t"]
+
+    async def failing_list(*a, **kw):
+        assert seen["t"]._connect_task is not None  # the child is up
+        raise exc
+
+    monkeypatch.setattr(mcp_backend, "build_transport", build)
+    monkeypatch.setattr(mcp_backend, "backend_from_client", failing_list)
+    server = Path(__file__).parent / "fixtures" / "generic_mcp.py"
+    with pytest.raises((Unavailable, asyncio.CancelledError)):
+        await mcp_backend.load_mcp_backend(
+            McpBacking(name="g", transport="stdio", cmd=f"{sys.executable} {server} stdio")
+        )
+    assert seen["t"]._connect_task is None
+
+
+async def test_a_loaded_stdio_backend_relists_over_a_fresh_session():
+    import sys
+    from pathlib import Path
+
+    from beherouter.backends.mcp import load_mcp_backend
+    from beherouter.gateway import close_backend
+
+    server = Path(__file__).parent / "fixtures" / "generic_mcp.py"
+    backend = await load_mcp_backend(
+        McpBacking(name="g", transport="stdio", cmd=f"{sys.executable} {server} stdio")
+    )
+    try:
+        again = await backend.relist()
+    finally:
+        await close_backend(backend)
+    assert {d.name for d in again} == {d.name for d in backend.descriptors}
+
+
+@pytest.mark.parametrize(
+    ("backing", "missing"),
+    [
+        (McpBacking(name="s", transport="stdio"), "'cmd'"),
+        (McpBacking(name="h", transport="http"), "'url'"),
+    ],
+)
+def test_build_transport_requires_its_endpoint(backing, missing):
+    with pytest.raises(UsageError, match=missing):
+        build_transport(backing)
+
+
+async def test_a_json_text_block_that_differs_from_the_result_is_a_note():
+    item = {"id": "wi-1"}
+    res = _Res(data=item, structured_content=item, content=[_Blob('{"warning": "partial"}')])
+    assert await MCPClientExecutor(_FakeClient(res)).run("t", {}) == {
+        "result": item,
+        "notes": ['{"warning": "partial"}'],
+    }
+
+
+def test_http_status_stops_on_a_cyclic_cause_chain():
+    from beherouter.backends.mcp import http_status
+
+    e = RuntimeError("loops")
+    e.__cause__ = e
+    assert http_status(e) is None
+
+
+async def test_a_reconnecting_executors_tool_error_is_a_usage_error(monkeypatch):
+    from fastmcp.exceptions import ToolError
+
+    from beherouter.backends import mcp as mcp_backend
+
+    class FakeClient:
+        def __init__(self, transport):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def call_tool(self, verb, args):
+            raise ToolError("no such project")
+
+    monkeypatch.setattr(mcp_backend, "Client", FakeClient)
+    backing = McpBacking(name="demo", transport="http", url="https://backend.test/mcp")
+    executor = mcp_backend.ReconnectingMCPExecutor(build_transport(backing))
+    with pytest.raises(UsageError, match="backend rejected 'ping': no such project"):
+        await executor.run("ping", {})

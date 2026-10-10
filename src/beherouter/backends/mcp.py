@@ -8,6 +8,7 @@ Tool names are used verbatim (no `flatten()`): they are already flat MCP names
 chosen by the upstream server, and rewriting them would break `call_tool`.
 """
 
+import contextlib
 import json
 import os
 import shlex
@@ -266,6 +267,13 @@ class ReconnectingMCPExecutor:
             raise call_failed(verb, e) from e
         return envelope(res, _payload(res))
 
+    async def aclose(self) -> None:
+        """Stop what the stored transport keeps alive: a stdio child is kept
+        warm between sessions (`keep_alive=True`) and would otherwise outlive
+        the backend — every reload that changed or removed a stdio surface
+        left its old subprocess running. Idempotent."""
+        await self._transport.close()
+
 
 def _with_note(description: str, note: str | None) -> str:
     if not note:
@@ -392,9 +400,13 @@ async def load_mcp_backend(
                 backing.republish_output_schema,
                 backing.notes,
             )
-    except UsageError:
-        raise
-    except Exception as e:
+    except BaseException as e:
+        # A stdio child outlives its session (`keep_alive`); this attach is
+        # dropping it, whether it failed or was cancelled.
+        with contextlib.suppress(Exception):
+            await transport.close()
+        if isinstance(e, UsageError) or not isinstance(e, Exception):
+            raise
         raise Unavailable(f"could not attach mcp backend '{backing.name}': {e}") from e
     # Swap the bound-client executor for one that reconnects per call — the
     # session opened above is closed by the time the gateway serves traffic.

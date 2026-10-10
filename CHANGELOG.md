@@ -240,6 +240,9 @@ auto-generated contributor appendix is appended below it). Releases before
   schema), for pinned tools and `run_tool`, on `http`, `stdio` and `inproc`
   backings. Non-text blocks are still dropped. See `docs/PLUGINS.md` § A
   backend's extra text blocks.
+- **A stdio backend's subprocess is stopped when the backend is dropped.**
+  `keep_alive` kept the child running after a reload changed or removed its
+  surface, after a failed or cancelled attach, and after `health --deep`.
 - **The audit line's `status` is filled in.** It was always `null`; it now
   carries the upstream HTTP status when the backend gave one. An MCP backend
   answering HTTP 4xx is `backend_rejected` (it was `backend_unavailable`); a
