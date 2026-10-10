@@ -770,6 +770,9 @@ process. Two ways:
   dependency to the gateway's version, which refuses a conflicting plugin, and
   then prunes the duplicates. A plugin may declare `beherouter` itself as a
   dependency; the installer drops it rather than asking an index for it.
+  More indexes (`plugins.indexes[]`) and wheels from a ConfigMap
+  (`plugins.local`) go through the same installer; see `docs/DEPLOYMENT.md`
+  § Private CA, out-of-tree plugins.
 
 ### The plugin API and its version
 

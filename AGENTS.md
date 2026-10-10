@@ -39,7 +39,9 @@
 > one caller `sub` on the next call. All opt-in; **`admin`, `healthz` and
 > `metrics` are now reserved surface names** and an unknown path answers an
 > RFC 9457 404. Operator view: **`docs/DEPLOYMENT.md`** § Hot reload, § Kill
-> switch, § Admin API.
+> switch, § Admin API. **Stateless surfaces** (client ask A3): `stateless = true` on an
+> entry serves it with no MCP session — no session lost at a rollout or reload, no affinity
+> needed for that surface (scaling out without affinity needs every surface stateless); refused beside `confirm_mutating` (`docs/DEPLOYMENT.md` § Stateless sessions).
 >
 > Design background: **`docs/DESIGN.md`**; the plugin seam:
 > **`docs/superpowers/specs/2026-09-09-plugins-design.md`** and
@@ -499,7 +501,8 @@ knowing before you hit them.
 - **Kubernetes: the chart** (`charts/beherouter`, published as
   `oci://ghcr.io/behemotion/charts/beherouter`). The `registry-lint` gate is a
   pre-install/pre-upgrade hook Job; `maxUnavailable: 0` keeps the previous
-  revision serving; `caBundle`, `plugins.install`, `extraInitContainers` /
+  revision serving; `caBundle`, `plugins.install` (plus `plugins.indexes[]` and
+  `plugins.local` wheels from a ConfigMap, on `main`), `extraInitContainers` /
   `extraVolumes` / `extraVolumeMounts`; and since chart 0.1.7 an opt-in
   `healthCronJob` (requires `healthCronJob.textfile.hostPath`). Hook and test
   pods deliberately do **not** carry the gateway's selector labels, so the
@@ -646,7 +649,8 @@ and widening what is proven.
    Before promising a sibling can be fronted, read `HARNESS-DIVERGENCES.md` §5:
    behelib's hand-rolled JSON-RPC should wait for its beheaxi migration.
 4. **Hot reload, kill switch and admin API (sub-project 3) are done on `main`**;
-   ship them with the next release and run the e2e stack first.
+   ship them with the next release and run the e2e stack first; stateless surfaces
+   (sub-project 4) are done too.
 5. **Open questions carried from the umbrella** — the `fastmcp<4` cap vs
    behesid's FastMCP 4 (blocks only `inproc`), an optional `health` field in the
    beheaxi manifest, per-argument descriptions for `cli` search quality:

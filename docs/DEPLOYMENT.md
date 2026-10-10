@@ -399,7 +399,7 @@ logged (INFO, WARNING, ERROR) and counted in `beherouter_reloads_total`.
 the ones in flight for `BEHEROUTER_RELOAD_DRAIN_S` (default 30). Then it is cancelled and its
 backend closed; the deadline exists because a streaming-HTTP GET never ends by itself.
 **A changed surface's MCP sessions end at the swap** (they live in the old app), and clients
-re-initialize against the new app, whose `tools` array freezes anew. An unchanged surface
+re-initialize against the new app, whose `tools` array freezes anew — unless the surface is [stateless](#stateless-sessions), which has no session to end. An unchanged surface
 keeps its sessions and its hosts' prompt caches.
 
 ⚠️ **What a reload cannot change.** Gateway-wide settings are process environment, read once,
@@ -444,6 +444,43 @@ Deployment, the registry-lint hook Job and the health CronJob, and the hook runs
 pre-install, so the **Secret must exist before `helm install`**; the chart does not create it.
 Under `scripts/deploy.sh`, mount the secret file's directory with `--volume`
 ([§ … under `deploy.sh`](#hot-reload-secret-files-and-the-kill-switch-under-deploysh)).
+
+## Stateless sessions
+
+By default a surface's MCP sessions live in the gateway process. A rollout or a reload that
+changes the surface ends them, and every replica needs client affinity
+(`service.sessionAffinity: ClientIP`). `stateless = true` on an entry serves that surface with
+FastMCP's stateless streamable-HTTP app instead: no `mcp-session-id`, every request
+self-contained, so any replica can answer any request and nothing is lost at a swap.
+
+```toml
+[plane]
+plugin = "plane-http-apikey"
+stateless = true
+```
+
+**What it costs:**
+
+- **No `confirm_mutating`.** Confirmation asks the user through MCP elicitation, which needs a
+  session; the pair is refused by `registry-lint`, at boot and by a reload.
+- **No `beherouter_active_sessions` series** for the surface (there is nothing to count).
+- **No server push.** A `GET` answers 405 (before authentication: an unauthenticated `GET` gets 405,
+  not 401, and is not counted in `beherouter_auth_rejections_total`), so
+  `notifications/tools/list_changed` cannot reach the client. The published `tools` array is frozen per app anyway; a client sees a changed one
+  when it rebuilds its connection.
+- Rate limits stay in memory, per replica ([§ Rate limits](#rate-limits)), and the kill-switch
+  file still needs a volume every replica shares.
+
+**LibreChat** (v0.8.7, MCP SDK 1.29.0; spike 2026-10-09) works unchanged: it initializes once
+per connection, takes the 405 as "no SSE stream" without logging it, and sends only
+`tools/call` on later turns. Restarting or rolling the gateway between two calls is invisible
+to it; the same rolling update against a stateful surface fails the next tool call with
+`404 Session not found` before LibreChat reconnects. No client-config change is needed.
+
+To scale out, make every surface stateless; then `sessionAffinity` and `replicaCount: 1` are
+no longer needed (a stdio backend still runs one subprocess per replica). With replicas, reload every pod
+(`BEHEROUTER_REGISTRY_WATCH_S` or a SIGHUP per pod): `POST /admin/reload` through a Service
+reaches only one pod.
 
 ## Kill switch
 
@@ -745,9 +782,56 @@ kubectl exec deploy/beherouter -- beherouter health --deep --json   # exit 6 == 
   gateway **and** the lint hook start. Dependencies the gateway already has are
   pinned to its versions and then pruned from that directory. A plugin that
   needs a different `httpx` or `fastmcp` fails its init container rather than
-  shadowing the gateway's copy (`python -m beherouter.plugininstall`). For
-  anything the chart does not model, use `extraInitContainers` /
-  `extraVolumes` / `extraVolumeMounts`, which reach both pods too.
+  shadowing the gateway's copy (`python -m beherouter.plugininstall`).
+  `plugins.indexUrl` replaces PyPI as the default index.
+- **`plugins.indexes[]`**: more named indexes, for a plugin published to a
+  second registry (a GitLab project's package registry, say):
+
+  ```yaml
+  plugins:
+    install: ["beherouter-back-office==0.1.0"]
+    indexes:
+      - name: back-office           # [a-z0-9-]+, never "plugins"
+        url: https://gitlab.example.com/api/v4/projects/1234/packages/pypi/simple
+        credentialsSecret: gitlab-back-office   # keys: username, password
+  ```
+
+  They become uv's `UV_INDEX` and are searched **before** the default index.
+  uv takes a package from the first index that has it, so a same-named public
+  package cannot replace a private one. The chart never changes that
+  strategy. Each Secret reaches only the init container, as
+  `UV_INDEX_<NAME>_USERNAME`/`_PASSWORD` (upper-cased, `-` → `_`), and never
+  appears in a URL.
+- **`plugins.local`**: wheels from a ConfigMap, for a plugin that has no index
+  at all:
+
+  ```bash
+  kubectl create configmap dwh-wheels --from-file=beherouter_dwh-0.3.0-py3-none-any.whl
+  ```
+  ```yaml
+  plugins:
+    local:
+      configMap: dwh-wheels
+      wheels: ["beherouter_dwh-0.3.0-py3-none-any.whl"]
+  ```
+
+  The ConfigMap must stay under 1 MiB in total. Wheels only: a plugin
+  registers through entry-point metadata, and a bare `.py` file has none. The
+  wheel is installed by the same installer with the same pinning and pruning,
+  and its own dependencies still come from the indexes. **Name every wheel
+  with its version and list it.** The new filename changes the pod template,
+  so `helm upgrade` rolls the pods. Editing the ConfigMap alone rolls nothing.
+  The ConfigMap is mounted `optional`. If it is missing, or does not contain a
+  listed file, the `plugins` init container fails with
+  `plugin wheel not found: /etc/beherouter/plugins-local/<configMap>/<file>`
+  and the pod does not wait in `ContainerCreating`. The lint hook installs the
+  same wheels, so a missing one also stops `helm upgrade`.
+
+  `plugins.install`, `plugins.indexes` and `plugins.local` can be combined.
+  They share one init container, which renders when `install` or
+  `local.wheels` is non-empty. For anything the chart does not model, use
+  `extraInitContainers` / `extraVolumes` / `extraVolumeMounts`, which reach
+  both pods too.
 
 ### Materialising a `stdio` backend at pod start (a `cmd` override)
 

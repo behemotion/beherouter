@@ -145,6 +145,25 @@ auto-generated contributor appendix is appended below it). Releases before
 - **JSON logs.** `BEHEROUTER_LOG_FORMAT=json` writes one object per line with a local-offset
   timestamp; the default `text` format no longer prints multi-line tracebacks for expected
   refusals.
+- **`stateless = true`** on a registry entry serves the surface with no MCP
+  session (FastMCP stateless streamable-HTTP): a rollout or reload drops
+  nothing and replicas need no client affinity. Refused beside
+  `confirm_mutating`; the surface has no `beherouter_active_sessions` series.
+  FastMCP's own `FASTMCP_STATELESS_HTTP` environment variable no longer has any effect:
+  the gateway always passes the registry key's value (default stateful).
+  Verified against LibreChat 0.8.7. See `docs/DEPLOYMENT.md` § Stateless sessions.
+- **Chart: more plugin sources.** `plugins.indexes[]` (`name`, `url`,
+  `credentialsSecret`) adds named uv indexes searched before `indexUrl`/PyPI,
+  each with its own credential Secret (`UV_INDEX_<NAME>_USERNAME`/`_PASSWORD`);
+  uv's first-index strategy is kept. `plugins.local` (`configMap`, `wheels`)
+  installs wheels from a ConfigMap through the same installer and safeguards:
+  listing each wheel's filename makes an upgrade roll the pods, and the
+  ConfigMap is mounted `optional`, so a missing one fails the init container
+  with a log naming the ConfigMap and file instead of holding the pod in
+  ContainerCreating. Invalid names, duplicates, the reserved `plugins` and
+  non-wheel filenames fail the render. `plugininstall` refuses a missing local
+  wheel before running uv. See `docs/DEPLOYMENT.md` § Private CA, out-of-tree
+  plugins.
 
 ### Changed
 

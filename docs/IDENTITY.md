@@ -414,9 +414,9 @@ re-sending a flag is not a human confirming, so there is no fallback. Consumer
 support for elicitation is **unknown (not verified)** for all five (LibreChat,
 Hermes, pi, OpenCode, Claude Code): test yours before turning this on.
 
-⚠️ **Elicitation needs a stateful session.** A stateless surface cannot ask.
-Refusing `stateless` together with `confirm_mutating` at lint is not built yet
-(planned with stateless sessions, sub-project 4).
+⚠️ **Elicitation needs a stateful session.** A stateless surface cannot ask, so
+`stateless = true` beside `confirm_mutating = true` is refused by `registry-lint`,
+at boot and by a reload. See `docs/DEPLOYMENT.md` § Stateless sessions.
 
 ⚠️ **Check your client's MCP tool-call timeout.** The gateway waits up to 300 s
 for the human; a host that abandons the call sooner shows a failure while the
