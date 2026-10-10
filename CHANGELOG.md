@@ -259,6 +259,9 @@ auto-generated contributor appendix is appended below it). Releases before
   unchanged; an unreadable file's error names its type cleanly; the state file
   is written off the event loop; an admin write that would leave an invalid
   file answers `400`; the state returned by the admin API is a copy.
+- Rate limits: the `limit` label no longer uses exponent form (`30/2592000s`,
+  not `30/2.592e+06s`), and a wait of exactly one second is no longer reported
+  as `retry_after_s: 2`.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no

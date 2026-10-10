@@ -13,11 +13,15 @@ import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from . import identity
 from .errors import AuthError, AxiError, Unavailable, UsageError, tag
 from .models import ToolDescriptor
 from .pipeline import ToolStage
+
+if TYPE_CHECKING:
+    from .registry import RegistryEntry
 
 
 @dataclass(frozen=True)
@@ -269,7 +273,11 @@ class RateLimiter:
 
     @property
     def limit(self) -> str:
-        return f"{self.calls}/{self.per_s:g}s"
+        """`calls/per_s` as an operator wrote it: never exponent form (`:g`
+        rendered a 30-day window as 2.592e+06)."""
+        per = self.per_s
+        shown = str(int(per)) if per == int(per) else f"{per:f}".rstrip("0").rstrip(".")
+        return f"{self.calls}/{shown}s"
 
     def take(self, key: str) -> float:
         """Spend one token for `key`. 0.0 when allowed, else seconds until one is."""
@@ -301,7 +309,11 @@ class RateLimiter:
         key = caller.sub if caller.auth == "oidc" and caller.sub else SHARED_KEY
         wait = self.take(key)
         if wait:
-            retry = max(1, math.ceil(wait))
+            # Rounded first: 1/rate is a hair above a whole second in floats,
+            # and ceil() of that would say "retry in 2s" for a 1 s wait.
+            retry = max(1, math.ceil(round(wait, 6)))
+            # Unavailable for the envelope's type and exit code; the TAG is what
+            # makes the outcome `refused` / `rate_limited`, not the class.
             raise tag(
                 Unavailable(
                     f"surface '{self.surface}': rate limit of {self.limit} reached for "
@@ -313,7 +325,9 @@ class RateLimiter:
             )
 
 
-def gates_from_entry(entry, limiters: dict | None = None) -> Gates | None:
+def gates_from_entry(
+    entry: "RegistryEntry", limiters: dict | None = None
+) -> Gates | None:
     """The gates one registry entry configures, in their FIXED order -- roles, rate
     limit, confirm -- or None. Validate the entry first.
 
@@ -354,7 +368,7 @@ def gates_from_entry(entry, limiters: dict | None = None) -> Gates | None:
     )
 
 
-def unserved_names(entry, served: set[str]) -> list[str]:
+def unserved_names(entry: "RegistryEntry", served: set[str]) -> list[str]:
     """Gated or exempted tool names the backend does not serve. Offline lint has no
     catalogue, so attach is the first place this can be seen."""
     authz = entry.authz or {}

@@ -122,3 +122,34 @@ async def test_retry_after_rounds_up_to_whole_seconds(wait, expected):
 class _Ok:
     async def run(self, verb, args, *, identity=None):
         return {"result": "ok"}
+
+
+@pytest.mark.parametrize(
+    "per_s, label", [(60, "30/60s"), (2_592_000, "30/2592000s"), (0.5, "30/0.5s")]
+)
+def test_the_limit_label_never_uses_exponent_form(per_s, label):
+    # `:g` rendered a month as "30/2.592e+06s" in the refusal and the meta.
+    assert RateLimiter("dwh", 30, per_s, 30).limit == label
+
+
+async def test_a_float_wait_of_exactly_one_second_is_not_rounded_up_to_two():
+    # 3 calls per 3 s refills a token every 1.0 s, but 1/rate in floats is a
+    # hair above 1.0; ceil() of that said "retry in 2s".
+    rl, _ = _limiter(calls=3, per_s=3.0000000001, burst=1)
+    await rl(_scope("shared"), _d("t"), {})
+    with pytest.raises(Unavailable) as ei:
+        await rl(_scope("shared"), _d("t"), {})
+    assert ei.value.context["retry_after_s"] == 1
+
+
+def test_the_sweep_is_skipped_inside_its_window():
+    rl, clock = _limiter(calls=1, per_s=10, burst=1)
+    clock.now = 10.0
+    rl.take("a")  # the first take sweeps; the window starts now
+    rl._buckets["full"] = (1.0, 10.0)  # a bucket that is already full
+    clock.now = 15.0
+    rl.take("b")  # inside the 10 s window: no sweep
+    assert "full" in rl._buckets
+    clock.now = 20.0
+    rl.take("c")  # the window is over: the full bucket goes
+    assert "full" not in rl._buckets
