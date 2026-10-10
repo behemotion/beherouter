@@ -135,3 +135,33 @@ async def test_build_refuses_an_import_failure_by_file(tmp_path):
     (d / "needs_dep.py").write_text("import no_such_dependency_for_beherouter\n")
     with pytest.raises(UsageError, match=r"needs_dep\.py"):
         await load_backend(_entry(d))
+
+
+def test_scan_reads_every_decorator_shape(tmp_path):
+    from beherouter.plugins.python_dir import scan_tools
+
+    d = _dir(tmp_path, """
+        import functools
+        from fastmcp.tools import tool
+
+        @functools.cache
+        @tool(description="named by its function")
+        def by_function() -> str:
+            return "x"
+
+        @tool()
+        def bare_call() -> str:
+            return "y"
+
+        @functools.cache
+        def not_a_tool() -> str:
+            return "z"
+    """)
+    assert set(scan_tools(d)) == {"by_function", "bare_call"}
+
+
+def test_a_path_that_is_a_file_is_refused(tmp_path):
+    f = tmp_path / "tools.py"
+    f.write_text("")
+    with pytest.raises(UsageError, match="is not a directory"):
+        get("python-dir").validate({"path": str(f)})

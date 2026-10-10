@@ -54,3 +54,18 @@ def test_bad_arg_type_is_rejected():
     }
     with pytest.raises(Unavailable):
         validate_manifest(bad)
+
+
+def test_schema_falls_back_to_the_source_tree_when_not_a_packaged_resource(monkeypatch):
+    import beherouter.manifest as manifest
+
+    def no_resource(_pkg):
+        raise ModuleNotFoundError("beheaxi")
+
+    packaged = load_schema()
+    load_schema.cache_clear()
+    monkeypatch.setattr(manifest, "files", no_resource)
+    try:
+        assert load_schema() == packaged
+    finally:
+        load_schema.cache_clear()

@@ -133,3 +133,51 @@ def test_a_missing_local_wheel_fails_before_uv_naming_the_file(tmp_path):
     with pytest.raises(SystemExit) as e:
         pi.install(tmp_path / "plugins", [str(missing)], run=never)
     assert "dwh-wheels" in str(e.value) and "dwh-0.3.0-py3-none-any.whl" in str(e.value)
+
+
+class _Dist:
+    def __init__(self, root: Path, name: str | None, version: str = "1.0",
+                 direct: str | None = None):
+        self._root, self.metadata, self.version = root, {"Name": name} if name else {}, version
+        self._direct = direct
+
+    def locate_file(self, _rel):
+        return self._root
+
+    def read_text(self, _name):
+        return self._direct
+
+
+def test_gateway_distributions_skip_the_target_and_nameless_metadata(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    (target / "sub").mkdir(parents=True)
+    site = tmp_path / "site"
+    site.mkdir()
+    dists = [
+        _Dist(target, "in-target"),
+        _Dist(target / "sub", "under-target"),
+        _Dist(site, None),
+        _Dist(site, "Foo_Bar", "2.0"),
+        _Dist(site, "foo-bar", "9.9"),  # a later duplicate never wins
+        _Dist(site, "Local", "0.1", direct='{"url": "file:///x"}'),
+    ]
+    monkeypatch.setattr(pi, "distributions", lambda: dists)
+    have = pi.gateway_distributions(exclude=target.resolve())
+    assert have == {"foo-bar": ("2.0", True), "local": ("0.1", False)}
+
+
+def test_prune_removes_a_shared_distribution_without_a_record(tmp_path):
+    info = tmp_path / "httpx-0.28.1.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text("x")
+    assert pi.prune(tmp_path, {"httpx": ("0.28.1", True)}) == ["httpx"]
+    assert not info.exists()
+
+
+def test_main_prints_one_json_document(tmp_path, capsys):
+    import json
+
+    pi.main(["--target", str(tmp_path)])
+    assert json.loads(capsys.readouterr().out) == {
+        "target": str(tmp_path), "added": [], "shared_with_gateway": [],
+    }

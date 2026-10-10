@@ -173,3 +173,24 @@ def test_write_temp_file_does_not_end_in_prom(tmp_path, monkeypatch):
     write_textfile(tmp_path / "beherouter.prom", "x 1\n")
     assert seen and not seen[0].endswith(".prom")
     assert os.path.dirname(seen[0]) == str(tmp_path)  # same fs: rename is atomic
+
+
+def test_the_callers_verdict_is_used_as_given():
+    """`failed_names` from the caller is THE verdict; render does not recompute it."""
+    s = _samples(render([GREEN], now=NOW, failed_names=["office"]))
+    assert s['beherouter_surface_healthy{surface="office"}'] == 0
+    assert s["beherouter_health_ok"] == 0
+
+
+def test_a_failed_write_removes_its_temp_file_and_keeps_the_old(tmp_path, monkeypatch):
+    target = tmp_path / "beherouter.prom"
+    target.write_text("old\n")
+
+    def refuse(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    with pytest.raises(OSError, match="disk full"):
+        write_textfile(target, "new\n")
+    assert target.read_text() == "old\n"
+    assert os.listdir(tmp_path) == ["beherouter.prom"]

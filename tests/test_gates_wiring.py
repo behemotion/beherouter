@@ -133,3 +133,42 @@ async def test_attach_wires_the_gates_and_warns_about_unserved_names(fake_cli_cm
     assert not first.isError
     assert second.meta[META_KEY]["reason"] == "rate_limited"
     assert any("nope" in r.getMessage() for r in caplog.records)
+
+
+def test_a_rate_limit_that_is_not_a_table_is_refused():
+    import pytest
+
+    from beherouter.errors import UsageError
+    from beherouter.gates import validate_rate_limit
+
+    with pytest.raises(UsageError, match="must be a table"):
+        validate_rate_limit("bo", [10])
+
+
+def test_many_long_arguments_are_cut_to_the_overall_cap():
+    from beherouter.gates import _SHOWN_ARGS_MAX, _show_args
+
+    shown = _show_args({f"a{i:03}": "x" * 500 for i in range(100)})
+    head, body = shown.split("\n", 1)
+    assert head.startswith("Arguments (truncated, ")
+    assert len(body) == _SHOWN_ARGS_MAX + 1 and body.endswith("…")
+
+
+async def test_a_client_that_fails_to_ask_is_refused_as_unsupported(monkeypatch):
+    import fastmcp.server.dependencies as deps
+    import pytest
+    from mcp import types
+    from mcp.shared.exceptions import McpError
+
+    from beherouter.errors import AuthError
+
+    class _Ctx:
+        session = type("S", (), {"check_client_capability": lambda self, wanted: True})()
+
+        async def elicit(self, *a, **k):
+            raise McpError(types.ErrorData(code=-32601, message="nope"))
+
+    monkeypatch.setattr(deps, "get_context", lambda: _Ctx())
+    d = ToolDescriptor(name="w", verb="w", summary="", schema={}, pinned=True, mutating=True)
+    with pytest.raises(AuthError, match="the client failed to ask its user"):
+        await ConfirmGate(surface="bo")(None, d, {})

@@ -202,3 +202,69 @@ def test_lint_warning_names_what_would_raise_a_declared_plugin():
     curated = lint_warning("cal", "x", _spec(evidence=()))
     assert "recorded catalogue" in curated
     assert lint_warning("plane", "plane", PLUGINS["plane"].spec) is None
+
+
+def test_an_out_of_tree_claim_shows_when_its_distribution_ships_the_evidence():
+    async def build(ctx): ...
+
+    build.__module__ = "httpx._api"  # any installed distribution will do
+    shipped = Plugin(spec=_spec(maturity="verified", evidence=("httpx/__init__.py",)),
+                     build=build)
+    assert displayed_tier(shipped) == ("verified", None)
+    missing = Plugin(spec=_spec(maturity="verified", evidence=("tests/e2e/x.py::y",)),
+                     build=build)
+    tier, note = displayed_tier(missing)
+    assert tier == "probed"
+    assert "distribution 'httpx'" in note and "(missing: tests/e2e/x.py::y)" in note
+
+
+def test_an_unreadable_distribution_is_capped_rather_than_crashing(monkeypatch):
+    import beherouter.maturity as maturity
+
+    def broken(_module):
+        raise OSError("RECORD unreadable")
+
+    monkeypatch.setattr(maturity, "_distribution_files", broken)
+
+    async def build(ctx): ...
+
+    build.__module__ = "httpx._api"
+    plugin = Plugin(spec=_spec(maturity="verified", evidence=("httpx/__init__.py",)),
+                    build=build)
+    tier, note = displayed_tier(plugin)
+    assert tier == "probed" and "no installed distribution" in note
+
+
+def test_lint_warning_for_a_declared_plugin_that_already_has_its_evidence():
+    hint = lint_warning("cal", "x", _spec(evidence=("cat/x.json",)))
+    assert "maturity` raised" in hint
+    no_probe = lint_warning("cal", "x", _spec(probe=None, evidence=("cat/x.json",)))
+    assert "a default `probe`" in no_probe and "recorded catalogue" not in no_probe
+
+
+# --- evidence that does not resolve ----------------------------------------
+
+
+@pytest.mark.parametrize(("item", "why"), [
+    ("tests/e2e/e2e.py", "needs `path::name`"),
+    ("tests/e2e/gone.py::x", "does not exist"),
+    ("tests/e2e/bad.py::x", "does not parse"),
+    ("cat/gone.json", "recorded catalogue does not exist"),
+    ("cat/bad.json", "not a recorded tools/list array (JSONDecodeError)"),
+    ("cat/rows.json", "not a recorded tools/list array (KeyError)"),
+])
+def test_each_kind_of_broken_evidence_is_named(tree, item, why):
+    (tree / "tests/e2e/bad.py").write_text("def (:\n")
+    (tree / "cat/bad.json").write_text("{not json")
+    (tree / "cat/rows.json").write_text(json.dumps([{"description": "no name"}]))
+    report = plugin_conformance(_spec(maturity="declared", evidence=(item,)), root=tree)
+    assert not report.ok
+    assert len(report.broken) == 1 and why in report.broken[0]
+
+
+def test_a_probe_missing_from_the_catalogue_is_not_probed(tree):
+    report = plugin_conformance(
+        _spec(maturity="probed", probe="nope", evidence=("cat/x.json",)), root=tree
+    )
+    assert report.met == "declared"
+    assert "probe 'nope' is not in the recorded catalogue" in report.problems[0]

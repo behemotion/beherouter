@@ -815,3 +815,65 @@ async def test_run_tool_refuses_a_missing_required_arg(cli_surface):
     async with Client(cli_surface) as c:
         with pytest.raises(ToolError, match="missing required arg 'name'"):
             await c.call_tool("run_tool", {"name": "faketool_shelf_create", "args": {}})
+
+
+async def test_an_axi_error_from_costing_passes_through_unrelabelled(monkeypatch):
+    from beherouter import costing
+    from beherouter.errors import Unavailable
+
+    async def down(*a, **kw):
+        raise Unavailable("tokenizer service down")
+
+    monkeypatch.setattr(costing, "surface_cost", down)
+    d = ToolDescriptor(name="t", verb="t", summary="", schema={}, pinned=True, mutating=None)
+    tool = await build_surface(_backend(d)).get_tool("context_cost")
+    result = await tool.fn()
+    assert result.is_error
+    assert result.content[0].text == "tokenizer service down"  # not "could not measure"
+
+
+async def test_describe_tool_carries_annotations_and_the_wrapped_return_schema():
+    d = ToolDescriptor(
+        name="lister", verb="lister", summary="List", schema={}, pinned=False,
+        mutating=False, annotations={"readOnlyHint": True},
+        output_schema={"type": "object", "properties": {"entries": {"type": "array"}}},
+    )
+    async with Client(build_surface(_backend(d))) as c:
+        data = (await c.call_tool("describe_tool", {"name": "lister"})).data
+    assert data["annotations"] == {"readOnlyHint": True}
+    assert data["returns"] == wrapped_output_schema(d)
+
+
+async def test_register_pinned_without_a_runner_calls_the_executor_directly():
+    """`costing.py`'s throwaway surface publishes through this with no pipeline."""
+    from beherouter.surface import register_pinned
+
+    d = ToolDescriptor(name="echo", verb="echo", summary="Echo", schema={}, pinned=True,
+                       mutating=None)
+    mcp = FastMCP("bare")
+    register_pinned(mcp, d, _backend(d))
+    async with Client(mcp) as c:
+        res = await c.call_tool("echo", {})
+    assert res.structured_content == {"result": {"entries": ["echo", {}]}}
+
+
+def test_a_validation_error_without_a_pydantic_cause_names_no_field():
+    from fastmcp.exceptions import ValidationError
+
+    from beherouter.surface import _invalid_arguments
+
+    err = _invalid_arguments("t", ValidationError("anything, possibly a value"))
+    assert str(err) == (
+        "invalid arguments for tool 't': arguments do not match the tool's schema"
+    )
+
+
+def test_the_redaction_filter_is_installed_once():
+    import logging
+
+    from beherouter.surface import _install_redaction, _RedactInvalidArguments
+
+    _install_redaction()
+    _install_redaction()
+    filters = logging.getLogger("fastmcp.server.server").filters
+    assert sum(isinstance(f, _RedactInvalidArguments) for f in filters) == 1

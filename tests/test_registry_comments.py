@@ -6,6 +6,10 @@ why a pin or a probe was overridden, which is exactly the knowledge the plugin
 model exists to keep out of people's heads.
 """
 
+import pytest
+import tomlkit
+
+from beherouter.errors import UsageError
 from beherouter.registry import RegistryEntry, load_registry, save_registry
 
 COMMENTED = """\
@@ -119,3 +123,52 @@ def test_the_cli_attach_then_detach_round_trip_keeps_comments(tmp_path, fake_cli
     assert "faketool" in load_registry(p)
     run("detach", "faketool")
     assert p.read_text().rstrip("\n") == COMMENTED.rstrip("\n")
+
+
+def test_a_value_toml_cannot_hold_is_refused_before_the_file_is_touched(tmp_path):
+    p = tmp_path / "registry.toml"
+    p.write_text(COMMENTED)
+    reg = load_registry(p)
+    reg["x"] = RegistryEntry(name="x", plugin="office-mcp", config={"when": {1, 2}})
+    with pytest.raises(UsageError, match=r"'x.config.when': cannot write a set"):
+        save_registry(p, reg)
+    assert p.read_text() == COMMENTED
+
+
+def test_a_tuple_is_written_as_an_array(tmp_path):
+    p = tmp_path / "registry.toml"
+    save_registry(p, {"x": RegistryEntry(name="x", plugin="plane", pinned=("a", "b"))})
+    assert load_registry(p)["x"].pinned == ["a", "b"]
+
+
+def test_detaching_an_entry_with_sub_tables_keeps_the_next_entrys_comment(tmp_path):
+    p = tmp_path / "registry.toml"
+    p.write_text(
+        '[plane]\nplugin = "plane"\n  [plane.env]\n  api_key = "${K}"\n\n'
+        '# office is the pass-through\n[office]\nplugin = "office-mcp"\n'
+    )
+    reg = load_registry(p)
+    del reg["plane"]
+    save_registry(p, reg)
+    assert p.read_text() == '\n# office is the pass-through\n[office]\nplugin = "office-mcp"\n'
+
+
+def test_deleting_an_empty_table_keeps_the_comment_below_it(tmp_path):
+    p = tmp_path / "registry.toml"
+    p.write_text('[old]\n# keep me\n[office]\nplugin = "office-mcp"\n')
+    save_registry(p, {"office": RegistryEntry(name="office", plugin="office-mcp")})
+    assert p.read_text() == '# keep me\n[office]\nplugin = "office-mcp"\n'
+
+
+def test_a_non_table_after_a_deleted_table_is_kept_in_place(tmp_path):
+    """Only a Table's indent is restored after the re-append; an array of
+    tables following the deleted entry is re-appended as is."""
+    p = tmp_path / "registry.toml"
+    p.write_text('[old]\nplugin = "plane"\n[office]\nplugin = "office-mcp"\n')
+    doc = tomlkit.parse(p.read_text())
+    doc.append("extra", tomlkit.aot())
+    doc["extra"].append(tomlkit.table())
+    doc["extra"][0]["k"] = 1
+    p.write_text(tomlkit.dumps(doc))
+    save_registry(p, {"office": RegistryEntry(name="office", plugin="office-mcp")})
+    assert p.read_text() == '[office]\nplugin = "office-mcp"\n'

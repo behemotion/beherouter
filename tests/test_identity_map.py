@@ -105,3 +105,16 @@ def test_lookup_without_a_path_or_env_var_is_unavailable(monkeypatch):
     )
     with pytest.raises(Unavailable, match="identity map"):
         policy.materialise(_user())
+
+
+def test_an_unchanged_map_is_not_reparsed(tmp_path, monkeypatch):
+    path = _map_file(tmp_path)
+    sm = SecretMap(path)
+    sm.credentials_for("plane", "alice@example.test", "email")
+    reads = []
+    real = type(path).read_text
+    monkeypatch.setattr(
+        type(path), "read_text", lambda self, *a, **k: reads.append(1) or real(self)
+    )
+    assert sm.credentials_for("plane", "bob@example.test", "email") == {"api_key": "pat-bob"}
+    assert reads == []

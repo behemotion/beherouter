@@ -220,3 +220,9 @@ def test_hits_matching_a_minority_of_the_query_are_dropped():
     for i in range(6):
         idx.add(f"other_{i}", "Unrelated things.", [])
     assert idx.search("send an email") == ["notify"]
+
+
+def test_a_query_with_no_searchable_tokens_returns_nothing():
+    idx = ToolIndex()
+    idx.add("plane_list", "List projects", [])
+    assert idx.search("?!") == []

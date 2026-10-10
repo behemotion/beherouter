@@ -379,7 +379,7 @@ def registry_lint(path: str = "") -> None:
                             f"'{entry.name}': identity map '{path_}' is "
                             f"{status['state']}"
                         )
-                elif path_:
+                elif path_:  # pragma: no branch -- validate_entry above refuses lookup with no path
                     raise UsageError(
                         f"'{entry.name}': identity map '{path_}' does not exist"
                     )

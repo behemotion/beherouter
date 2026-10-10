@@ -130,3 +130,13 @@ async def test_attach_sends_the_deployment_pat_and_the_workspace(monkeypatch):
     env = seen["backing"].env
     assert env["authorization"] == "Bearer deployment-pat"
     assert env["x-workspace-slug"] == "homelab"
+
+
+def test_the_validator_leaves_a_missing_base_url_to_the_default():
+    get("plane-http-apikey").validate({})
+    get("plane-http-apikey").validate({"base_url": "http://plane-mcp:8211/http/api-key/mcp"})
+
+
+def test_an_api_key_url_that_is_not_an_mcp_endpoint_is_refused():
+    with pytest.raises(UsageError, match="not an MCP endpoint"):
+        get("plane-http-apikey").validate({"base_url": "http://plane-mcp:8211/http/api-key"})

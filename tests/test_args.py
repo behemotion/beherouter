@@ -85,3 +85,21 @@ def test_a_union_type_degrades_to_any_instead_of_crashing():
 
     schema = {"type": "object", "properties": {"note": {"type": ["string", "null"]}}}
     assert normalize_args(schema) == [("note", "note", Any, False, NO_DEFAULT)]
+
+
+def test_param_names_are_valid_identifiers_and_never_collide():
+    from beherouter.args import normalize_args
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "2fa": {"type": "string"},
+            "-": {"type": "string"},
+            "class": {"type": "string"},
+            "dry-run": {"type": "boolean"},
+            "dry_run": {"type": "boolean"},
+        },
+    }
+    params = [p for _w, p, *_ in normalize_args(schema)]
+    assert params == ["arg_2fa", "arg_", "class_", "dry_run", "dry_run_"]
+    assert all(p.isidentifier() for p in params)

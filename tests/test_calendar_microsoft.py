@@ -486,3 +486,18 @@ async def test_list_events_truncates_at_max_results_without_refusing():
         start="2026-09-15T00:00:00+06:00", end="2026-09-16T00:00:00+06:00", max_results=1
     )
     assert [e["id"] for e in out["events"]] == ["ev1"]
+
+
+async def test_update_event_patches_description_location_and_attendees():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "ev1"})
+
+    await _provider(handler).update_event(
+        event_id="ev1", description="agenda", location="room 1", attendees=["a@x.io"]
+    )
+    assert seen["body"]["body"] == {"contentType": "text", "content": "agenda"}
+    assert seen["body"]["location"] == {"displayName": "room 1"}
+    assert seen["body"]["attendees"][0]["emailAddress"]["address"] == "a@x.io"

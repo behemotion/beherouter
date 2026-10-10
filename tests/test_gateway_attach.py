@@ -302,3 +302,34 @@ def test_resolve_probe_treats_probe_and_args_as_one_unit(test_plugin):
     ) == ("get_me", None)
     # an unknown plugin (health tolerates one) -> no probe at all
     assert resolve_probe(RegistryEntry(name="s", plugin="nope"), None) == (None, None)
+
+
+async def test_attach_one_without_a_backends_map_still_attaches(test_plugin, fake_cli_cmd):
+    from beherouter.gateway import _attach_one
+
+    test_plugin("t-good", _slow_good(fake_cli_cmd, 0))
+    surface = await _attach_one("ft", RegistryEntry(name="ft", plugin="t-good"), None)
+    assert surface.name
+
+
+async def test_a_failing_pin_check_does_not_fail_the_attach(
+    test_plugin, fake_cli_cmd, monkeypatch, caplog
+):
+    """The pin check is a diagnostic: if it breaks, the surface attaches anyway."""
+    from beherouter import gateway
+
+    def boom(backend, expected):
+        raise TypeError("malformed descriptor")
+
+    monkeypatch.setattr(gateway, "missing_pins", boom)
+    test_plugin("t-good", _slow_good(fake_cli_cmd, 0))
+    missing: dict[str, list[str]] = {}
+    with caplog.at_level(logging.WARNING, logger="beherouter.gateway"):
+        surfaces = await build_surfaces(
+            {"ft": RegistryEntry(name="ft", plugin="t-good", pinned=["gone"])},
+            failed={},
+            pinned_missing=missing,
+        )
+    assert "ft" in surfaces
+    assert missing == {}
+    assert any("pin check failed" in r.getMessage() for r in caplog.records)

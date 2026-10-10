@@ -80,3 +80,13 @@ def test_preflight_refuses_a_bad_audit_switch(monkeypatch):
     monkeypatch.setenv("BEHEROUTER_AUDIT", "maybe")
     with pytest.raises(UsageError, match="BEHEROUTER_AUDIT"):
         preflight({})
+
+
+def test_current_caller_outside_a_request_is_none(monkeypatch):
+    import fastmcp.server.dependencies as deps
+
+    def no_context():
+        raise RuntimeError("no active context")
+
+    monkeypatch.setattr(deps, "get_access_token", no_context)
+    assert audit.current_caller(()) == audit.Caller(auth="none")

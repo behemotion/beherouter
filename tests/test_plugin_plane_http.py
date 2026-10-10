@@ -141,3 +141,7 @@ def test_the_upstream_mounts_are_spelled_once():
         src = inspect.getsource(mod)
         assert "API_KEY_MOUNT = " not in src and "OAUTH_PROXY_MOUNT = " not in src
     assert http.API_KEY_MOUNT is apikey.API_KEY_MOUNT is plane.API_KEY_MOUNT
+
+
+def test_the_validator_leaves_a_missing_base_url_to_the_schema():
+    get("plane-http").validate({})

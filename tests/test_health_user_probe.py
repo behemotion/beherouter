@@ -13,7 +13,7 @@ from fastmcp.server.auth.providers.jwt import RSAKeyPair
 
 from beherouter.auth import GatewayJWTVerifier
 from beherouter.errors import Unavailable
-from beherouter.health import check_entry, failed
+from beherouter.health import check_entry, deep_health, failed
 from beherouter.models import Backend, ToolDescriptor
 from beherouter.registry import RegistryEntry
 
@@ -172,3 +172,66 @@ def test_the_cli_refuses_bearer_file_without_deep(tmp_path, monkeypatch, capsys)
     path = tmp_path / "token"
     path.write_text("abc")
     assert app.main(["health", "--bearer-file", str(path), "--json"]) != 0
+
+
+@pytest.mark.parametrize(
+    ("answer", "seen"),
+    [
+        # FastMCP's {"result": ...} wrapper around a non-object, unwrapped once
+        ({"result": {"email": "alice@bank.invalid"}}, {"email": "alice@bank.invalid"}),
+        (["alice@bank.invalid"], {}),  # not an object: no identity fields
+        ('{"email": "alice@bank.invalid"}', {"email": "alice@bank.invalid"}),  # JSON text
+    ],
+)
+async def test_the_backend_identity_is_read_through_its_wrappers(idp, answer, seen):
+    mint, verifier = idp
+    token = mint(additional_claims={"email": "alice@bank.invalid"})
+    rec = await check_entry(
+        _entry(), load=_loader(_Executor(answer=answer)), user_token=token, verifier=verifier
+    )
+    assert rec["user_probe"]["backend_identity"] == seen
+    assert rec["user_probe"]["matches_caller"] is (True if seen else None)
+
+
+async def test_a_per_user_surface_without_a_probe_is_skipped(idp):
+    mint, verifier = idp
+    entry = RegistryEntry(
+        name="gen",
+        plugin="mcp-http",
+        config={"url": "http://backend.invalid/mcp"},
+        pinned=["member"],
+        identity={"mode": "bearer"},
+    )
+    rec = await check_entry(entry, load=_loader(_Executor()), user_token=mint(), verifier=verifier)
+    assert rec["probe"] == "none"
+    assert rec["user_probe"] == {"state": "skipped", "reason": "no probe configured"}
+
+
+async def test_a_failed_attach_skips_the_user_probe(idp):
+    mint, verifier = idp
+
+    async def load(entry):
+        raise Unavailable("connection refused")
+
+    rec = await check_entry(_entry(), load=load, user_token=mint(), verifier=verifier)
+    assert rec["attach"] == "failed"
+    assert rec["user_probe"] == {"state": "skipped", "reason": "attach failed"}
+
+
+async def test_deep_health_builds_the_gateways_verifier_when_none_is_given(monkeypatch):
+    """With a bearer and no injected verifier, the deployment's own is used:
+    here the shared-token one, which does not know an arbitrary JWT."""
+    monkeypatch.delenv("BEHEROUTER_AUTH_MODE", raising=False)
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "the-shared-token")
+    records = await deep_health(
+        {"plane": _entry()}, load=_loader(_Executor()), user_token="not-the-token"
+    )
+    assert records[0]["user_probe"]["state"] == "rejected"
+
+
+async def test_deep_health_raises_a_bug_after_every_check_finished():
+    async def load(entry):
+        raise RuntimeError("our bug")
+
+    with pytest.raises(RuntimeError, match="our bug"):
+        await deep_health({"plane": _entry()}, load=load)

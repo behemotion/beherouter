@@ -223,3 +223,63 @@ def test_the_gateway_audience_may_be_a_list(monkeypatch):
     monkeypatch.setenv("BEHEROUTER_OIDC_AUDIENCE", "beherouter")
     assert auth.oidc_verifier().audience == "beherouter"
 
+
+
+def test_the_rejection_log_passes_unrelated_lines_through_untouched():
+    rec = _Recorder()
+    log = auth._RejectionLog(rec)
+    log.info("JWKS refreshed")
+    log.warning("clock skew %s", 3)
+    log.debug("noise")
+    assert rec.calls == [("info", "JWKS refreshed"), ("warning", "clock skew 3"),
+                         ("debug", "noise")]
+
+
+def test_a_reason_outside_a_request_is_dropped():
+    """No slot (no RejectionMiddleware, no ObservedVerifier): noting is a no-op."""
+    auth._note("expired")
+
+
+async def test_the_middleware_passes_a_non_http_scope_straight_through():
+    seen = []
+
+    async def app(scope, receive, send):
+        seen.append((scope["type"], auth._SLOT.get()))
+
+    await RejectionMiddleware(app)({"type": "lifespan"}, None, None)
+    assert seen == [("lifespan", None)]
+
+
+async def test_the_expired_rewrite_keeps_resource_metadata_and_other_headers():
+    sent = []
+
+    async def app(scope, receive, send):
+        auth._note("expired")
+        await send({
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                (b"www-authenticate",
+                 b'Bearer error="invalid_token", resource_metadata="https://gw/.wk"'),
+                (b"content-type", b"application/json"),
+                (b"content-length", b"42"),
+                (b"x-request-id", b"r1"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": b"generic"})
+        await send({"type": "http.response.trailers", "headers": []})
+
+    async def send(message):
+        sent.append(message)
+
+    await RejectionMiddleware(app)({"type": "http", "path": "/demo/mcp"}, None, send)
+    start, body, trailers = sent
+    headers = dict(start["headers"])
+    assert headers[b"www-authenticate"] == (
+        b'Bearer error="invalid_token", error_description="token expired", '
+        b'resource_metadata="https://gw/.wk"'
+    )
+    assert headers[b"x-request-id"] == b"r1"
+    assert headers[b"content-length"] == str(len(body["body"])).encode()
+    assert b"token expired" in body["body"]
+    assert trailers["type"] == "http.response.trailers"

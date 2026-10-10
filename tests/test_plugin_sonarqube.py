@@ -87,3 +87,7 @@ async def test_build_declines_the_backends_output_schema(monkeypatch):
     assert b.url == "http://sonarqube-mcp:8080/mcp"
     assert b.env == {"authorization": "Bearer squ_test"}
     assert b.republish_output_schema is False
+
+
+def test_no_base_url_is_left_to_the_default():
+    get(PLUGIN).validate({})

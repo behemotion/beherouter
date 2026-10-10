@@ -111,3 +111,7 @@ def test_all_three_plane_plugins_share_one_vocabulary():
 
     for name in ("plane", "plane-http", "plane-http-apikey"):
         assert get(name).spec.search_aliases is SEARCH_ALIASES
+
+
+def test_no_base_url_is_left_to_the_default():
+    get("plane").validate({"base_url": ""})

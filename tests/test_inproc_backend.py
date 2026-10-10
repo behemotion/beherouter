@@ -504,3 +504,98 @@ async def test_aclose_closes_the_servers_owned_client():
 async def test_aclose_on_a_server_that_owns_no_client_is_a_no_op():
     backend = await load_inproc_backend(_backing(_server()))
     await backend.executor.aclose()
+
+
+def _raw_server(parameters: dict, seen: list) -> FastMCP:
+    from fastmcp.tools import Tool
+    from fastmcp.tools.base import ToolResult
+
+    class RawTool(Tool):
+        async def run(self, arguments):
+            seen.append(arguments)
+            return ToolResult(structured_content={"ok": True})
+
+    server = FastMCP("raw")
+    server.add_tool(RawTool(name="raw", description="Raw.", parameters=parameters))
+    return server
+
+
+async def test_coercion_follows_any_of_and_leaves_undeclared_args_alone():
+    seen: list = []
+    server = _raw_server(
+        {
+            "type": "object",
+            "properties": {"id": {"anyOf": [{"type": "integer"}, {"type": "null"}, True]}},
+        },
+        seen,
+    )
+    backend = await load_inproc_backend(_backing(server))
+    await backend.executor.run("raw", {"id": "7", "extra": "8"})
+    assert seen == [{"id": 7, "extra": "8"}]
+
+
+async def test_a_schema_without_properties_is_passed_through_uncoerced():
+    seen: list = []
+    backend = await load_inproc_backend(_backing(_raw_server({"type": "object"}, seen)))
+    await backend.executor.run("raw", {"id": "7"})
+    assert seen == [{"id": "7"}]
+
+
+async def test_a_tool_with_a_broken_schema_is_unavailable_not_a_caller_error():
+    """A malformed tool schema is the backend's fault, never the caller's."""
+    seen: list = []
+    server = _raw_server(
+        {"type": "object", "properties": {"id": {"type": "no-such-type"}}}, seen
+    )
+    backend = await load_inproc_backend(_backing(server))
+    with pytest.raises(Unavailable, match="raw"):
+        await backend.executor.run("raw", {"id": 1})
+    assert seen == []
+
+
+async def test_a_network_failure_upstream_is_an_outage():
+    server = FastMCP("up")
+
+    @server.tool
+    def fetch() -> str:
+        """Calls an upstream that is down."""
+        raise ValueError("upstream unreachable") from httpx.ConnectError("refused")
+
+    backend = await load_inproc_backend(_backing(server))
+    with pytest.raises(Unavailable, match="fetch"):
+        await backend.executor.run("fetch", {})
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"), [(UsageError("bad config"), UsageError), (RuntimeError("x"), Unavailable)]
+)
+async def test_a_failed_listing_is_classified(monkeypatch, exc, expected):
+    from beherouter.backends import inproc
+
+    async def failing(*a, **kw):
+        raise exc
+
+    monkeypatch.setattr(inproc, "backend_from_client", failing)
+    with pytest.raises(expected):
+        await load_inproc_backend(_backing(_server()))
+
+
+def test_an_isolated_import_keeps_modules_from_outside_the_directory(tmp_path, monkeypatch):
+    """Only the directory's own modules are evicted; a stdlib module it pulled
+    in for the first time stays loaded."""
+    import sys
+
+    from beherouter.backends.inproc import _import_isolated
+
+    monkeypatch.delitem(sys.modules, "colorsys", raising=False)
+    (tmp_path / "tools.py").write_text(
+        "import colorsys\n"
+        "from fastmcp.tools import tool\n\n"
+        "@tool\n"
+        "def hue(r: float) -> float:\n"
+        "    '''Hue.'''\n"
+        "    return colorsys.rgb_to_hsv(r, 0, 0)[0]\n"
+    )
+    _import_isolated(tmp_path)
+    assert "colorsys" in sys.modules
+    assert "tools" not in sys.modules

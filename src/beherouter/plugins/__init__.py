@@ -262,5 +262,5 @@ load_entry_point_plugins()
 # A test fixture on the `cli` backing with no mandatory probe, which keeps the
 # cli load path cheap to exercise. Kept out of `beherouter plugins` so no agent
 # pays context for it; production uses `beheaxi-cli`.
-if os.environ.get("BEHEROUTER_TEST_PLUGINS") == "1":
+if os.environ.get("BEHEROUTER_TEST_PLUGINS") == "1":  # pragma: no branch - suite sets it
     from . import _test_cli  # noqa: F401

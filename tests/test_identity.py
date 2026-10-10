@@ -147,3 +147,48 @@ def test_cache_key_is_a_digest_and_never_the_secret():
 def test_call_identity_defaults_are_empty():
     ident = CallIdentity(subject="alice")
     assert ident.headers == {} and ident.env == {} and ident.credentials == {}
+
+
+def test_a_roles_claim_of_the_wrong_type_refuses_naming_its_type():
+    from beherouter.identity import check_roles
+
+    req = _user(claims={"sub": "alice", "roles": 7})
+    with pytest.raises(AuthError, match="int, not a list"):
+        check_roles("surface 's'", ("admin",), "roles", req)
+
+
+def test_an_unknown_target_is_a_usage_error_not_partial_material():
+    from beherouter.errors import UsageError
+
+    p = IdentityPolicy(surface="s", mode="bearer", target="nowhere")
+    with pytest.raises(UsageError, match="identity target must be one of"):
+        p.materialise(_user())
+
+
+def test_an_unknown_mode_is_a_usage_error():
+    from beherouter.errors import UsageError
+
+    p = IdentityPolicy(surface="s", mode="telepathy", target="header")
+    with pytest.raises(UsageError, match="unknown identity mode"):
+        p.materialise(_user())
+
+
+def test_exchange_without_its_configuration_is_a_usage_error():
+    from beherouter.errors import UsageError
+
+    p = IdentityPolicy(surface="s", mode="exchange", target="header")
+    with pytest.raises(UsageError, match="no exchange configuration"):
+        p.materialise(_user())
+
+
+def test_a_disabled_policy_reads_no_request(monkeypatch):
+    """resolve and guard never touch the live request on an open surface."""
+    import beherouter.identity as identity
+
+    def boom(*a, **k):
+        raise AssertionError("read the request")
+
+    monkeypatch.setattr(identity, "request_identity", boom)
+    p = IdentityPolicy(surface="office")
+    assert p.resolve() is None
+    p.guard()

@@ -165,3 +165,96 @@ def test_check_roles_names_what_it_gates():
     with pytest.raises(AuthError, match="tool 'w' on surface 's': it requires role"):
         check_roles("tool 'w' on surface 's'", ("a", "b"), "roles", req)
     check_roles("tool 'w' on surface 's'", ("a",), "roles", req)
+
+
+def test_an_identity_table_that_is_not_a_table_is_refused():
+    with pytest.raises(UsageError, match="must be a table"):
+        validate_identity("s", HTTP, ["bearer"])
+
+
+def test_mode_none_is_valid_alone_and_refuses_stray_keys():
+    validate_identity("s", PLAIN, {"mode": "none"})
+    with pytest.raises(UsageError, match="silently ignored"):
+        validate_identity("s", HTTP, {"mode": "none", "header": "x"})
+
+
+def test_a_plugin_declaring_an_unknown_target_is_refused():
+    spec = PluginSpec(
+        name="bad", summary="d", backing="http",
+        identity=IdentitySupport(modes=("bearer",), target="carrier-pigeon"),
+    )
+    with pytest.raises(UsageError, match=r"IdentitySupport\.target"):
+        validate_identity("s", spec, {"mode": "bearer"})
+
+
+def test_a_credential_target_without_accepts_is_refused():
+    spec = PluginSpec(
+        name="bad", summary="d", backing="native",
+        identity=IdentitySupport(modes=("lookup",), target="credential"),
+    )
+    with pytest.raises(UsageError, match="requires 'accepts'"):
+        validate_identity("s", spec, {"mode": "lookup", "path": "/m", "map": {"a": "b"}})
+
+
+@pytest.mark.parametrize("source", ["", 3])
+def test_a_map_source_must_be_a_non_empty_string(source):
+    with pytest.raises(UsageError, match="must name a non-empty source"):
+        validate_identity("s", HTTP, {"mode": "claims", "map": {"x-user": source}})
+
+
+@pytest.mark.parametrize("key", ["", 5])
+def test_lookup_key_must_name_a_claim(key):
+    with pytest.raises(UsageError, match="'key' must name a claim"):
+        validate_identity(
+            "s", NATIVE,
+            {"mode": "lookup", "key": key, "path": "/m",
+             "map": {"refresh_token": "refresh_token"}},
+        )
+
+
+def test_an_authz_table_that_is_not_a_table_is_refused():
+    from beherouter.identity import validate_authz
+
+    with pytest.raises(UsageError, match=r"\[authz\] must be a table"):
+        validate_authz("s", "admins")
+
+
+def test_policy_from_entry_treats_mode_none_as_no_mode():
+    entry = RegistryEntry(name="s", plugin="demo-http", identity={"mode": "none"})
+    policy = policy_from_entry(entry, HTTP)
+    assert policy.mode == "" and policy.enabled is False
+
+
+def test_identity_report_for_each_kind_of_surface(monkeypatch):
+    from beherouter.identity import IdentityPolicy, identity_report
+    from beherouter.tokenexchange import ExchangeConfig
+
+    assert identity_report(IdentityPolicy(surface="s")) == {"mode": "none"}
+    assert identity_report(
+        IdentityPolicy(surface="s", require_roles=("r",), audiences=("a",))
+    ) == {"mode": "none", "require_roles": ["r"], "audience": ["a"], "hide_tools": True}
+    gated = identity_report(
+        IdentityPolicy(surface="s", mode="bearer", target="header", require_roles=("r",))
+    )
+    assert gated == {
+        "mode": "bearer", "probe_scope": "deployment-credential",
+        "require_roles": ["r"], "hide_tools": True,
+    }
+    ex = ExchangeConfig(
+        token_url="https://idp.test/t", client_id="c", client_secret="${UNSET_X}",
+        resource=("https://crm.test/",), scope="read write",
+    )
+    report = identity_report(
+        IdentityPolicy(surface="s", mode="exchange", target="header", exchange=ex)
+    )
+    assert report["exchange"] == {
+        "token_url": "https://idp.test/t", "resource": ["https://crm.test/"],
+        "scope": "read write", "client_auth": "client_secret_basic",
+        "client_secret": "unset",
+    }
+    monkeypatch.delenv("BEHEROUTER_IDENTITY_MAP", raising=False)
+    lookup = identity_report(
+        IdentityPolicy(surface="s", mode="lookup", target="header", map={"k": "v"})
+    )
+    assert lookup["map"]["state"] == "missing"
+    assert "BEHEROUTER_IDENTITY_MAP" in lookup["map"]["error"]

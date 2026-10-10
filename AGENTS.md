@@ -12,7 +12,7 @@
 > on Kubernetes — **`docs/DEPLOYMENT.md`** is the authority.
 >
 > The proof lives in the tree, not in a live host: the test suite (CI: ruff,
-> mypy, coverage ≥ 90 %, pip-audit, hadolint, the version gates), and a
+> mypy, coverage 100 % (line and branch), pip-audit, hadolint, the version gates), and a
 > **local end-to-end stack** (`tests/e2e/`, a CI job) that proves a per-user
 > identity against a REAL `plane-mcp-server` — two callers acting as
 > themselves in Plane by PAT, an IdP JWT reaching Plane as `Bearer` through
@@ -620,7 +620,7 @@ workflow needs a credential; the e2e stack mints throwaway key material
 - **Python via `uv`** (`pyproject.toml` + `uv.lock`, `.python-version` 3.12).
   FastMCP `>=3.4,<4`, Python ≥3.12.
 - **Gates before a change is done:** `uv run ruff check src tests`,
-  `uv run mypy src`, `uv run pytest -q --cov=beherouter` (floor 90 %, in
+  `uv run mypy src`, `uv run pytest -q --cov=beherouter` (floor 100 %, line and branch, in
   `pyproject.toml` — raise it, never lower it). `ruff format` is deliberately
   not enforced.
 - **Podman, never Docker**, for anything this repo runs (`scripts/deploy.sh`,

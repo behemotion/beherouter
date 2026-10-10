@@ -439,3 +439,35 @@ async def test_a_transport_error_never_leaks_the_access_token():
     with pytest.raises(Unavailable) as ei:
         await _provider(handler).list_calendars()
     assert "SUPERSECRET" not in str(ei.value)
+
+
+async def test_update_event_patches_description_location_and_attendees():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "ev1"})
+
+    await _provider(handler).update_event(
+        event_id="ev1", description="agenda", location="room 1", attendees=["a@x.io"]
+    )
+    assert seen["body"] == {
+        "description": "agenda", "location": "room 1", "attendees": [{"email": "a@x.io"}],
+    }
+
+
+async def test_a_string_error_body_is_quoted_in_the_refusal():
+    def handler(request):
+        return httpx.Response(400, json={"error": "badRequest"})
+
+    with pytest.raises(UsageError, match="badRequest"):
+        await _provider(handler).list_calendars()
+
+
+@pytest.mark.parametrize("body", [["boom"], {"detail": "no error key"}])
+async def test_an_unrecognised_error_body_still_maps_by_status(body):
+    def handler(request):
+        return httpx.Response(500, json=body)
+
+    with pytest.raises(Unavailable):
+        await _provider(handler).list_calendars()

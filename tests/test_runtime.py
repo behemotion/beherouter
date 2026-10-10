@@ -384,3 +384,282 @@ async def test_an_app_that_fails_while_serving_is_pending_and_retried(caplog):
     slot.retry.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await slot.retry
+
+
+# --- edges of the table, the supervisor and the runtime -------------------------
+
+
+def _rt(registry=None, **kw):
+    from beherouter.runtime import GatewayRuntime
+
+    kw.setdefault("path", None)
+    return GatewayRuntime(
+        registry or {}, auth=None, retry_initial_s=0.001, retry_max_s=0.001, drain_s=0, **kw
+    )
+
+
+def _backend(name="x", ex=None):
+    return Backend(name=name, kind="mcp", descriptors=[], executor=ex or _Exec())
+
+
+async def _asgi(app, scope_type):
+    sent = []
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(message):
+        sent.append(message)
+
+    await app({"type": scope_type}, receive, send)
+    return sent
+
+
+async def test_the_404_closes_a_websocket_and_ignores_other_scopes():
+    from beherouter.runtime import _not_found
+
+    assert [m["type"] for m in await _asgi(_not_found, "websocket")] == ["websocket.close"]
+    assert await _asgi(_not_found, "lifespan") == []
+
+
+async def test_a_pending_slot_answers_nothing_outside_http():
+    assert await _asgi(SurfaceSlot("x"), "websocket") == []
+
+
+def test_track_before_the_app_serves_registers_no_series():
+    from beherouter import metrics
+
+    Supervisor("never-served", object(), _backend()).track()
+    labels = {"surface": "never-served"}
+    assert metrics.REGISTRY.get_sample_value("beherouter_active_sessions", labels) is None
+
+
+async def test_a_lifespan_that_swallows_the_cancel_never_serves():
+    """start()'s caller gave up; a lifespan that ignores the cancel and enters
+    anyway must not hand out an app, and the backend is still closed."""
+    from starlette.applications import Starlette
+
+    entered = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def stubborn(app):
+        entered.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.sleep(10)
+        yield
+
+    class _Surface:
+        def http_app(self, path, stateless_http=False):
+            return Starlette(lifespan=stubborn)
+
+    ex = _Exec()
+    sup = Supervisor("x", _Surface(), _backend(ex=ex))
+    starting = asyncio.create_task(sup.start())
+    await asyncio.wait_for(entered.wait(), 1)
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    assert sup.task.done() and not sup.task.cancelled()
+    assert sup._app is None
+    assert ex.closed == 1
+
+
+async def test_cancelling_the_supervisor_task_while_it_starts_cancels_start():
+    from starlette.applications import Starlette
+
+    entered = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def blocked(app):
+        entered.set()
+        await asyncio.Event().wait()
+        yield
+
+    class _Slow:
+        def http_app(self, path, stateless_http=False):
+            return Starlette(lifespan=blocked)
+
+    ex = _Exec()
+    sup = Supervisor("x", _Slow(), _backend(ex=ex))
+    starting = asyncio.create_task(sup.start())
+    await asyncio.wait_for(entered.wait(), 1)
+    sup.task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(starting, 1)
+    assert ex.closed == 1
+
+
+async def test_an_uninstalled_app_failing_while_serving_is_only_logged(caplog):
+    import anyio
+    from starlette.applications import Starlette
+
+    boom = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def crashing(app):
+        async with anyio.create_task_group() as tg:
+
+            async def crash():
+                await boom.wait()
+                raise RuntimeError("session manager died")
+
+            tg.start_soon(crash)
+            yield
+
+    class _Surface:
+        def http_app(self, path, stateless_http=False):
+            return Starlette(lifespan=crashing)
+
+    ex = _Exec()
+    sup = Supervisor("x", _Surface(), _backend(ex=ex))
+    await sup.start()
+    with caplog.at_level(logging.ERROR, logger="beherouter.gateway"):
+        boom.set()
+        await asyncio.wait_for(sup.task, 1)
+    assert any("failed while serving" in r.getMessage() for r in caplog.records)
+    assert ex.closed == 1
+
+
+async def test_boot_with_a_file_and_no_stamp_takes_its_own_baseline(tmp_path):
+    path = tmp_path / "registry.toml"
+    path.write_text("")
+    rt = _rt(path=path)
+    await rt.boot()
+    assert rt._watch_baseline is not None and len(rt._watch_baseline) == 1
+
+
+async def test_the_watch_outlives_a_reload_that_raises(tmp_path, caplog):
+    path = tmp_path / "registry.toml"
+    path.write_text("")
+    rt = _rt(path=path)
+    raised = asyncio.Event()
+
+    async def boom(trigger):
+        raised.set()
+        raise RuntimeError("reload bug")
+
+    rt.reloader.request = boom
+    with caplog.at_level(logging.ERROR, logger="beherouter.gateway"):
+        task = asyncio.create_task(rt._watch(0.001, ("stale",)))
+        await asyncio.wait_for(raised.wait(), 1)
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert any("the reload raised" in r.getMessage() for r in caplog.records)
+
+
+async def test_triggers_without_sighup_and_without_boot_still_watch(
+    tmp_path, monkeypatch, caplog
+):
+    """Off the main thread there is no SIGHUP; the watch still starts, from a
+    baseline taken now when boot() never ran."""
+    path = tmp_path / "registry.toml"
+    path.write_text("")
+    monkeypatch.setenv("BEHEROUTER_REGISTRY_WATCH_S", "60")
+    loop = asyncio.get_running_loop()
+
+    def no_signals(*a):
+        raise RuntimeError("not the main thread")
+
+    monkeypatch.setattr(loop, "add_signal_handler", no_signals)
+    rt = _rt(path=path)
+    with caplog.at_level(logging.INFO, logger="beherouter.gateway"):
+        rt._install_triggers()
+    assert not rt._sighup
+    assert any("SIGHUP reload unavailable" in r.getMessage() for r in caplog.records)
+    assert rt._watch_task is not None
+    await rt.shutdown()
+    assert rt._watch_task is None
+
+
+async def test_a_failure_of_a_supervisor_that_no_longer_holds_its_slot_is_ignored():
+    rt = _rt({"x": RegistryEntry(name="x", plugin="t-ok")})
+    removed = SurfaceSlot("x")  # not in the table
+    rt._serving_failed(removed, Supervisor("x", object(), _backend()))
+    assert rt.failed == {} and removed.retry is None
+
+
+async def test_a_serving_failure_of_a_removed_entry_is_not_retried():
+    rt = _rt()  # the entry is no longer in the registry in force
+    slot = SurfaceSlot("x")
+    rt.table.put(slot)
+    sup = Supervisor("x", object(), _backend())
+    slot.app, slot.supervisor = object(), sup
+    rt._serving_failed(slot, sup)
+    assert slot.app is None and "x" in rt.failed
+    assert slot.retry is None
+
+
+def test_retiring_a_supervisor_that_never_started_tracks_nothing():
+    rt = _rt()
+    sup = Supervisor("x", object(), _backend())
+    rt._retire(sup)
+    assert sup._stop.is_set() and rt._retiring == set()
+
+
+def test_removing_an_unknown_surface_is_a_no_op():
+    rt = _rt()
+    rt._remove("nope")
+    assert rt.table.names() == []
+
+
+async def test_a_retry_whose_app_fails_to_start_tries_again(monkeypatch):
+    from beherouter import runtime as runtime_mod
+
+    entry = RegistryEntry(name="x", plugin="t-ok")
+    rt = _rt({"x": entry})
+    slot = SurfaceSlot("x")
+    rt.table.put(slot)
+    rt.failed["x"] = "Unavailable: down"
+
+    async def attach(name, entry, auth, pinned_missing, attached, limiters):
+        attached[name] = _backend()
+        return object()
+
+    installs = []
+
+    async def install(slot, surface, backend, *, stateless=False):
+        installs.append(surface)
+        if len(installs) == 1:
+            raise RuntimeError("lifespan failed")
+        slot.app = object()
+
+    monkeypatch.setattr(runtime_mod, "_attach_one", attach)
+    rt._install = install
+    # Run outside slot.retry: _retry_done leaves a handle that is not its own.
+    other = asyncio.create_task(asyncio.sleep(0))
+    slot.retry = other
+    await asyncio.wait_for(rt._retry(slot, entry), 1)
+    assert len(installs) == 2
+    assert slot.retry is other
+    assert "x" not in rt.failed
+    await other
+
+
+async def test_a_reload_cancelled_inside_an_attach_closes_what_it_built(
+    tmp_path, monkeypatch
+):
+    from beherouter import runtime as runtime_mod
+
+    entries = {
+        "a": RegistryEntry(name="a", plugin="t-ok"),
+        "b": RegistryEntry(name="b", plugin="t-ok"),
+    }
+    monkeypatch.setattr(runtime_mod, "load_registry", lambda path: entries)
+    monkeypatch.setattr(runtime_mod, "check_registry", lambda new: None)
+    built_ex = _Exec()
+
+    async def attach(name, entry, auth, pinned_missing, built, limiters):
+        if name == "a":
+            raise asyncio.CancelledError
+        built[name] = _backend(name, built_ex)
+        return object()
+
+    monkeypatch.setattr(runtime_mod, "_attach_one", attach)
+    rt = _rt(path=tmp_path / "registry.toml")
+    with pytest.raises(asyncio.CancelledError):
+        await rt.reload("test")
+    assert built_ex.closed == 1
+    assert rt.registry == {}

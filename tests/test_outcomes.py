@@ -2,7 +2,7 @@
 
 import pytest
 
-from beherouter.errors import AuthError, NotFound, Unavailable, UsageError, tag
+from beherouter.errors import AuthError, Conflict, NotFound, Unavailable, UsageError, tag
 from beherouter.outcomes import (
     EXECUTE,
     GATE,
@@ -22,10 +22,12 @@ from beherouter.outcomes import (
         (Unavailable("map unreadable"), GATE, "unavailable", "identity_unavailable"),
         (NotFound("unknown tool"), PREPARE, "not_found", "unknown_tool"),
         (UsageError("unknown arg"), PREPARE, "tool_error", "bad_arguments"),
+        (Unavailable("catalogue down"), PREPARE, "unavailable", "backend_unavailable"),
         (UsageError("backend rejected"), EXECUTE, "tool_error", "backend_rejected"),
         (AuthError("backend 401"), EXECUTE, "tool_error", "backend_rejected"),
         (Unavailable("backend down"), EXECUTE, "unavailable", "backend_unavailable"),
         (RuntimeError("our bug"), EXECUTE, "internal", "internal"),
+        (Conflict("409 from the backend"), EXECUTE, "internal", "internal"),
         (KeyError("x"), GATE, "internal", "internal"),
     ],
 )

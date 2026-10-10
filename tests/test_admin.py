@@ -581,3 +581,25 @@ async def test_no_blocked_sub_and_no_file_secret_is_ever_echoed(
         assert "offboarded" not in text and "REASON-9f1c" not in text, rec.name
     for body in (healthz, metrics_body):
         assert BLOCKED not in body and FILE_SECRET not in body
+
+
+async def test_a_change_the_state_file_refuses_is_400_and_audited(
+    tmp_path, monkeypatch, caplog
+):
+    """No route builds an invalid change today; if one ever does, the API answers
+    400 rather than writing it or failing as a 500."""
+    from beherouter.killswitch import KillSwitch
+
+    async def refuse(self, change, *, actor):
+        raise UsageError("that change would leave an invalid kill-switch file (x)")
+
+    monkeypatch.setattr(KillSwitch, "update", refuse)
+    reg = tmp_path / "r.toml"
+    write(reg, "")
+    async with running(reg) as (_rt, c):
+        with caplog.at_level(logging.INFO, logger="beherouter.audit"):
+            r = await c.put("/admin/killswitch/surfaces/dwh", headers=ADMIN, json={})
+    assert r.status_code == 400 and "invalid kill-switch file" in r.json()["detail"]
+    assert [(ln["action"], ln["outcome"]) for ln in _audit(caplog)] == [
+        ("disable_surface", "bad_request")
+    ]

@@ -225,3 +225,19 @@ async def test_a_json_array_body_is_unavailable():
 
     with pytest.raises(Unavailable):
         await _auth(handler).access_token()
+
+
+async def test_a_rejection_without_a_json_body_is_still_an_auth_error():
+    def handler(request):
+        return httpx.Response(401, text="<html>nope</html>")
+
+    with pytest.raises(AuthError, match="unknown_error"):
+        await _auth(handler).access_token()
+
+
+async def test_a_non_json_success_is_unavailable():
+    def handler(request):
+        return httpx.Response(200, text="<html>ok</html>")
+
+    with pytest.raises(Unavailable, match="did not return JSON"):
+        await _auth(handler).access_token()

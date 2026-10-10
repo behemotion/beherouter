@@ -111,7 +111,7 @@ def _is_closed(schema: dict) -> bool:
 def _enum(schema: dict, wire: str) -> list:
     props = (schema.get("properties") or {}) if is_json_schema(schema) else schema
     spec = props.get(wire)
-    if not isinstance(spec, dict):
+    if not isinstance(spec, dict):  # pragma: no cover - callers pass only dict-valued args
         return []
     for variant in (spec, *(spec.get("anyOf") or []), *(spec.get("oneOf") or [])):
         if isinstance(variant, dict) and variant.get("enum"):

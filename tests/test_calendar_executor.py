@@ -359,3 +359,49 @@ async def test_aclose_also_closes_retired_providers():
         await slow
     # the in-flight call's release must not close it a second time
     assert built["a"].closed == 1
+
+
+async def test_a_per_user_only_surface_refuses_a_call_without_identity():
+    ex = CalendarExecutor(None, provider_factory=lambda creds: FakeProvider())
+    with pytest.raises(UsageError, match="requires a per-user identity"):
+        await ex.run("list_calendars", {})
+
+
+async def test_an_identity_without_a_factory_is_refused():
+    with pytest.raises(UsageError, match="no provider factory"):
+        await CalendarExecutor(FakeProvider()).run("list_calendars", {}, identity=_who("a"))
+
+
+async def test_concurrent_calls_share_one_provider_until_both_finish():
+    import asyncio
+
+    gate = asyncio.Event()
+    provider = _ClosingProvider("d", gate=gate)
+    provider.started = asyncio.Event()
+    ex = CalendarExecutor(provider)
+    first = asyncio.create_task(ex.run("list_calendars", {}))
+    second = asyncio.create_task(ex.run("list_calendars", {}))
+    await provider.started.wait()
+    await asyncio.sleep(0)
+    gate.set()
+    assert [r["token"] for r in await asyncio.gather(first, second)] == ["d", "d"]
+    assert ex._inflight == {}
+
+
+async def test_aclose_skips_a_provider_without_aclose():
+    ex = CalendarExecutor(FakeProvider())
+    await ex.aclose()
+
+
+async def test_an_untyped_schema_property_is_not_type_checked(monkeypatch):
+    from beherouter.plugins.calendar import executor
+
+    monkeypatch.setitem(executor.SCHEMAS, "list_calendars",
+                        {"properties": {"anything": {}}, "required": []})
+
+    class Provider:
+        async def list_calendars(self, anything):
+            return {"got": anything}
+
+    assert (await CalendarExecutor(Provider()).run(
+        "list_calendars", {"anything": 3}))["got"] == 3

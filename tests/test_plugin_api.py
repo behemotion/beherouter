@@ -154,3 +154,9 @@ def test_the_decorator_path_attaches_as_an_external_plugin(tmp_path):
         "inproc ['lookup_order']",
         "{'result': {'order_id': 'o-1'}}",
     ]
+
+
+def test_dir_lists_exactly_the_documented_names():
+    import beherouter.plugin_api as api
+
+    assert set(dir(api)) == EXPORTS

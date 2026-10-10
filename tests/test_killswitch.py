@@ -207,3 +207,32 @@ async def test_a_change_leaving_an_invalid_file_is_a_usage_error(tmp_path):
     with pytest.raises(UsageError, match="invalid"):
         await ks.update(bad, actor="a")
     assert not (tmp_path / "ks.json").exists()
+
+
+def test_an_unstattable_file_keeps_last_good_and_logs_once(tmp_path, monkeypatch, caplog):
+    p = tmp_path / "ks.json"
+    p.write_text('{"surfaces": {"dwh": {}}}')
+    ks = KillSwitch(p)
+    ks.state()
+
+    def denied():
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(ks, "_stamp_now", denied)
+    with caplog.at_level(logging.ERROR, logger="beherouter.killswitch"):
+        for _ in range(3):
+            assert ks.state().disabled("dwh") == "surface" and ks.stale
+    assert len([r for r in caplog.records if "malformed" in r.getMessage()]) == 1
+
+
+async def test_a_failed_write_leaves_no_temp_file_behind(tmp_path, monkeypatch):
+    import beherouter.killswitch as killswitch
+
+    def fail(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(killswitch.os, "replace", fail)
+    ks = KillSwitch(tmp_path / "ks.json")
+    with pytest.raises(Conflict, match="cannot be written"):
+        await ks.update(lambda raw: raw.update(all={}), actor="x")
+    assert list(tmp_path.iterdir()) == []

@@ -789,3 +789,50 @@ async def test_health_probe_as_user_exercises_the_exchange(idp, monkeypatch, ref
     assert idp.form()["subject_token"] == [token]
     assert seen[-1].headers["authorization"] == "Bearer exchanged-1"
     assert rec["identity"]["exchange"]["client_secret"] == "set"
+
+
+# --- edges ------------------------------------------------------------------
+
+
+async def test_a_non_json_refusal_names_no_code(idp, monkeypatch):
+    def text(request):
+        return httpx.Response(400, text="<html>bad request</html>")
+
+    monkeypatch.setattr(tokenexchange, "TRANSPORT", httpx.MockTransport(text))
+    with pytest.raises(UsageError, match="unrecognised"):
+        await settle(_policy().materialise(_user()))
+
+
+async def test_a_resource_only_exchange_sends_no_audience(idp):
+    await settle(_policy(audience=None, resource="https://crm.test/").materialise(_user()))
+    form = idp.form()
+    assert "audience" not in form and form["resource"] == ["https://crm.test/"]
+
+
+@pytest.mark.parametrize("status", [204, 302])
+async def test_a_non_200_success_is_unavailable(idp, status):
+    idp.status, idp.body = status, {"access_token": "x"}
+    with pytest.raises(Unavailable, match=str(status)):
+        await settle(_policy().materialise(_user()))
+
+
+async def test_stats_counts_cached_tokens(idp):
+    p = _policy()
+    await settle(p.materialise(_user()))
+    assert tokenexchange.exchanger_for("crm", p.exchange).stats() == {
+        "cached": 1, "in_flight": 0,
+    }
+
+
+async def test_a_superseded_or_cancelled_exchange_settles_quietly():
+    """_settled leaves a newer in-flight exchange alone and tolerates a cancel."""
+    ex = tokenexchange.TokenExchanger("crm", _policy().exchange)
+    newer = asyncio.ensure_future(asyncio.sleep(0))
+    ex._inflight["k"] = newer
+    old = asyncio.ensure_future(asyncio.sleep(10))
+    old.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await old
+    ex._settled("k", old)
+    assert ex._inflight == {"k": newer}
+    await newer

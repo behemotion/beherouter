@@ -309,3 +309,22 @@ async def test_identity_env_is_merged_on_top_of_the_gateways_own(
         identity=CallIdentity(subject="alice", env={"REMOTE_USER": "alice"}),
     )
     assert out == {"user": "alice"}
+
+
+def test_load_cli_backend_nonzero_describe_raises_unavailable(tmp_path):
+    import sys
+
+    script = tmp_path / "broken.py"
+    script.write_text("import sys\nsys.stderr.write('boom')\nsys.exit(7)\n")
+    with pytest.raises(Unavailable, match="exited 7: boom"):
+        load_cli_backend(CliBacking(name="broken", cmd=f"{sys.executable} {script}"))
+
+
+async def test_cli_executor_empty_stdout_is_an_empty_object(tmp_path):
+    """A verb that succeeds silently answers `{}`, not a JSON parse failure."""
+    import sys
+
+    script = tmp_path / "quiet.py"
+    script.write_text("")
+    ex = CLIExecutor("quiet", f"{sys.executable} {script}", {"noop": {}})
+    assert await ex.run("noop", {}) == {}

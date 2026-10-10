@@ -39,6 +39,20 @@ def test_sessions_are_omitted_when_the_app_has_no_session_table():
     assert metrics.REGISTRY.get_sample_value("beherouter_active_sessions", labels) is None
 
 
+def test_session_holder_skips_routes_without_a_session_table():
+    from types import SimpleNamespace
+
+    holder = SimpleNamespace(session_manager=None)
+    app = SimpleNamespace(
+        routes=[
+            SimpleNamespace(endpoint=None),
+            SimpleNamespace(endpoint=SimpleNamespace(app=holder)),
+        ]
+    )
+    assert metrics._session_holder(app) is holder
+    assert metrics._session_holder(SimpleNamespace(routes=[SimpleNamespace()])) is None
+
+
 async def test_sessions_are_counted_on_a_real_http_app():
     """Held against the pinned FastMCP: if it stops exposing the session
     table, this fails and the series must be dropped, never faked."""

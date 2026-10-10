@@ -116,3 +116,7 @@ def test_non_utf8_file_is_refused_without_quoting_its_bytes(tmp_path):
     import traceback
 
     assert "0xff" not in "".join(traceback.format_exception(e.value))
+
+
+def test_non_string_values_pass_through_untouched():
+    assert expand("s", {"n": 3, "b": True}) == {"n": 3, "b": True}

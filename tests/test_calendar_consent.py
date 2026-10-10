@@ -542,3 +542,236 @@ def test_the_verb_is_described_unpinned_and_mutating():
     verbs = {v["name"]: v for v in json.loads(r.stdout)["verbs"]}
     assert verbs["calendar-consent"]["pinned"] is False
     assert verbs["calendar-consent"]["mutating"] is True
+
+
+# --- the code exchange's failure shapes ---------------------------------------
+
+
+def _http(handler):
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def _exchange(handler):
+    return await consent.exchange_code(
+        GOOGLE, code="auth-code", verifier="v", redirect_uri="http://localhost:8765",
+        client_id="cid", client_secret="client-SECRET", http=_http(handler),
+    )
+
+
+def _unreachable(request):
+    raise httpx.ConnectError("refused", request=request)
+
+
+@pytest.mark.parametrize(
+    ("response", "error", "match"),
+    [
+        (_unreachable, Unavailable, "token endpoint unreachable: ConnectError"),
+        (lambda r: httpx.Response(400, text="<html>"), AuthError, r"\(400\): unknown_error"),
+        (lambda r: httpx.Response(401, json=["x"]), AuthError, r"\(401\): unknown_error"),
+        (lambda r: httpx.Response(502), Unavailable, "returned 502"),
+        (lambda r: httpx.Response(200, text="<html>"), Unavailable, "did not return JSON"),
+    ],
+)
+async def test_an_exchange_failure_never_echoes_the_form(response, error, match):
+    with pytest.raises(error, match=match) as e:
+        await _exchange(response)
+    assert "auth-code" not in str(e.value) and "client-SECRET" not in str(e.value)
+
+
+# --- the identity map writer's edges ------------------------------------------
+
+
+def test_a_missing_map_directory_is_refused(tmp_path):
+    with pytest.raises(UsageError, match="does not exist"):
+        upsert_subject(tmp_path / "absent" / "m.toml", "a", {"x": "1"})
+
+
+def test_a_subject_entry_that_is_not_a_table_is_refused(tmp_path):
+    path = tmp_path / "m.toml"
+    path.write_text('a = "flat"\n')
+    with pytest.raises(UsageError, match="not a table"):
+        upsert_subject(path, "a", {"x": "1"})
+
+
+def test_root_carries_the_maps_ownership_over(tmp_path, monkeypatch):
+    """Root rewriting the gateway's map must not leave it unreadable to the gateway."""
+    path = tmp_path / "m.toml"
+    upsert_subject(path, "a", {"x": "1"})
+    st = path.stat()
+    chowned = []
+    monkeypatch.setattr(consent.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(consent.os, "fchown", lambda fd, uid, gid: chowned.append((uid, gid)))
+    upsert_subject(path, "b", {"x": "2"})
+    assert chowned == [(st.st_uid, st.st_gid)]
+
+
+def test_a_failed_write_leaves_the_map_and_no_temporary_file(tmp_path, monkeypatch):
+    path = tmp_path / "m.toml"
+    upsert_subject(path, "a", {"x": "1"})
+    before = path.read_text()
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(consent.os, "replace", boom)
+    with pytest.raises(OSError, match="disk full"):
+        upsert_subject(path, "b", {"x": "2"})
+    assert path.read_text() == before
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_an_unreadable_map_is_a_usage_error(tmp_path):
+    path = tmp_path / "m.toml"
+    path.write_text("not = = toml")
+    with pytest.raises(UsageError, match="unreadable"):
+        consent.read_subject(path, "a")
+
+
+def test_removing_absent_names_does_not_rewrite_the_map(tmp_path):
+    path = tmp_path / "m.toml"
+    upsert_subject(path, "a", {"x": "1"})
+    mtime = path.stat().st_mtime_ns
+    assert remove_names(path, "a", ["y"]) == []
+    assert path.stat().st_mtime_ns == mtime
+
+
+# --- client credentials -------------------------------------------------------
+
+
+def test_an_empty_client_secret_file_is_refused(tmp_path):
+    secret = tmp_path / "secret"
+    secret.write_text("  \n")
+    with pytest.raises(UsageError, match="is empty"):
+        consent.client_credentials(_entry("gcal", tmp_path), GOOGLE, "", str(secret))
+
+
+def test_a_client_secret_file_is_read_and_stripped(tmp_path):
+    secret = tmp_path / "secret"
+    secret.write_text("from-file\n")
+    assert consent.client_credentials(_entry("gcal", tmp_path), GOOGLE, "", str(secret)) == (
+        "cid-123", "from-file",
+    )
+
+
+def test_an_entry_without_the_client_id_names_the_flag(tmp_path):
+    entry = _entry("gcal", tmp_path)
+    entry.env.pop("client_id")
+    with pytest.raises(UsageError, match="has no 'client_id' in its env; pass --client-id"):
+        consent.client_credentials(entry, GOOGLE)
+
+
+# --- the operator-facing prompt -----------------------------------------------
+
+
+def test_the_prompt_goes_to_stderr_and_opens_a_browser_unless_told_not_to(monkeypatch, capsys):
+    import webbrowser
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    consent._opener(True, consent._stderr)("https://consent.example/a")
+    assert opened == []
+    consent._opener(False, consent._stderr)("https://consent.example/b")
+    assert opened == ["https://consent.example/b"]
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "https://consent.example/a" in out.err and "sign in as the subject" in out.err
+
+
+def _owned_http(monkeypatch, handler):
+    """grant/revoke build their own client when given none; keep it offline."""
+    real = httpx.AsyncClient
+    made = []
+
+    def factory(**kw):
+        c = real(transport=httpx.MockTransport(handler), **kw)
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(consent.httpx, "AsyncClient", factory)
+    return made
+
+
+async def test_a_grant_closes_the_client_it_made_and_tolerates_a_receiver_without_close(
+    tmp_path, monkeypatch
+):
+    made = _owned_http(
+        monkeypatch, lambda r: httpx.Response(200, json={"refresh_token": REFRESH})
+    )
+
+    class NoClose(FakeReceiver):
+        close = None
+
+    receiver = NoClose()
+    out = await consent.grant(
+        _entry("gcal", tmp_path), subject="alice@example.test",
+        receiver=receiver, open_url=receiver.browse,
+    )
+    assert out["granted"] is True
+    assert len(made) == 1 and made[0].is_closed
+
+
+# --- revoke's edges -----------------------------------------------------------
+
+
+async def test_revoke_refuses_an_empty_subject(tmp_path):
+    with pytest.raises(UsageError, match="--subject"):
+        await consent.revoke(_entry("gcal", tmp_path), subject="")
+
+
+@pytest.mark.parametrize(
+    ("handler", "upstream"),
+    [
+        (_unreachable, "unreachable: ConnectError"),
+        (lambda r: httpx.Response(400, json={"error": "invalid_token"}), "already_invalid"),
+    ],
+)
+async def test_revoke_reports_the_upstream_outcome(tmp_path, monkeypatch, handler, upstream):
+    made = _owned_http(monkeypatch, handler)
+    path = tmp_path / "identity-map.toml"
+    upsert_subject(path, "alice@example.test", {"gcal_refresh_token": "rt-a"})
+    out = await consent.revoke(_entry("gcal", tmp_path), subject="alice@example.test")
+    assert out["upstream"] == upstream
+    assert "rt-a" not in repr(out)
+    assert made[0].is_closed
+    assert tomllib.loads(path.read_text()) == {}
+
+
+# --- the verb, minus argument parsing ------------------------------------------
+
+
+def test_run_refuses_an_unknown_surface():
+    with pytest.raises(NotFound, match="no attached tool 'gcal'"):
+        consent.run({}, "gcal", subject="a@example.test")
+
+
+def test_run_refuses_client_credentials_with_revoke(tmp_path):
+    with pytest.raises(UsageError, match="--revoke takes no client credentials"):
+        consent.run({"gcal": _entry("gcal", tmp_path)}, "gcal", subject="a",
+                    client_id="x", revoke_grant=True)
+
+
+def test_run_refuses_a_non_positive_timeout(tmp_path):
+    with pytest.raises(UsageError, match="--timeout"):
+        consent.run({"gcal": _entry("gcal", tmp_path)}, "gcal", subject="a", timeout=0)
+
+
+def test_run_revokes(tmp_path):
+    upsert_subject(tmp_path / "identity-map.toml", "a@example.test", {"m365_refresh_token": "m"})
+    out = consent.run({"m365": _entry("m365", tmp_path)}, "m365",
+                      subject="a@example.test", revoke_grant=True)
+    assert out["removed"] == ["m365_refresh_token"]
+
+
+def test_run_grants_with_the_operators_options(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_grant(entry, **kw):
+        seen.update(kw, surface=entry.name)
+        return {"granted": True}
+
+    monkeypatch.setattr(consent, "grant", fake_grant)
+    out = consent.run({"gcal": _entry("gcal", tmp_path)}, "gcal", subject="a@example.test",
+                      port=9999, no_browser=True, timeout=5)
+    assert out == {"granted": True}
+    assert seen["surface"] == "gcal" and seen["port"] == 9999
+    assert seen["no_browser"] is True and seen["timeout"] == 5

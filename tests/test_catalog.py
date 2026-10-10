@@ -18,6 +18,8 @@ import pytest
 from beherouter.catalog import (
     PLUGIN_KEY,
     PUBLISHER_KEY,
+    SCHEMA_VERSION,
+    _toml,
     export_plugin,
     import_server,
     load_source,
@@ -405,3 +407,167 @@ def test_a_file_that_is_not_utf8_is_refused_as_not_json(tmp_path):
     (tmp_path / "x.json").write_bytes(b"\xff\xfe\x00{")
     with pytest.raises(UsageError, match="not JSON"):
         load_source(str(tmp_path / "x.json"))
+
+
+# --- edges of the source reader --------------------------------------------
+
+
+def test_an_http_error_other_than_404_is_unavailable():
+    with pytest.raises(Unavailable, match="HTTP 502"):
+        load_source("https://example.test/s.json",
+                    transport=_mock(lambda r: httpx.Response(502)))
+
+
+def test_a_url_that_answers_non_json_is_refused():
+    with pytest.raises(UsageError, match="did not return JSON"):
+        load_source("https://example.test/s.json",
+                    transport=_mock(lambda r: httpx.Response(200, text="<html>")))
+
+
+# --- edges of import -------------------------------------------------------
+
+
+def _server(**fields) -> dict:
+    return {"$schema": f"https://x/{SCHEMA_VERSION}/server.schema.json",
+            "name": "io.example/x", "version": "1.0.0", **fields}
+
+
+def _npm(**fields) -> dict:
+    return {"registryType": "npm", "identifier": "@ex/x", "version": "1.0.0",
+            "transport": {"type": "stdio"}, **fields}
+
+
+def _meta(block) -> dict:
+    return {"_meta": {PUBLISHER_KEY: {PLUGIN_KEY: block}}}
+
+
+def test_toml_renders_booleans_and_refuses_what_it_cannot_render():
+    assert _toml([True, False]) == "[true, false]"
+    with pytest.raises(UsageError, match="cannot render NoneType"):
+        _toml(None)
+
+
+def test_a_meta_block_that_is_not_an_object_is_ignored_with_a_warning():
+    result = import_server(_server(packages=[_npm()], **_meta(["x"])), "x")
+    assert any("is not an object" in w for w in result["warnings"])
+    assert "TODO: choose the pinned tools" in result["registry"]
+
+
+def test_meta_probe_args_without_a_probe_is_dropped():
+    block = {"v": 1, "pinned": ["a"], "probe_args": {"q": 1}}
+    result = import_server(_server(packages=[_npm()], **_meta(block)), "x")
+    assert any("`probe_args` without `probe`" in w for w in result["warnings"])
+    assert "probe_args" not in _entry_toml(result)["x"]
+
+
+def test_a_meta_probe_without_args_emits_no_probe_args():
+    block = {"v": 1, "pinned": ["a"], "probe": "a"}
+    body = _entry_toml(import_server(_server(packages=[_npm()], **_meta(block)), "x"))["x"]
+    assert body["probe"] == "a" and "probe_args" not in body
+
+
+def test_meta_identity_wholly_unhonoured_emits_no_identity_block():
+    block = {"v": 1, "identity": {"modes": ["bearer"]}}
+    result = import_server(_server(packages=[_npm()], **_meta(block)), "x")
+    assert any("can never be per-user" in w for w in result["warnings"])
+    assert "identity]" not in result["registry"]
+
+
+def test_each_package_not_chosen_says_why():
+    remote = {"type": "streamable-http", "url": "https://x.test/mcp"}
+    w = import_server(_server(remotes=[remote], packages=[_npm()]), "x")["warnings"]
+    assert any("the streamable-http remote was preferred" in x for x in w)
+    second = _npm(identifier="@ex/y")
+    w = import_server(_server(packages=[_npm(), second]), "x")["warnings"]
+    assert any("@ex/y not imported: only one source becomes the entry" in x for x in w)
+
+
+def test_url_variables_fill_from_defaults_and_warn_without_one():
+    remote = {"type": "streamable-http", "url": "https://{host}/{tenant}/mcp",
+              "variables": {"host": {"default": "x.test"}, "tenant": {}}}
+    result = import_server(_server(remotes=[remote]), "x")
+    assert _entry_toml(result)["x"]["config"]["url"] == "https://x.test/{tenant}/mcp"
+    assert any("'{tenant}' has no default" in w for w in result["warnings"])
+
+
+def test_a_secret_header_with_text_after_its_placeholder_warns():
+    header = {"name": "X-Key", "isSecret": True, "value": "Key {k} suffix"}
+    remote = {"type": "streamable-http", "url": "https://x.test/mcp", "headers": [header]}
+    result = import_server(_server(remotes=[remote]), "x")
+    assert _entry_toml(result)["x"]["config"]["auth_prefix"] == "Key "
+    assert any("text after its placeholder" in w for w in result["warnings"])
+
+
+def test_a_secret_header_with_a_fixed_value_warns_to_check_the_prefix():
+    header = {"name": "X-Key", "isSecret": True, "value": "fixed"}
+    remote = {"type": "streamable-http", "url": "https://x.test/mcp", "headers": [header]}
+    result = import_server(_server(remotes=[remote]), "x")
+    assert _entry_toml(result)["x"]["config"]["auth_prefix"] == ""
+    assert any("fixed value and no placeholder" in w for w in result["warnings"])
+
+
+def test_package_argument_shapes():
+    args = [
+        {"type": "named", "name": "--port", "value": "{port}",
+         "variables": {"port": {"default": 8080}}},
+        {"type": "named", "name": "--verbose"},
+        {"type": "positional", "valueHint": "dir"},
+    ]
+    result = import_server(_server(packages=[_npm(packageArguments=args)]), "x")
+    cmd = _entry_toml(result)["x"]["config"]["cmd"]
+    assert cmd.endswith("@ex/x@1.0.0 --port 8080 --verbose")
+    assert any("argument 'dir' has no value or default" in w for w in result["warnings"])
+
+
+def test_package_runtime_hint_index_and_valueless_env_are_named():
+    pkg = _npm(runtimeHint="bunx", registryBaseUrl="https://npm.corp.test",
+               environmentVariables=[{"name": "REGION", "isRequired": True}])
+    w = import_server(_server(packages=[pkg]), "x")["warnings"]
+    assert any("runtimeHint is 'bunx'" in x for x in w)
+    assert any("comes from https://npm.corp.test" in x for x in w)
+    assert any("'REGION' is required and has no value" in x for x in w)
+
+
+def test_an_optional_stdio_secret_keeps_api_key_env_commented_with_it():
+    pkg = _npm(environmentVariables=[{"name": "TOKEN", "isSecret": True}])
+    result = import_server(_server(packages=[pkg]), "x")
+    assert "  # api_key_env = \"TOKEN\"    # uncomment with api_key" in result["registry"]
+    assert "  # api_key = " in result["registry"]
+    body = _entry_toml(result)["x"]
+    assert "api_key_env" not in body["config"] and not body.get("env")
+
+
+# --- edges of export -------------------------------------------------------
+
+
+def test_export_refuses_a_name_that_is_not_namespace_slash_name():
+    with pytest.raises(UsageError, match="--name must be"):
+        export_plugin("office-mcp", name="no-slash")
+
+
+def test_export_version_falls_back_when_beherouter_is_not_installed(monkeypatch):
+    import importlib.metadata as md
+
+    def missing(_name):
+        raise md.PackageNotFoundError(_name)
+
+    monkeypatch.setattr(md, "version", missing)
+    exported = export_plugin("office-mcp")
+    assert exported["server"]["version"] == "0.0.0"
+
+
+def test_export_of_a_spec_without_probe_or_aliases_omits_them(monkeypatch):
+    import dataclasses
+    from types import SimpleNamespace
+
+    import beherouter.plugins as plugins
+
+    bare = dataclasses.replace(PLUGINS["office-mcp"].spec, probe=None, probe_args=None,
+                               search_aliases={})
+    with_probe = dataclasses.replace(bare, probe="discover")
+    for spec in (bare, with_probe):
+        monkeypatch.setattr(plugins, "get", lambda _n, spec=spec: SimpleNamespace(spec=spec))
+        block = export_plugin("office-mcp", version="1.0.0")["server"]["_meta"][
+            PUBLISHER_KEY][PLUGIN_KEY]
+        assert "probe_args" not in block and "search_aliases" not in block
+        assert block.get("probe") == spec.probe

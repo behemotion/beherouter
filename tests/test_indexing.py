@@ -89,3 +89,11 @@ def test_search_hits_shape():
     assert hits[0] == {"name": "t_search", "brief": "Search things.",
                        "mutating": False, "pinned": True}
     assert hits[1] == {"name": "t_mystery", "brief": "Mystery search."}
+
+
+def test_arg_tokens_skip_a_non_object_property_and_a_scalar_cli_arg():
+    """A malformed property still contributes its name, nothing else."""
+    ok = {"anyOf": [{"enum": ["a"]}, "x"]}
+    schema = {"type": "object", "properties": {"odd": True, "ok": ok}}
+    assert _arg_tokens(schema) == ["odd", "ok", "a"]
+    assert _arg_tokens({"--flag": "string"}) == ["flag"]

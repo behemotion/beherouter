@@ -228,3 +228,65 @@ async def test_an_integer_path_param_given_as_a_string_reaches_the_right_url(tmp
     b = await load_backend(_entry(tmp_path, monkeypatch))
     await b.executor.run("get_customer", {"id": "7"})
     assert str(seen[-1].url) == "https://crm.internal/customers/7"
+
+
+def test_an_unparseable_document_is_refused_by_name(tmp_path):
+    from beherouter.plugins.openapi import load_document
+
+    bad = tmp_path / "crm.json"
+    bad.write_text("{not json")
+    with pytest.raises(UsageError, match=r"cannot parse '.*crm\.json'"):
+        load_document(str(bad))
+
+
+def test_a_document_without_paths_is_refused(tmp_path):
+    from beherouter.plugins.openapi import load_document
+
+    doc = tmp_path / "crm.yaml"
+    doc.write_text("openapi: 3.0.3\n")
+    with pytest.raises(UsageError, match="is not an OpenAPI document"):
+        load_document(str(doc))
+
+
+def test_include_must_be_a_list_of_strings():
+    with pytest.raises(UsageError, match="include must be a non-empty list"):
+        get("openapi").validate({"spec": "x.json", "include": "get_customer"})
+
+
+def test_star_publishes_every_named_operation():
+    from beherouter.plugins.openapi import check_document
+
+    doc = {"paths": {"/a": {"get": {"operationId": "get_a"}}}}
+    check_document("openapi:", doc, ["*"], ["get_a"])
+    with pytest.raises(UsageError, match=r"pinned names \['get_b'\]"):
+        check_document("openapi:", doc, ["*"], ["get_b"])
+
+
+def _mock_httpx(monkeypatch, handler):
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(handler), **kw),
+    )
+
+
+async def test_a_url_spec_is_fetched_at_build(monkeypatch):
+    from beherouter.plugins.openapi import fetch_document
+
+    def serve(req):
+        if req.url.path.endswith(".json"):
+            return httpx.Response(200, json=DOC)
+        return httpx.Response(200, text="paths: {}\n")
+
+    _mock_httpx(monkeypatch, serve)
+    assert await fetch_document("https://crm.internal/openapi") == {"paths": {}}
+    assert await fetch_document("https://crm.internal/openapi.json") == DOC
+
+
+async def test_a_spec_url_that_fails_is_unavailable(monkeypatch):
+    from beherouter.errors import Unavailable
+    from beherouter.plugins.openapi import fetch_document
+
+    _mock_httpx(monkeypatch, lambda req: httpx.Response(503))
+    with pytest.raises(Unavailable, match="could not fetch spec"):
+        await fetch_document("https://crm.internal/openapi.json")

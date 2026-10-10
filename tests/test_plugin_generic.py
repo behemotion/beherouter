@@ -251,3 +251,17 @@ def test_registry_lint_warns_when_a_cli_command_is_not_installed(tmp_path, capsy
                  '  [sid.config]\n  cmd = "no-such-beheaxi-cli"\n')
     registry_lint(path=str(p))
     assert "no-such-beheaxi-cli" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("plugin", "config", "match"),
+    [
+        ("beheaxi-cli", {"cmd": "  "}, "beheaxi-cli: cmd must not be empty"),
+        ("mcp-stdio", {"cmd": ""}, "mcp-stdio: cmd must not be empty"),
+        ("mcp-http", {"url": "http://h/mcp", "auth_header": ""},
+         "mcp-http: auth_header must not be empty"),
+    ],
+)
+def test_an_empty_required_value_is_refused(plugin, config, match):
+    with pytest.raises(UsageError, match=match):
+        get(plugin).validate(config)
