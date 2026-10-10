@@ -56,6 +56,9 @@ def test_reload_values_wire_everything():
     spec = dep["spec"]["template"]["spec"]
     ann = dep["spec"]["template"]["metadata"].get("annotations", {})
     assert "checksum/configmap-registry" not in ann
+    # Only the REGISTRY stops rolling the pods: env is restart-only, so a
+    # Secret change must still roll them.
+    assert "checksum/secret-env" in ann
     env = _env(dep)
     assert env["BEHEROUTER_REGISTRY_WATCH_S"]["value"] == "30"
     ref = env["BEHEROUTER_ADMIN_TOKEN"]["valueFrom"]["secretKeyRef"]

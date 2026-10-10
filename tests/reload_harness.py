@@ -22,4 +22,5 @@ async def running(path, **kw):
         app.router.lifespan_context(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c,
     ):
+        c.app = app  # for a test that needs its own transport to the same app
         yield app.state.runtime, c

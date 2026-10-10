@@ -160,3 +160,20 @@ async def test_a_stateless_surface_attached_by_the_retry_path_stays_stateless(
         assert init.status_code == 200, init.text
         assert "mcp-session-id" not in init.headers
         assert _sessions("late") is None
+
+
+async def test_an_unauthenticated_get_on_a_stateless_surface_is_405_not_401(
+    tmp_path, gateway_plugin, exec_builder
+):
+    """docs/DEPLOYMENT.md § Stateless sessions says GET answers 405 BEFORE auth:
+    FastMCP drops GET from a stateless route's methods, and Starlette refuses
+    the method before the auth middleware runs. A 401 here would also make
+    LibreChat offer OAuth for a surface that has none."""
+    gateway_plugin("t-ok", exec_builder([]))
+    reg = tmp_path / "r.toml"
+    write(reg, '[a]\nplugin = "t-ok"\nstateless = true\n')
+    async with running(reg) as (_rt, c):
+        r = await c.get("/a/mcp", headers={"Accept": "text/event-stream"})
+        assert r.status_code == 405
+        # POST without a token is still refused: only the method check is earlier.
+        assert (await c.post("/a/mcp", json=INIT)).status_code == 401

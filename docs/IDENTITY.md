@@ -394,10 +394,11 @@ backend. A tool needs it when its `mutating` is true **or unknown** (the backend
 sent no `readOnlyHint`: unknown fails closed), unless named in `confirm_exempt`
 (valid only with `confirm_mutating`). The question names the tool and surface and
 shows the arguments **to the caller's own client only**; they are never logged.
-Every argument name is always shown; a long value is cut to its first 300
-characters (fewer when there are many arguments) and marked `…(+K chars)`, and
-the question then says `Arguments (truncated, N of M characters shown)`, so a
-human is never asked to approve arguments that were silently hidden. A
+A long value is cut to its first 300 characters (fewer when there are many
+arguments) and marked `…(+K chars)`; past about 40 arguments the list itself is
+cut. Either way the question says `Arguments (truncated, N of M characters
+shown)`, so a human is never asked to approve arguments that were silently
+hidden. A
 refusal is `confirmation_required` (kind `refused`) with `context.confirmation`:
 
 | `confirmation` | Meaning |

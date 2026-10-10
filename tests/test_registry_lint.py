@@ -536,14 +536,18 @@ def test_lint_accepts_a_stateless_surface(tmp_path):
     registry_lint(path=_write(tmp_path, _office("stateless = true\n")))
 
 
-def test_lint_refuses_a_non_bool_stateless(tmp_path):
+@pytest.mark.parametrize("value", ['"yes"', "1", "0"])
+def test_lint_refuses_a_non_bool_stateless(tmp_path, value):
+    # A TOML integer is not a boolean either, even though 1 is truthy.
     with pytest.raises(UsageError, match="stateless must be true or false"):
-        registry_lint(path=_write(tmp_path, _office('stateless = "yes"\n')))
+        registry_lint(path=_write(tmp_path, _office(f"stateless = {value}\n")))
 
 
 def test_lint_refuses_stateless_with_confirm_mutating(tmp_path):
     body = _office("stateless = true\n  [office.authz]\n  confirm_mutating = true\n")
-    with pytest.raises(UsageError, match="needs a session"):
+    with pytest.raises(
+        UsageError, match=r"'office': stateless = true cannot be combined.*needs a session"
+    ):
         registry_lint(path=_write(tmp_path, body))
 
 

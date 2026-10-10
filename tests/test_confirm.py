@@ -214,3 +214,24 @@ async def test_arguments_reach_only_the_human():
             "run_tool", {"name": "deep_write", "args": {"secret": "xyz-sentinel"}}
         )
     assert "xyz-sentinel" in asked[-1]
+
+
+async def test_confirm_mutating_leaves_the_published_tools_byte_identical():
+    """The published `tools` array is frozen at attach and is what a host's
+    prompt cache keys on: turning confirmation on must not change one byte of
+    it (describe_tool is where `requires_confirmation` is reported)."""
+    gated, _ = _surface()
+    backend = Backend(
+        name="bo", kind="mcp", executor=Spy(),
+        descriptors=[
+            _d("write", True), _d("unknown", None), _d("read", False),
+            _d("exempt_one", None), _d("deep_write", True, pinned=False),
+        ],
+    )
+    plain = build_surface(backend, audit=AuditSink(enabled=False))
+
+    async def published(surface):
+        async with Client(surface) as c:
+            return [t.model_dump(mode="json") for t in await c.list_tools()]
+
+    assert await published(gated) == await published(plain)

@@ -527,7 +527,7 @@ async def test_no_blocked_sub_and_no_file_secret_is_ever_echoed(
     write(reg, f'[a]\nplugin = "t-secret"\n[a.env]\napi_key = "${{file:{secret}}}"\n')
     try:
         async with running(reg) as (_rt, c):
-            asgi = c._transport
+            asgi = httpx.ASGITransport(app=c.app)
             mcp = Client(
                 StreamableHttpTransport(
                     "http://t/a/mcp",
