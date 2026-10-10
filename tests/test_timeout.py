@@ -35,15 +35,19 @@ def _sleep_surface(timeout):
 
 
 async def test_a_slow_call_times_out_and_the_backend_stays_usable():
-    surface = _sleep_surface(0.5)
+    # 2.0 s, not 0.5: the limit must exceed a cold stdio spawn + handshake even
+    # on a shared CI runner (measured ~0.65 s there; and a timed-out call drops
+    # the session, so the call after it pays the spawn again). What this test
+    # asserts is that a timed-out call leaves the backend usable -- not runner
+    # speed.
+    surface = _sleep_surface(2.0)
     async with Client(surface) as c:
-        # warm the subprocess so the 0.5 s limit isn't spent on the cold spawn
         await c.call_tool_mcp("sleep", {"seconds": 0})
         slow = await c.call_tool_mcp("sleep", {"seconds": 5})
         fast = await c.call_tool_mcp("sleep", {"seconds": 0})
     assert slow.isError
     assert slow.meta[META_KEY]["reason"] == "timeout"
-    assert slow.meta[META_KEY]["context"] == {"limit_s": 0.5}
+    assert slow.meta[META_KEY]["context"] == {"limit_s": 2.0}
     assert not fast.isError, fast.content
 
 
