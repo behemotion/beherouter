@@ -262,6 +262,9 @@ auto-generated contributor appendix is appended below it). Releases before
 - Rate limits: the `limit` label no longer uses exponent form (`30/2592000s`,
   not `30/2.592e+06s`), and a wait of exactly one second is no longer reported
   as `retry_after_s: 2`.
+- An `unknown_tool` refusal no longer suggests a tool the caller's role gate
+  hides; a negative `search_tools` limit returns nothing instead of slicing
+  from the end.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no

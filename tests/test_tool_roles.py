@@ -124,3 +124,49 @@ async def test_describe_tool_answers_missing_role_for_a_hidden_tool(monkeypatch)
     async with Client(surface) as c:
         res = await c.call_tool_mcp("describe_tool", {"name": "reprocess_call"})
     assert res.meta[META_KEY]["reason"] == "missing_role"
+
+
+async def test_an_unknown_tool_never_suggests_a_tool_hidden_from_the_caller(monkeypatch):
+    """`reprocess_cal` is one letter off a gated tool the caller cannot see; the
+    suggestion would name the tool the listing hides."""
+    _caller(monkeypatch, roles=["other"])
+    surface, _spy = _surface()
+    async with Client(surface) as c:
+        res = await c.call_tool_mcp("run_tool", {"name": "reprocess_cal", "args": {}})
+    meta = res.meta[META_KEY]
+    assert meta["reason"] == "unknown_tool"
+    assert "reprocess_call" not in meta.get("context", {}).get("suggestions", [])
+    assert "reprocess_call" not in res.content[0].text
+
+
+async def test_a_holder_is_still_offered_the_gated_suggestion(monkeypatch):
+    _caller(monkeypatch, roles=["bo-write"])
+    surface, _spy = _surface()
+    async with Client(surface) as c:
+        res = await c.call_tool_mcp("run_tool", {"name": "reprocess_cal", "args": {}})
+    assert "reprocess_call" in res.meta[META_KEY]["context"]["suggestions"]
+
+
+async def test_a_negative_search_limit_returns_nothing_gated_or_not(monkeypatch):
+    _caller(monkeypatch, roles=["bo-write"])
+    for hide in (True, False):
+        surface, _spy = _surface(hide=hide)
+        async with Client(surface) as c:
+            res = await c.call_tool("search_tools", {"query": "call", "limit": -1})
+        assert res.structured_content == {"result": []}
+
+
+async def test_hide_tools_false_leaves_describe_ungated(monkeypatch):
+    _caller(monkeypatch, roles=["other"])
+    surface, _spy = _surface(hide=False)
+    async with Client(surface) as c:
+        res = await c.call_tool_mcp("describe_tool", {"name": "reprocess_call"})
+    assert not res.isError
+
+
+async def test_a_shared_caller_lists_only_the_ungated_tools(monkeypatch):
+    _caller(monkeypatch, shared=True)
+    surface, _spy = _surface()
+    async with Client(surface) as c:
+        names = {t.name for t in await c.list_tools()}
+    assert "list_calls" in names and "recategorize_call" not in names

@@ -373,6 +373,9 @@ def build_surface(
 
     def unknown_tool(name: str) -> AxiError:
         close = suggest(name, list(catalogue.by_name), catalogue.index)
+        if gates is not None:
+            # never name a tool the listing hides from this caller
+            close = [n for n in close if gates.visible(n)]
         hint = (
             f" Did you mean: {', '.join(close)}?"
             if close
@@ -401,11 +404,17 @@ def build_surface(
         )
     )
     async def search_tools(query: str, limit: int = DEFAULT_LIMIT) -> list[dict]:
+        # A negative limit means nothing; it used to slice from the END ([:-1]),
+        # differently with and without a tool gate. Clamped here, not in the
+        # schema, so the published definition (and every client's) is unchanged.
+        limit = max(limit, 0)
+
         async def work(scope):
             await catalogue.ensure_fresh()
             # Over-fetch by the number of gated tools, so hiding them does not
             # shrink a page below `limit` when enough visible hits exist.
-            extra = len(gates.roles.tools) if gates is not None and gates.roles else 0
+            hiding = gates is not None and gates.roles is not None and gates.hide
+            extra = len(gates.roles.tools) if hiding else 0  # type: ignore[union-attr]
             hits = search_hits(
                 catalogue.index, catalogue.by_name, query, limit + extra, published_names
             )

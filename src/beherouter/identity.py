@@ -666,7 +666,9 @@ _AUTHZ_KEYS = (
 )
 
 
-def _role_list(value) -> bool:
+def _name_list(value) -> bool:
+    """A non-empty list of non-empty strings: role names, or (confirm_exempt)
+    tool names."""
     return (
         isinstance(value, (list, tuple))
         and bool(value)
@@ -726,7 +728,7 @@ def validate_authz(surface: str, raw: dict | None) -> None:
             if (
                 not isinstance(gate, dict)
                 or set(gate) != {"require_roles"}
-                or not _role_list(gate["require_roles"])
+                or not _name_list(gate["require_roles"])
             ):
                 raise UsageError(
                     f"'{surface}': authz tools.{name} must hold exactly require_roles, "
@@ -743,7 +745,7 @@ def validate_authz(surface: str, raw: dict | None) -> None:
             raise UsageError(
                 f"'{surface}': authz confirm_exempt needs confirm_mutating = true"
             )
-        if isinstance(exempt, str) or not _role_list(exempt):
+        if isinstance(exempt, str) or not _name_list(exempt):
             raise UsageError(
                 f"'{surface}': authz confirm_exempt must be a non-empty array of "
                 f"tool names, got {exempt!r}"
@@ -757,7 +759,7 @@ def validate_authz(surface: str, raw: dict | None) -> None:
     roles = raw.get("require_roles")
     if roles is None:
         return
-    if isinstance(roles, str) or not _role_list(roles):
+    if isinstance(roles, str) or not _name_list(roles):
         raise UsageError(
             f"'{surface}': authz require_roles must be a non-empty array of "
             f"role names, got {roles!r}"
