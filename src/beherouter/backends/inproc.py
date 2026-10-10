@@ -49,7 +49,7 @@ from ..errors import Unavailable, UsageError
 from ..identity import settle
 from ..models import Backend, ToolDescriptor
 from .backing import McpBacking
-from .mcp import _payload, backend_from_client, envelope
+from .mcp import _payload, backend_from_client, call_failed, envelope, http_status
 
 logger = logging.getLogger(__name__)
 
@@ -200,11 +200,13 @@ class InprocExecutor:
         except UsageError:
             raise
         except (ToolError, ValidationError, NotFoundError) as e:
+            status = http_status(e) if isinstance(e, ToolError) else None
+            context = {"status": status} if status is not None else None
             if _is_outage(e):
-                raise Unavailable(f"backend call '{verb}' failed: {e}") from e
-            raise UsageError(f"backend rejected '{verb}': {e}") from e
+                raise Unavailable(f"backend call '{verb}' failed: {e}", context=context) from e
+            raise UsageError(f"backend rejected '{verb}': {e}", context=context) from e
         except Exception as e:
-            raise Unavailable(f"backend call '{verb}' failed: {e}") from e
+            raise call_failed(verb, e) from e
         return envelope(res, _unwrapped(res))
 
     async def aclose(self) -> None:

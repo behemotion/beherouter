@@ -13,6 +13,7 @@ import os
 import shlex
 import shutil
 
+import httpx
 from fastmcp import Client
 from fastmcp.client.transports import ClientTransport, StdioTransport, StreamableHttpTransport
 from fastmcp.exceptions import ToolError
@@ -154,6 +155,34 @@ def envelope(res, value) -> dict:
     return {"result": value, "notes": notes} if notes else {"result": value}
 
 
+def http_status(e: BaseException) -> int | None:
+    """The upstream HTTP status in an exception's cause chain, if any.
+
+    What the audit line's `status` reports. Read only from a real
+    `httpx.HTTPStatusError`, never from message text: an MCP backend's
+    isError result carries no status, and sniffing one would misclassify.
+    """
+    cur: BaseException | None = e
+    for _ in range(16):  # a cycle-safe bound on the chain
+        if cur is None:
+            return None
+        if isinstance(cur, httpx.HTTPStatusError):
+            return cur.response.status_code
+        cur = cur.__cause__ or (None if cur.__suppress_context__ else cur.__context__)
+    return None
+
+
+def call_failed(verb: str, e: Exception) -> UsageError | Unavailable:
+    """A backend call that did not produce a result, classified by its HTTP
+    status when it has one: a 4xx is the backend refusing the call (the
+    deployment's or the caller's credential, say), anything else an outage."""
+    status = http_status(e)
+    context = {"status": status} if status is not None else None
+    if status is not None and 400 <= status < 500:
+        return UsageError(f"backend rejected '{verb}': {e}", context=context)
+    return Unavailable(f"backend call '{verb}' failed: {e}", context=context)
+
+
 class MCPClientExecutor:
     """Forward calls over an already-connected client."""
 
@@ -188,7 +217,7 @@ class MCPClientExecutor:
             # action-parameterized default forwarding in _make_pinned_tool).
             raise UsageError(f"backend rejected '{verb}': {e}") from e
         except Exception as e:
-            raise Unavailable(f"backend call '{verb}' failed: {e}") from e
+            raise call_failed(verb, e) from e
         return envelope(res, _payload(res))
 
 
@@ -234,7 +263,7 @@ class ReconnectingMCPExecutor:
         except ToolError as e:
             raise UsageError(f"backend rejected '{verb}': {e}") from e
         except Exception as e:
-            raise Unavailable(f"backend call '{verb}' failed: {e}") from e
+            raise call_failed(verb, e) from e
         return envelope(res, _payload(res))
 
 

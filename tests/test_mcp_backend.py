@@ -528,3 +528,67 @@ def test_stdio_children_inherit_the_gateways_trust_store(monkeypatch):
     assert t.env["SSL_CERT_FILE"] == "/etc/beherouter/ca/ca-bundle.crt"
     assert t.env["REQUESTS_CA_BUNDLE"] == "/etc/beherouter/ca/ca-bundle.crt"
     assert "SOME_SECRET" not in t.env
+
+
+class _RaisingClient:
+    def __init__(self, exc):
+        self._exc = exc
+
+    async def call_tool(self, verb, args):
+        raise self._exc
+
+
+def _http_error(status: int):
+    import httpx
+
+    req = httpx.Request("POST", "http://backend/mcp")
+    return httpx.HTTPStatusError(
+        f"{status}", request=req, response=httpx.Response(status, request=req)
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(503, Unavailable), (500, Unavailable), (401, UsageError), (403, UsageError)],
+)
+async def test_a_backend_http_status_is_classified_and_carried(status, expected):
+    """An MCP backend answering HTTP 4xx/5xx surfaces as a bare
+    httpx.HTTPStatusError (measured, fastmcp 3.4). A 5xx is an outage, a 4xx
+    the backend refusing the call; either way the status reaches the audit
+    line, which used to say `status: null` for every call."""
+    ex = MCPClientExecutor(_RaisingClient(_http_error(status)))
+    with pytest.raises(expected) as caught:
+        await ex.run("t", {})
+    assert caught.value.context["status"] == status
+
+
+async def test_a_wrapped_http_status_is_found_in_the_cause_chain():
+    try:
+        try:
+            raise _http_error(502)
+        except Exception as inner:
+            raise RuntimeError("transport failed") from inner
+    except RuntimeError as outer:
+        exc = outer
+    ex = MCPClientExecutor(_RaisingClient(exc))
+    with pytest.raises(Unavailable) as caught:
+        await ex.run("t", {})
+    assert caught.value.context["status"] == 502
+
+
+async def test_a_failure_with_no_http_status_carries_none():
+    ex = MCPClientExecutor(_RaisingClient(ConnectionError("refused")))
+    with pytest.raises(Unavailable) as caught:
+        await ex.run("t", {})
+    assert "status" not in caught.value.context
+
+
+async def test_a_tool_error_carries_no_status():
+    """isError:true has no HTTP status, and its text is never sniffed for one:
+    it stays backend_rejected, with no status."""
+    from fastmcp.exceptions import ToolError
+
+    ex = MCPClientExecutor(_RaisingClient(ToolError("upstream said 500")))
+    with pytest.raises(UsageError) as caught:
+        await ex.run("t", {})
+    assert "status" not in caught.value.context

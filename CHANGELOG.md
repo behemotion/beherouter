@@ -240,6 +240,11 @@ auto-generated contributor appendix is appended below it). Releases before
   schema), for pinned tools and `run_tool`, on `http`, `stdio` and `inproc`
   backings. Non-text blocks are still dropped. See `docs/PLUGINS.md` § A
   backend's extra text blocks.
+- **The audit line's `status` is filled in.** It was always `null`; it now
+  carries the upstream HTTP status when the backend gave one. An MCP backend
+  answering HTTP 4xx is `backend_rejected` (it was `backend_unavailable`); a
+  5xx stays `backend_unavailable`. An MCP `isError` result has no status and
+  stays `backend_rejected`.
 - **A configuration fault at attach is no longer retried.** A `UsageError`
   (for example a bad `[surface.identity]`) used to be retried forever; the
   surface's `503` now says it will not be retried and carries no

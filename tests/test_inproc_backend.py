@@ -240,8 +240,10 @@ async def test_an_upstream_http_error_is_classified_by_status(status, expected):
         raise ValueError(f"HTTP error {status}") from err
 
     backend = await load_inproc_backend(_backing(server))
-    with pytest.raises(expected, match="fetch"):
+    with pytest.raises(expected, match="fetch") as caught:
         await backend.executor.run("fetch", {})
+    # The upstream status reaches the audit line's `status`.
+    assert caught.value.context["status"] == status
 
 
 def _upstream():

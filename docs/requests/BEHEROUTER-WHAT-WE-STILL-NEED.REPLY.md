@@ -70,7 +70,10 @@ is the authoritative list.
   reason, status, latency and `call_id`.
 - It never carries arguments.
 - It is on by default; `BEHEROUTER_AUDIT=off` disables it.
-- Known gap: the `status` field is currently always `null`.
+- `status` is the upstream HTTP status when the backend gave one, `null`
+  otherwise. An MCP backend's `isError` result carries no status, so a Plane
+  400 relayed by plane-mcp-server as a tool error has `status: null` with
+  reason `backend_rejected`.
 
 **A3 — sessions.** We built the stateless option. We did not build an external
 session store.
@@ -205,6 +208,9 @@ one whose `mutating` is unknown, through MCP elicitation, for every client.
   LibreChat approval card or anything else parses error text, check it. Prefer
   `_meta["io.beherouter/error"].reason`.
 - **A failed call returns `isError: true` instead of raising.**
+- **An MCP backend answering HTTP 4xx** (a refused deployment or per-user
+  credential, say) is now reason `backend_rejected`, with `status`. It was
+  `backend_unavailable`. A 5xx stays `backend_unavailable`.
 - **`/metrics`:** the Content-Type is now prometheus-client's
   (`text/plain; version=1.0.0; charset=utf-8`), values render as floats, and
   `beherouter_auth_rejections_total` gains a `surface` label (`""` when the path

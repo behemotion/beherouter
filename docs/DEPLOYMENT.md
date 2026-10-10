@@ -255,7 +255,7 @@ meta-tools.
 | `tool`, `inner_tool` | the published tool; for `run_tool`, the tool it ran (else `null`) |
 | `caller` | `sub` from the verified token plus the `BEHEROUTER_AUDIT_CLAIMS` claims. A shared-token call is `{"sub": null}` |
 | `auth` | `oidc`, `shared` or `none` |
-| `outcome`, `reason`, `status` | how it ended (`ok` or a kind below), the reason enum below, and the backend status when known |
+| `outcome`, `reason`, `status` | how it ended (`ok` or a kind below), the reason enum below, and the upstream HTTP status when the backend gave one (an HTTP backend's or an OpenAPI upstream's 4xx/5xx; `null` otherwise — an MCP `isError` result carries no status, and its text is never parsed for one) |
 | `latency_ms` | gate to result |
 
 **Arguments are never recorded**, and there is no switch to record them. That includes the
@@ -314,8 +314,8 @@ from the beheaxi envelope). `context` names what was *required*, never what the 
 | `unknown_tool` | `not_found` | name not in the catalogue | `suggestions` |
 | `bad_arguments` | `tool_error` | arguments failed the schema or argument preparation | none |
 | `edition_unsupported` | `tool_error` | backend guard (Plane CE) | none |
-| `backend_rejected` | `tool_error` | backend refused (4xx-class) | `status` when known |
-| `backend_unavailable` | `unavailable` | backend 5xx or transport failure | `status` when known |
+| `backend_rejected` | `tool_error` | backend refused: an MCP `isError` result, or an HTTP 4xx | `status` when known |
+| `backend_unavailable` | `unavailable` | backend HTTP 5xx or transport failure | `status` when known |
 | `timeout` | `timeout` | `call_timeout_s` expired | `limit_s` |
 | `internal` | `internal` | a beherouter bug (logged with traceback) | none |
 
