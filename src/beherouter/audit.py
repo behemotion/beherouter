@@ -5,7 +5,7 @@ parses JSON.
 
 NEVER the call's arguments. The caller is the verified token's subject plus
 ONLY the claims an operator names in BEHEROUTER_AUDIT_CLAIMS — the one
-sanctioned exception to "never log an identity value" (AGENTS.md hard
+sanctioned exception to "never log an identity value" (docs/architecture.md hard
 constraints, docs/IDENTITY.md). Claims come from the verified token only,
 never from a request header.
 """

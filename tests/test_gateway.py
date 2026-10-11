@@ -214,7 +214,7 @@ async def test_costing_failure_does_not_crash_attach_or_other_surfaces(
     `naive_tokens` re-registers EVERY descriptor (pinned or not) through the
     same signature-synthesis path a call-time `context_cost` failure would
     otherwise isolate to one tool call. Run unconditionally at attach, a
-    schema edge case there must not crash-loop the whole gateway (AGENTS.md).
+    schema edge case there must not crash-loop the whole gateway (docs/architecture.md).
     """
     from beherouter import costing
     from beherouter.gateway import build_surfaces

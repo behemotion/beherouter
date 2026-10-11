@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "beherouter"
 # Versioning: bump the PATCH register by default; MINOR moves only on an
 # explicit ask. A release additionally needs chart appVersion + the v-tag
-# (release.yml enforces all three agree). See AGENTS.md "Releases".
+# (release.yml enforces all three agree). See DEPLOY.md "Publishing a release".
 version = "0.2.6"
 description = "Multi-service MCP gateway: per-service surfaces + embeddings-free BM25 tool search + per-user header passthrough"
 readme = "README.md"
@@ -30,7 +30,7 @@ dependencies = [
     "beheaxi @ git+https://github.com/behemotion/beheaxi@v0.1.2",
     "rank-bm25>=0.2.2",
     # Fuzzy tier for tool search. Lexical edit distance, NOT embeddings — the
-    # no-embeddings constraint in AGENTS.md is unaffected.
+    # no-embeddings constraint in docs/architecture.md is unaffected.
     "rapidfuzz>=3.9.0",
     # /metrics: counters, a latency histogram and gauges in the standard
     # exposition format. Replaces a hand-rolled collections.Counter.

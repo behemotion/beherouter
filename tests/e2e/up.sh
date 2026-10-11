@@ -23,7 +23,7 @@ AUDIENCE="$(python3 -c "import json;print(json.load(open('$HERE/material.json'))
 JWKS="$(python3 -c "import json;print(json.dumps(json.load(open('$HERE/material.json'))['jwks']))")"
 
 # ⚠️ Backends must be LISTENING before the gateway starts. An attach failure
-# crash-loops the whole gateway (AGENTS.md), so "start everything at once" makes
+# is a 503 for that surface until a background retry succeeds, so "start everything at once" makes
 # a slow backend look like a broken one — which is exactly how this script
 # failed the first time it was run from a cold stack.
 wait_for() {

@@ -1,6 +1,6 @@
 """Embeddings-free lexical tool index (rank-bm25 + rapidfuzz).
 
-Hard constraint from AGENTS.md: tool search must be lexical, never embeddings.
+Hard constraint from docs/architecture.md: tool search must be lexical, never embeddings.
 At ~30-100 tools per surface a field-weighted BM25 with light normalisation is
 accurate enough, and it stays testable and dependency-light.
 

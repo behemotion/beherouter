@@ -116,7 +116,7 @@ async def test_savings_are_negative_for_an_office_shaped_surface():
     """4 tools, all pinned: the gateway costs MORE than a direct connection,
     because the meta-tools are pure overhead.
 
-    AGENTS.md already claims this in prose -- "the benefit here is credential
+    docs/architecture.md already claims this in prose -- "the benefit here is credential
     centralisation and one uniform client surface, not context savings". This
     is the test that makes the claim fail loudly if it ever stops being true.
     """

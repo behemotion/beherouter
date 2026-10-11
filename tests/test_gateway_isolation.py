@@ -1,6 +1,6 @@
 """One backend must not take every surface down with it.
 
-AGENTS.md used to carry this as a warning ("an attach failure crash-loops the
+The operator manual used to carry this as a warning ("an attach failure crash-loops the
 whole gateway"). These tests hold the fix: an attach failure is recorded and
 isolated; only what `registry-lint` can see still refuses boot.
 """

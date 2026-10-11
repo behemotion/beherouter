@@ -6,7 +6,7 @@ services:
     build: .
     image: localhost/beherouter:latest
     # Bind to localhost only — Caddy is the TLS edge and the gateway is the
-    # harness's single authenticated network surface (CONVENTIONS §6).
+    # harness's single authenticated network surface (CONVENTIONS §4).
     ports:
       - "127.0.0.1:47100:47100"
     environment:

@@ -211,7 +211,7 @@ async def _check_attached(entry, backend, user_token, verifier) -> dict:
         record["advertised"] = cost.advertised
         record["tokens_published"] = cost.tokens_published
     # A pinned tool the backend no longer serves is a broken published tool
-    # (AGENTS.md's manual "re-probe the whole pin list" rule, mechanized for
+    # (docs/architecture.md's manual "re-probe the whole pin list" rule, mechanized for
     # the existence half). `gateway.missing_pins` is the one definition of
     # "served", shared with the gateway's attach-time warning (it carries the
     # cli verb-vs-name trap).

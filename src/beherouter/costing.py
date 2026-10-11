@@ -9,7 +9,7 @@ all read it.
 WHY AN ESTIMATE. An exact count needs a tokenizer, and every real one either
 downloads a vocabulary over the network on first use (tiktoken) or drags in a
 model runtime. The gateway runs rootless in an egress-restricted container where
-the former fails closed, and AGENTS.md's no-embeddings constraint exists to keep
+the former fails closed, and docs/architecture.md's no-embeddings constraint exists to keep
 that class of dependency out. So the count is a calibrated heuristic, reported
 as `exact: false` with the method named, and never dressed up as authoritative.
 

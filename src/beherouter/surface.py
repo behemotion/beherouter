@@ -1,6 +1,6 @@
 """Turn a Backend into a FastMCP surface: pinned flat tools + search/describe/run.
 
-The context-control mechanism (AGENTS.md): each surface advertises only a few
+The context-control mechanism (docs/architecture.md): each surface advertises only a few
 pinned flat tools plus three meta-tools, so a ~100-tool backend costs a handful of
 tool definitions in the client's context instead of a hundred. The long tail is
 reached through `search_tools` -> `describe_tool` -> `run_tool`.

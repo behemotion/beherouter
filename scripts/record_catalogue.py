@@ -2,7 +2,7 @@
 
 NOT shipped. Runs the server as a subprocess over stdio, so it needs no network
 and no real credentials — the dummy env below is enough to LIST tools, never to
-call one. Re-run after every upgrade of a backend the eval set covers (AGENTS.md:
+call one. Re-run after every upgrade of a backend the eval set covers (docs/architecture.md:
 re-probe after an upgrade), then re-run `uv run pytest tests/test_search_eval.py`.
 
     uv run python scripts/record_catalogue.py plane-mcp-server==0.3.2 \\

@@ -297,7 +297,7 @@ async def test_a_pin_check_failure_degrades_the_record_not_the_probe():
     """A bug in the pin-check must not crash the sweep or read as PROBE_FAILED --
     the same degrade-and-log shape as the costing block right above it in
     `health.py`. Attach succeeds (so `entry.pinned`/`plugin.spec.pinned` are
-    fine, exactly as AGENTS.md notes), but a malformed descriptor coming back
+    fine, exactly as docs/architecture.md notes), but a malformed descriptor coming back
     from the backend still makes the `d.verb`/`d.name` comparison raise.
     """
     from beherouter.health import ATTACH_OK, PROBE_OK, check_entry
@@ -333,7 +333,7 @@ async def test_a_served_pin_list_is_catalogue_ok(fake_cli_cmd):
 
 async def test_a_vanished_pinned_tool_fails_health():
     """The mechanical version of "re-probe the whole pin list after an upgrade
-    or an edition change" -- AGENTS.md's rule, which was manual until now.
+    or an edition change" -- docs/architecture.md's rule, which was manual until now.
 
     Plane's Community Edition 404s (page, work_log, milestone, workitem_type,
     initiative) are exactly this shape: the catalogue advertises the commercial
