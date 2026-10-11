@@ -19,7 +19,7 @@ env/
 # uv
 # NOTE: uv.lock is intentionally TRACKED — beherouter is a deployed application,
 # not a library, and the container build needs a reproducible resolution
-# (AGENTS.md: "Python via uv (pyproject.toml + uv.lock)").
+# (uv.lock is the reproducible resolution the Containerfile builds from).
 
 # IDE / OS
 .idea/
@@ -45,16 +45,8 @@ registry.toml
 # are the design record) and are scrubbed instead — rewriting a plan to remove
 # a hostname would falsify a historical record.
 docs/superpowers/plans/
-docs/handoffs/
 local-infra/
 
-# CLAUDE.md is a thin untracked pointer to the manual (AGENTS.md is tracked)
-CLAUDE.md
-
-# Agent skill layouts — internal harness infra, not published (sync.sh
-# replicates the handoff skill across these)
-.claude/
-.opencode/
 
 # e2e run artifacts: signed tokens and a generated registry, never committed
 tests/e2e/material.json
@@ -65,3 +57,14 @@ tests/e2e/registry.toml
 .coverage.*
 coverage.xml
 htmlcov/
+
+# BEHEMOTION operator docs — local only, never committed (CONVENTIONS §11)
+/AGENTS.md
+/CLAUDE.md
+/CONNECTIONS.md
+/HANDOFF.md
+/HARNESS-DIVERGENCES.md
+/docs/handoffs/
+/docs/history/
+/.claude/
+/.opencode/
