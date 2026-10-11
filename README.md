@@ -405,6 +405,7 @@ knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 |---|---|
 | [`docs/IDENTITY.md`](docs/IDENTITY.md) | Per-user identity: OIDC next to the shared token, the five modes, the identity map, role and audience gates, user probes, every refusal rule |
 | [`docs/PLUGINS.md`](docs/PLUGINS.md) | Writing a plugin: the contract, the five backings, generic plugins, pins and probes, maturity tiers, importing from the MCP Registry, identity support, out-of-tree plugins, testing |
+| [`DEPLOY.md`](DEPLOY.md) | The short runbook: deploy with `scripts/deploy.sh` or the chart, verify, roll back, publish a release |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deploying (`scripts/deploy.sh`, Helm), verifying, scheduled deep health, upgrading, rolling back |
 | [`docs/CALENDAR-BOOTSTRAP.md`](docs/CALENDAR-BOOTSTRAP.md) | Setting up the `gcal` / `m365` calendar surfaces and per-user consent |
 | [`contrib/health-textfile`](contrib/health-textfile/README.md) | Scheduled `health --deep` into Prometheus: metric contract, timer, CronJob, alert rules |
@@ -412,7 +413,7 @@ knowing before you hit them: **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 | [`contrib/plane-mcp-bearer`](contrib/plane-mcp-bearer/README.md) | The Plane mount that forwards a caller's IdP token |
 | [`docs/DESIGN.md`](docs/DESIGN.md) | Why build rather than adopt: the aggregator survey and the LiteLLM-MCP spike |
 | [`docs/FASTMCP-NOTES.md`](docs/FASTMCP-NOTES.md) | FastMCP 3.x API notes |
-| [`AGENTS.md`](AGENTS.md) | Working context for coding agents: constraints, traps, conventions |
+| [`docs/architecture.md`](docs/architecture.md) | The design rationale and hard constraints, and what each in-tree plugin has proven and its traps |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release, and what is unreleased |
 
 ## Attribution

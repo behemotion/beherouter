@@ -1,7 +1,7 @@
 # beherouter — design & research record
 
 Captured from the homelab planning session (2026-06-17). This is the reasoning behind the
-approach in `../AGENTS.md`. Not a final spec — finalize via `brainstorming`/`writing-plans`.
+approach in [`architecture.md`](architecture.md). Not a final spec — finalize via `brainstorming`/`writing-plans`.
 
 ## Problem
 
