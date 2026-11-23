@@ -49,6 +49,9 @@ class RegistryEntry:
     rate_limit: dict | None = None
     # Extra search words, ADDED to the plugin's own; see plugins.resolve_aliases.
     search_aliases: dict[str, list[str]] | None = None
+    # Deployment text appended to the LEAN profile's instructions only (the
+    # full listing stays byte-identical): workspace names, local recipes.
+    instructions: str | None = None
 
 
 def validate_entry(e: RegistryEntry) -> None:
@@ -155,6 +158,19 @@ def validate_entry(e: RegistryEntry) -> None:
         raise UsageError(
             f"'{e.name}': search_aliases must be a table of tool = [words], got {aliases!r}"
         )
+    if e.instructions is not None and not isinstance(e.instructions, str):
+        raise UsageError(
+            f"'{e.name}': instructions must be a string, got {e.instructions!r}"
+        )
+    if plugin.spec.self_discovering:
+        from .plugins import resolve_pinned
+
+        if not resolve_pinned(e, plugin):
+            raise UsageError(
+                f"'{e.name}': plugin '{e.plugin}' is self-discovering, so its pins "
+                f"ARE its discovery path; an empty `pinned` would publish nothing "
+                f"in the lean profile"
+            )
     declared = {v.name for v in plugin.spec.env}
     supplied = set(e.env or {})
     unknown = sorted(supplied - declared)

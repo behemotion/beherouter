@@ -112,6 +112,14 @@ class PluginSpec:
     # nothing, which is the honest default for a spec nobody has tested.
     maturity: str = "declared"
     evidence: tuple[str, ...] = ()
+    # The backend does its own discovery (office-mcp: discover/invoke), so the
+    # LEAN profile publishes its pins and none of the gateway's meta-tools.
+    # The full profile is unaffected. Additive: API_VERSION does not move.
+    self_discovering: bool = False
+    # Appended to the LEAN profile's instructions: how to reach this plugin's
+    # tools through search_tools / describe_tool / run_tool. Keep it under 300
+    # tokens (costing.estimate_tokens); test_lean_recipes holds that.
+    lean_recipe: str = ""
     # Which plugin contract this spec was written against; `register()`
     # refuses one this gateway does not serve. See API_VERSION.
     api: int = API_VERSION

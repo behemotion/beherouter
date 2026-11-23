@@ -1,6 +1,8 @@
 import pytest
 
 from beherouter.errors import UsageError
+from beherouter.plugins import PLUGINS, register
+from beherouter.plugins.spec import PluginSpec
 from beherouter.registry import (
     RegistryEntry,
     load_registry,
@@ -269,3 +271,39 @@ def test_malformed_search_aliases_are_refused(bad):
 def test_reserved_surface_names_are_refused(name):
     with pytest.raises(UsageError, match="reserved"):
         validate_entry(RegistryEntry(name=name, plugin="office-mcp"))
+
+
+@pytest.fixture
+def self_disc_plugin():
+    async def build(ctx):  # pragma: no cover - never attached here
+        raise AssertionError
+    register(PluginSpec(name="t-selfdisc", summary="t", backing="inproc",
+                        pinned=("discover",), self_discovering=True), build)
+    yield "t-selfdisc"
+    PLUGINS.pop("t-selfdisc", None)
+
+
+def test_instructions_must_be_a_string(self_disc_plugin):
+    with pytest.raises(UsageError, match="instructions must be a string"):
+        validate_entry(RegistryEntry(name="s", plugin=self_disc_plugin, instructions=["x"]))
+
+
+def test_instructions_string_is_accepted(self_disc_plugin):
+    entry = RegistryEntry(name="s", plugin=self_disc_plugin, instructions="Workspace: homelab.")
+    validate_entry(entry)
+
+
+def test_self_discovering_entry_with_no_pins_is_refused(self_disc_plugin):
+    with pytest.raises(UsageError, match="self-discovering"):
+        validate_entry(RegistryEntry(name="s", plugin=self_disc_plugin, pinned=[]))
+
+
+def test_plugin_spec_defaults_are_off():
+    spec = PluginSpec(name="x", summary="x", backing="inproc")
+    assert spec.self_discovering is False and spec.lean_recipe == ""
+
+
+def test_instructions_key_loads_from_toml(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text('[office]\nplugin = "office-mcp"\ninstructions = "hi"\n')
+    assert load_registry(p)["office"].instructions == "hi"
