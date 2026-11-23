@@ -344,11 +344,16 @@ instructions carrying the plugin's `lean_recipe` and the entry's `instructions`;
 pinned tool is hidden in lean, not forbidden: `run_tool` reaches it. A session keeps the
 profile it was opened with (`profiles.ProfileDispatcher` routes by `mcp-session-id`
 first), and any other value (an empty one, or a different case, included) answers
-**400 `application/problem+json`**; the caller's value is never echoed. It is one attach: both apps share the backend,
-health record, rate limiter and pipeline. On the recorded catalogues `plane` drops from
-5,317 to 289 tokens and `office-mcp` from 763 to 354; `context_cost` reports both.
+**400 `application/problem+json`**; the caller's value is never echoed. It is one
+attach: both apps share the backend, health record, rate limiter and pipeline. On the
+recorded catalogues `plane` drops from 5,317 to 289 tokens and `office-mcp` from 763 to
+354; `context_cost` reports both.
 
-⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every `<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing (on a self-discovering surface such as office, `search_tools`, `describe_tool` and `run_tool` too). Agents whose stored `tools` allowlists name those tools lose them silently: rewrite the allowlists in the same change.
+⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every
+`<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing (on a
+self-discovering surface such as office, `search_tools`, `describe_tool` and `run_tool`
+too). Agents whose stored `tools` allowlists name those tools lose them silently:
+rewrite the allowlists in the same change.
 
 ### Pins: probe before pinning
 
