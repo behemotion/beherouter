@@ -63,6 +63,7 @@ from .plane import (
     CATALOGUE,
     E2E,
     EDITION_FIELD,
+    LEAN_RECIPE,
     OAUTH_PROXY_MOUNT,
     PINNED,
     PROBE,
@@ -84,6 +85,7 @@ SPEC = PluginSpec(
     probe=PROBE,
     probe_args=PROBE_ARGS,
     search_aliases=SEARCH_ALIASES,
+    lean_recipe=LEAN_RECIPE,
     # The `plane-bearer` surface in tests/e2e/: alice's own JWT reaches Plane
     # as Bearer through contrib/plane-mcp-bearer, and `health --deep
     # --bearer-file` reports matches_caller for her.

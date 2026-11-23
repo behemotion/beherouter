@@ -46,6 +46,9 @@ SPEC = PluginSpec(
     probe="discover",
     probe_args={"query": "pdf"},
     search_aliases=SEARCH_ALIASES,
+    # discover/invoke ARE the discovery path: the lean profile publishes these
+    # four pins and none of the gateway's meta-tools (spec 2026-11-22).
+    self_discovering=True,
     # ⚠️ `catalogued`, not `verified`: office-mcp was proven live (an agent
     # calling `discover` through the production gateway, 2026-08-04), but no
     # in-tree e2e test attaches it, and a tier is a claim about evidence in

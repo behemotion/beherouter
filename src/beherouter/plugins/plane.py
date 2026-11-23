@@ -149,6 +149,19 @@ COMMUNITY_NOTES = {
     ),
 }
 
+# The lean profile's recipe (spec 2026-11-22): the common paths spelled out as
+# run_tool payloads, so a small model reaches Plane in one call. Only actions
+# the 0.3.2 catalogue really has (test_lean_recipe_uses_only_real_actions).
+# Shared by all three Plane plugins, like PINNED.
+LEAN_RECIPE = """\
+Plane work tracking. Everything goes through run_tool(name, args).
+- Who am I: run_tool("member", {"action": "me"})
+- Projects: run_tool("project", {"action": "list"})
+- Tasks in a project: run_tool("workitem", {"action": "list", "project_id": "<project id>"})
+- New task: run_tool("workitem", {"action": "create", "project_id": "<project id>", "name": "<title>"})
+- Change a task: describe_tool("workitem") first; workitem_id is the UUID, never the sequence number.
+- Anything else (comments, sprints/cycles, labels, states, modules, intake): search_tools("<what you want>"), then describe_tool, then run_tool."""  # noqa: E501
+
 
 def community_edition_guard(verb: str, args: dict) -> None:
     """Refuse the `workitem` shapes Community Edition cannot serve.
@@ -212,6 +225,7 @@ SPEC = PluginSpec(
     probe=PROBE,
     probe_args=PROBE_ARGS,
     search_aliases=SEARCH_ALIASES,
+    lean_recipe=LEAN_RECIPE,
     # Not per-user, and never can be: a stdio subprocess's environment is fixed
     # at spawn. `verified` is the `plane-stdio` surface in tests/e2e/.
     maturity="verified",

@@ -115,3 +115,26 @@ def test_all_three_plane_plugins_share_one_vocabulary():
 
 def test_no_base_url_is_left_to_the_default():
     get("plane").validate({"base_url": ""})
+
+
+from beherouter.costing import estimate_tokens  # noqa: E402
+from beherouter.plugins import PLUGINS  # noqa: E402
+
+
+def test_every_plane_plugin_carries_the_lean_recipe():
+    from beherouter.plugins.plane import LEAN_RECIPE
+
+    for name in ("plane", "plane-http", "plane-http-apikey"):
+        assert PLUGINS[name].spec.lean_recipe == LEAN_RECIPE
+
+
+def test_lean_recipes_stay_under_300_tokens():
+    for p in PLUGINS.values():
+        assert estimate_tokens(p.spec.lean_recipe) < 300, p.spec.name
+
+
+def test_lean_recipe_uses_only_real_actions():
+    from beherouter.plugins.plane import LEAN_RECIPE
+
+    for call in ('"action": "me"', '"action": "list"', '"action": "create"'):
+        assert call in LEAN_RECIPE

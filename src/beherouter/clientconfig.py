@@ -158,6 +158,9 @@ def _hermes(surfaces: list[str], base_url: str) -> dict:
 def _librechat(surfaces: list[str], base_url: str, host: str) -> dict:
     """LibreChat's dialect, plus the two steps a human forgets.
 
+    Asks for the lean profile (`?profile=lean`): a chat client pays only for
+    the meta-tools (spec 2026-11-22).
+
     `headers` values are never substituted from the environment: LibreChat's
     StreamableHTTPOptionsSchema declares them as a plain string record with no
     extractEnvVariable transform, unlike `url` on that same schema. A `${VAR}`
@@ -179,7 +182,10 @@ def _librechat(surfaces: list[str], base_url: str, host: str) -> dict:
     servers = {
         s: {
             "type": "streamable-http",
-            "url": _url(base_url, s),
+            "url": f"{_url(base_url, s)}?profile=lean",
+            # beherouter writes the lean instructions (recipe + deployment
+            # text); `true` makes LibreChat use them instead of a hand copy.
+            "serverInstructions": True,
             "requiresOAuth": False,
             "headers": _auth(f"{{{{{token_var(s)}}}}}"),
             "customUserVars": {

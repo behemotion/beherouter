@@ -50,6 +50,7 @@ from .plane import (
     CATALOGUE,
     E2E,
     EDITION_FIELD,
+    LEAN_RECIPE,
     PINNED,
     PROBE,
     PROBE_ARGS,
@@ -75,6 +76,7 @@ SPEC = PluginSpec(
     probe=PROBE,
     probe_args=PROBE_ARGS,
     search_aliases=SEARCH_ALIASES,
+    lean_recipe=LEAN_RECIPE,
     # ⚠️ `verified`, not `per-user`, though the e2e stack proves two callers
     # reach Plane as themselves through this plugin: the tier rule asks for a
     # check asserting `matches_caller`, and `health --deep --bearer-file`

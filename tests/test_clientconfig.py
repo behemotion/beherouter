@@ -9,7 +9,7 @@ BASE = "https://gateway.example.com"
 def test_librechat_emits_one_entry_per_surface():
     out = render("librechat", ["gitea", "office"], BASE)
     assert set(out["mcpServers"]) == {"gitea", "office"}
-    assert out["mcpServers"]["gitea"]["url"] == f"{BASE}/gitea/mcp"
+    assert out["mcpServers"]["gitea"]["url"] == f"{BASE}/gitea/mcp?profile=lean"
 
 
 def test_librechat_includes_allowed_domains():
@@ -190,3 +190,16 @@ def test_empty_env_override_falls_back_to_the_default(monkeypatch):
 
     monkeypatch.setenv("BEHEROUTER_PUBLIC_URL", "")
     assert resolve_public_url() == "http://localhost:47100"
+
+
+def test_librechat_asks_for_the_lean_profile_and_server_instructions():
+    out = render("librechat", ["plane", "office"], BASE)
+    for name in ("plane", "office"):
+        entry = out["mcpServers"][name]
+        assert entry["url"].endswith(f"/{name}/mcp?profile=lean")
+        assert entry["serverInstructions"] is True
+
+
+def test_other_agents_keep_the_full_url():
+    out = render("claude-code", ["plane"], BASE)
+    assert out["mcpServers"]["plane"]["url"].endswith("/plane/mcp")

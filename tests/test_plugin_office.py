@@ -64,3 +64,9 @@ def test_office_declares_header_identity_support():
     support = get("office-mcp").spec.identity
     assert support.target == "header"
     assert set(support.modes) == {"bearer", "claims", "client", "exchange"}
+
+
+def test_office_is_self_discovering():
+    from beherouter.plugins import PLUGINS
+
+    assert PLUGINS["office-mcp"].spec.self_discovering is True
