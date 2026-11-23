@@ -1,7 +1,12 @@
+import json
+import re
+from pathlib import Path
+
 import pytest
 
+from beherouter.costing import estimate_tokens
 from beherouter.errors import UsageError
-from beherouter.plugins import get
+from beherouter.plugins import PLUGINS, get
 from beherouter.plugins.spec import PluginContext
 from beherouter.plugins.validate import validate_config
 
@@ -117,10 +122,6 @@ def test_no_base_url_is_left_to_the_default():
     get("plane").validate({"base_url": ""})
 
 
-from beherouter.costing import estimate_tokens  # noqa: E402
-from beherouter.plugins import PLUGINS  # noqa: E402
-
-
 def test_every_plane_plugin_carries_the_lean_recipe():
     from beherouter.plugins.plane import LEAN_RECIPE
 
@@ -136,5 +137,13 @@ def test_lean_recipes_stay_under_300_tokens():
 def test_lean_recipe_uses_only_real_actions():
     from beherouter.plugins.plane import LEAN_RECIPE
 
-    for call in ('"action": "me"', '"action": "list"', '"action": "create"'):
-        assert call in LEAN_RECIPE
+    path = Path(__file__).parent / "search_eval" / "catalogues" / "plane-0.3.2.json"
+    actions = {
+        t["name"]: set(t["inputSchema"]["properties"].get("action", {}).get("enum", ()))
+        for t in json.loads(path.read_text())
+    }
+    pairs = re.findall(r'run_tool\("(\w+)", \{"action": "(\w+)"', LEAN_RECIPE)
+    assert len(pairs) >= 4  # else the regex matched nothing and proved nothing
+    for tool, action in pairs:
+        assert tool in actions, tool
+        assert action in actions[tool], (tool, action)

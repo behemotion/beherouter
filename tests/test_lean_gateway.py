@@ -63,6 +63,7 @@ async def test_lean_costing_failure_keeps_the_attach(plugin, monkeypatch, caplog
     name = plugin("t-fail")
     full = (await build_surfaces({"s": RegistryEntry(name="s", plugin=name)}))["s"]
     assert lean_of(full) is not None
+    assert full.instructions  # the full listing is intact despite the failure
     assert "lean instructions failed" in caplog.text
 
 

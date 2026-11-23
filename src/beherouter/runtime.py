@@ -44,8 +44,10 @@ from .gateway import (
     is_config_fault,
 )
 from .logsetup import timestamp
+from .profiles import ProfileDispatcher
 from .registry import load_registry
 from .reload import Reloader, diff, fingerprint, watch_s, watch_stamp, watched_paths
+from .surface import lean_of
 
 logger = logging.getLogger("beherouter.gateway")
 
@@ -242,9 +244,6 @@ class Supervisor:
 
     async def _run(self, ready: asyncio.Future) -> None:
         try:
-            from .profiles import ProfileDispatcher
-            from .surface import lean_of
-
             app = self.surface.http_app(path="/mcp", stateless_http=self.stateless)
             lean = lean_of(self.surface)
             async with contextlib.AsyncExitStack() as stack:

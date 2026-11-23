@@ -343,7 +343,8 @@ instructions carrying the plugin's `lean_recipe` and the entry's `instructions`;
 `self_discovering` plugin (`office-mcp`) lists its pins and no meta-tools instead. A
 pinned tool is hidden in lean, not forbidden: `run_tool` reaches it. A session keeps the
 profile it was opened with (`profiles.ProfileDispatcher` routes by `mcp-session-id`
-first), and any other value is a 400. It is one attach: both apps share the backend,
+first), and any other value (an empty one, or a different case, included) answers
+**400 `application/problem+json`**; the caller's value is never echoed. It is one attach: both apps share the backend,
 health record, rate limiter and pipeline. On the recorded catalogues `plane` drops from
 5,317 to 289 tokens and `office-mcp` from 763 to 354; `context_cost` reports both.
 

@@ -201,5 +201,8 @@ def test_librechat_asks_for_the_lean_profile_and_server_instructions():
 
 
 def test_other_agents_keep_the_full_url():
-    out = render("claude-code", ["plane"], BASE)
-    assert out["mcpServers"]["plane"]["url"].endswith("/plane/mcp")
+    full = f"{BASE}/plane/mcp"
+    assert render("claude-code", ["plane"], BASE)["mcpServers"]["plane"]["url"] == full
+    assert render("pi", ["plane"], BASE)["mcpServers"]["plane"]["url"] == full
+    assert render("opencode", ["plane"], BASE)["mcp"]["plane"]["url"] == full
+    assert render("hermes", ["plane"], BASE)["mcp_servers"]["plane"]["url"] == full

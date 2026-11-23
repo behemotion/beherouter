@@ -277,8 +277,17 @@ def test_reserved_surface_names_are_refused(name):
 def self_disc_plugin():
     async def build(ctx):  # pragma: no cover - never attached here
         raise AssertionError
-    register(PluginSpec(name="t-selfdisc", summary="t", backing="inproc",
-                        pinned=("discover",), self_discovering=True), build)
+
+    register(
+        PluginSpec(
+            name="t-selfdisc",
+            summary="t",
+            backing="inproc",
+            pinned=("discover",),
+            self_discovering=True,
+        ),
+        build,
+    )
     yield "t-selfdisc"
     PLUGINS.pop("t-selfdisc", None)
 
@@ -296,6 +305,17 @@ def test_instructions_string_is_accepted(self_disc_plugin):
 def test_self_discovering_entry_with_no_pins_is_refused(self_disc_plugin):
     with pytest.raises(UsageError, match="self-discovering"):
         validate_entry(RegistryEntry(name="s", plugin=self_disc_plugin, pinned=[]))
+
+
+def test_self_discovering_entry_with_default_pins_is_accepted(self_disc_plugin):
+    validate_entry(RegistryEntry(name="s", plugin=self_disc_plugin))  # pinned unset
+
+
+def test_instructions_survive_save_and_load(tmp_path):
+    p = tmp_path / "r.toml"
+    entry = RegistryEntry(name="office", plugin="office-mcp", instructions="Workspace: homelab.")
+    save_registry(p, {"office": entry})
+    assert load_registry(p)["office"].instructions == "Workspace: homelab."
 
 
 def test_plugin_spec_defaults_are_off():

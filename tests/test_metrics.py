@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from prometheus_client.parser import text_string_to_metric_families
 
 from beherouter import metrics
@@ -139,3 +141,19 @@ async def test_sessions_are_summed_across_apps():
     a = FastMCP("a").http_app(path="/mcp")
     b = FastMCP("b").http_app(path="/mcp")
     assert metrics.track_sessions("s-sum", a, object(), b) is True
+
+
+def _fake_app(instances):
+    class Endpoint:
+        session_manager = SimpleNamespace(_server_instances=instances)
+
+    return SimpleNamespace(routes=[SimpleNamespace(endpoint=Endpoint())])
+
+
+def test_the_session_gauge_sums_live_transports_across_apps():
+    live = SimpleNamespace(is_terminated=False)
+    dead = SimpleNamespace(is_terminated=True)
+    full = _fake_app({"a": live, "b": dead, "c": live})
+    lean = _fake_app({"d": live})
+    assert metrics.track_sessions("s-live", full, object(), lean) is True
+    assert _value("beherouter_active_sessions", {"surface": "s-live"}) == 3.0

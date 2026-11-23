@@ -125,3 +125,51 @@ async def test_lean_listing_is_gated_like_full():
     assert policy.hides_listing  # else the assertion below proves nothing
     lean = lean_of(build_surface(_backend(), policy=policy))
     assert await _names(lean) == set()
+
+
+async def test_context_cost_costs_the_frozen_lean_listing_once(monkeypatch):
+    import beherouter.costing as costing
+
+    real = costing.surface_cost
+    costed = []
+
+    async def spy(mcp, *a, **kw):
+        costed.append(mcp)
+        return await real(mcp, *a, **kw)
+
+    monkeypatch.setattr(costing, "surface_cost", spy)
+    full = build_surface(_backend())
+    lean = lean_of(full)
+    async with Client(full) as c:
+        first = (await c.call_tool("context_cost", {})).data
+        second = (await c.call_tool("context_cost", {})).data
+    assert first["profiles"]["lean"] == second["profiles"]["lean"]
+    assert costed.count(lean) == 1
+    assert costed.count(full) == 2
+
+
+def _refusing_policy():
+    class Refuse(IdentityPolicy):
+        def resolve(self):  # pragma: no cover - never reached when refused
+            raise AuthError("no")
+
+        def guard(self):
+            raise AuthError("no")
+
+    policy = Refuse(surface="demo", require_roles=("admin",))
+    assert policy.hides_listing
+    return policy
+
+
+async def test_a_refused_caller_sees_nothing_on_a_self_discovering_lean():
+    lean = lean_of(build_surface(_backend(), policy=_refusing_policy(), self_discovering=True))
+    assert await _names(lean) == set()
+
+
+async def test_a_refused_caller_cannot_run_tool_on_lean():
+    ex = _Exec()
+    lean = lean_of(build_surface(_backend(ex), policy=_refusing_policy()))
+    async with Client(lean) as c:
+        with pytest.raises(ToolError):
+            await c.call_tool("run_tool", {"name": "ping", "args": {}})
+    assert ex.calls == []

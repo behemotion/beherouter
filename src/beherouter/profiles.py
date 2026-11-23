@@ -42,7 +42,7 @@ class ProfileDispatcher:
         if scope["type"] != "http":
             await self.apps["full"](scope, receive, send)
             return
-        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True)
         requested = query.get("profile", [None])[-1]
         if requested is not None and requested not in PROFILES:
             # The caller's value is never echoed back.
@@ -62,9 +62,18 @@ class ProfileDispatcher:
         profile = (self.sessions.get(sid) if sid else None) or requested or "full"
         if sid and sid in self.sessions:
             self.sessions.move_to_end(sid)  # LRU: a used session is not evicted first
-        if sid and scope.get("method") == "DELETE":
-            self.sessions.pop(sid, None)
         app = self.apps[profile]
+        if sid and scope.get("method") == "DELETE" and sid in self.sessions:
+            sessions = self.sessions
+
+            async def forget(message: Message) -> None:
+                # Forget the id only once the issuing app has accepted the DELETE.
+                if message["type"] == "http.response.start" and 200 <= message["status"] < 300:
+                    sessions.pop(sid, None)
+                await send(message)
+
+            await app(scope, receive, forget)
+            return
         if sid:
             await app(scope, receive, send)
             return

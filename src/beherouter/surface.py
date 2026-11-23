@@ -499,6 +499,8 @@ def build_surface(
 
         return await pipeline.run("run_tool", work)
 
+    lean_tokens: list[int] = []  # the frozen lean listing is costed once, on first use
+
     async def context_cost(context_window: int | None = None) -> dict:
         # Computed lazily rather than at build time: build_surface is sync and
         # FastMCP.list_tools() is not, and a lazily-computed figure stays
@@ -527,12 +529,10 @@ def build_surface(
             # record: health.check_entry attaches fresh in a separate process with
             # no baseline, so it cannot observe drift or staleness at all.
             payload["catalogue"] = catalogue.status
-            payload["profiles"] = {
-                "full": cost.tokens_published,
-                "lean": (
-                    await surface_cost(lean, backend, descriptors=catalogue.descriptors)
-                ).tokens_published,
-            }
+            if not lean_tokens:
+                lean_cost = await surface_cost(lean, backend, descriptors=catalogue.descriptors)
+                lean_tokens.append(lean_cost.tokens_published)
+            payload["profiles"] = {"full": cost.tokens_published, "lean": lean_tokens[0]}
             if catalogue.drift.changed:
                 payload["catalogue_drift"] = {
                     "added": list(catalogue.drift.added),
