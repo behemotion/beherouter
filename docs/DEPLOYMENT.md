@@ -631,6 +631,17 @@ Ordering matters: build **before** switching config or restarting. A build that 
 the container has already been restarted against a new registry leaves the gateway
 crash-looping on a missing dependency — taking every surface and `/healthz` down.
 
+**Upgrading to 0.2.8 (lean listing profile).** Every existing URL keeps its full
+listing byte for byte, so Claude Code, pi, OpenCode and Hermes need nothing. A client
+that appends `?profile=lean` gets only `search_tools` / `describe_tool` / `run_tool`
+(a self-discovering plugin such as `office-mcp`: its pins only), with instructions
+that carry the plugin's recipe and the registry entry's `instructions` text.
+Regenerated `client-config librechat` output uses the lean URL and
+`serverInstructions: true`: before deploying it, rewrite every LibreChat agent's
+stored `tools` allowlist, because the pinned `<tool>_mcp_<surface>` names and
+`context_cost_mcp_*` disappear from its listing and a stale allowlist fails silently.
+See [architecture § Profiles](architecture.md).
+
 ## Rollback
 
 Run the previous image against the previous registry. There is **no state to migrate**.

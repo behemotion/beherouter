@@ -20,6 +20,16 @@ auto-generated contributor appendix is appended below it). Releases before
   refused DELETE no longer drops the session's profile.
 - `context_cost` costs the frozen lean listing once and reuses it.
 
+### Security
+
+- Locked dependencies moved past 36 published advisories (`pip-audit`):
+  `fastmcp` 3.4.5 → 3.4.11, `mcp` 1.29.0 → 1.30.0, `authlib` 1.7.2 → 1.9.10,
+  `joserfc` 1.7.4 → 1.8.0, `certifi` 2026.7.22 → 2026.11.20, `dnspython`
+  2.8.0 → 2.9.2, `filelock` 4.0.12 → 4.3.1, `opentelemetry-api` 1.44.0 →
+  1.45.2. All within the existing `pyproject` ranges; the suite (including the
+  private session-table read behind `beherouter_active_sessions`) passes
+  unchanged.
+
 ### Added
 
 - **Lean listing profile.** `/<surface>/mcp?profile=lean` lists only
@@ -28,9 +38,15 @@ auto-generated contributor appendix is appended below it). Releases before
   `tools/call` of its name answers `unknown_tool` naming the `run_tool` call.
   Measured on the recorded catalogues (`context_cost` estimate): `plane` 5,317 →
   289 tokens, `office-mcp` 763 → 354. A session keeps the profile it was opened
-  with, and any other `profile` value answers 400 `application/problem+json`, never echoing it. One attach serves both
-  profiles. See `docs/architecture.md` § Profiles.
-- ⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every `<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing (on a self-discovering surface such as office, `search_tools`, `describe_tool` and `run_tool` too). Agents whose stored `tools` allowlists name those tools lose them silently: rewrite the allowlists in the same change.
+  with, and any other `profile` value answers 400 `application/problem+json`,
+  never echoing it. One attach serves both profiles. See `docs/architecture.md`
+  § Profiles.
+- ⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every
+  `<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing
+  (on a self-discovering surface such as office, `search_tools`,
+  `describe_tool` and `run_tool` too). Agents whose stored `tools` allowlists
+  name those tools lose them silently: rewrite the allowlists in the same
+  change.
 - **`PluginSpec.self_discovering` and `lean_recipe`.** A self-discovering plugin
   (`office-mcp`) publishes its pins and no meta-tools in lean; `lean_recipe` is
   the plugin's text for the lean `instructions` (under 300 tokens). `plane`
@@ -45,7 +61,7 @@ auto-generated contributor appendix is appended below it). Releases before
 
 - Every surface's full listing (`initialize` instructions and `tools/list`),
   byte for byte; `tests/test_full_listing_golden.py` holds it.
-- Chart packaging 0.1.9 (appVersion only).
+- Chart templates and values: chart packaging 0.1.10 moves `appVersion` only.
 
 ## [0.2.6] - 2026-10-10
 
