@@ -110,9 +110,11 @@ registry setting**, which gives every client of a surface the same listing.
 - Unknown values (`?profile=tiny`): **400** with an RFC 9457 body listing the
   valid profiles. Falling back to full would hide a typo (*my call*).
 - **Hidden, not forbidden.** In lean a pinned tool is reachable through
-  `run_tool(name, args)`, and a direct `tools/call` of its name is also accepted,
-  as with gate-hidden tools (*my call*). LibreChat itself can only call listed
-  tools, so in practice everything goes through `run_tool`.
+  `run_tool(name, args)`. A direct `tools/call` of its name is refused as
+  `unknown_tool`, and the message names the `run_tool` call to make instead
+  (*my call, revised while planning*: answering an unlisted name directly
+  would bypass FastMCP's result conversion). LibreChat can only call listed
+  tools anyway.
 - `describe_tool` reports `pinned` against the **full** published set in both
   profiles. A tool's pin status is a property of the surface, not of the view.
 
@@ -155,8 +157,9 @@ string mid-session:*
   is therefore never sent to the wrong app, whatever the URL says.
 - A request **without** a session id (an `initialize`, or any stateless
   surface) is routed by `?profile=`.
-- An unknown session id goes to full, as today, and gets FastMCP's normal
-  error.
+- An unknown session id (for example after a restart) is routed by
+  `?profile=` like a sessionless request, and gets FastMCP's normal error from
+  that app.
 
 The builder still confirms that LibreChat keeps the query string on its
 `initialize` (it builds the transport from the configured URL); that is the
@@ -174,8 +177,8 @@ only request where the query string matters.
 ### `client-config librechat`
 
 It emits `url: …/<surface>/mcp?profile=lean` and `serverInstructions: true` for
-every surface. For a self-discovering surface (office) it emits the plain URL,
-since lean equals full there. Unit tests cover both.
+every surface, self-discovering ones included (lean office drops the
+meta-tools). Unit tests cover it.
 
 ## Scope and done
 
