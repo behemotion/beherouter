@@ -333,6 +333,20 @@ and one uniform client surface, not context savings.** `plane` is the
 context-savings case — 11 pinned out of 30, the other 19 reachable through
 `search_tools`/`run_tool`: an agent pays 14 tool definitions instead of 30.
 
+### Profiles: full and lean
+
+Each surface answers in two profiles, chosen by `?profile=` on its endpoint. **full**
+(the default, also with no parameter) is the listing above: pins plus `search_tools`,
+`describe_tool`, `run_tool` and `context_cost`, byte for byte as before. **lean**
+(`?profile=lean`) lists only `search_tools`, `describe_tool` and `run_tool`, with
+instructions carrying the plugin's `lean_recipe` and the entry's `instructions`; a
+`self_discovering` plugin (`office-mcp`) lists its pins and no meta-tools instead. A
+pinned tool is hidden in lean, not forbidden: `run_tool` reaches it. A session keeps the
+profile it was opened with (`profiles.ProfileDispatcher` routes by `mcp-session-id`
+first), and any other value is a 400. It is one attach: both apps share the backend,
+health record, rate limiter and pipeline. On the recorded catalogues `plane` drops from
+5,317 to 289 tokens and `office-mcp` from 763 to 354; `context_cost` reports both.
+
 ### Pins: probe before pinning
 
 ⚠️ A backend's catalogue advertises the **commercial** surface, so "the tool

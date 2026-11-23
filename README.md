@@ -50,6 +50,8 @@ to host, no index to rebuild and no vector store to run.
 **To agents**: one endpoint per backend at `/<surface>/mcp`, serving a few pinned verbs
 plus `search_tools`, `describe_tool`, `run_tool` and `context_cost`. The published tool
 list is frozen at attach, so a catalogue refresh never invalidates a host's prompt cache.
+`/<surface>/mcp?profile=lean` lists only the three search tools (no pins), for clients that
+want the smallest listing.
 
 **To backends**: every backend is a versioned, tested **plugin** that carries its own
 pins, probe, config schema, credential names, identity modes and quirk workarounds.

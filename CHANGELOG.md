@@ -8,6 +8,34 @@ released is the body of its GitHub Release (`release.yml` extracts it, and the
 auto-generated contributor appendix is appended below it). Releases before
 0.2.0 were not tagged; their history is the git log.
 
+## [0.2.7] - 2026-11-23
+
+### Added
+
+- **Lean listing profile.** `/<surface>/mcp?profile=lean` lists only
+  `search_tools`, `describe_tool` and `run_tool`: no pins, no `context_cost`. A
+  pinned tool is hidden, not forbidden: `run_tool` still reaches it, and a direct
+  `tools/call` of its name answers `unknown_tool` naming the `run_tool` call.
+  Measured on the recorded catalogues (`context_cost` estimate): `plane` 5,317 →
+  289 tokens, `office-mcp` 763 → 354. A session keeps the profile it was opened
+  with, and any other `profile` value answers 400. One attach serves both
+  profiles. See `docs/architecture.md` § Profiles.
+- **`PluginSpec.self_discovering` and `lean_recipe`.** A self-discovering plugin
+  (`office-mcp`) publishes its pins and no meta-tools in lean; `lean_recipe` is
+  the plugin's text for the lean `instructions` (under 300 tokens). `plane`
+  ships a recipe. See `docs/PLUGINS.md`.
+- **Registry `instructions` key**: deployment text (a workspace name, say)
+  appended to the lean instructions only.
+- **`context_cost.profiles`**: the surface's cost in `full` and `lean`.
+- **LibreChat client config** (`client-config`) asks for `?profile=lean` and sets
+  `serverInstructions: true`.
+
+### Unchanged
+
+- Every surface's full listing (`initialize` instructions and `tools/list`),
+  byte for byte; `tests/test_full_listing_golden.py` holds it.
+- Chart packaging 0.1.9 (appVersion only).
+
 ## [0.2.6] - 2026-10-10
 
 ### Added

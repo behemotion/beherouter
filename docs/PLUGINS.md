@@ -329,6 +329,8 @@ class PluginSpec:
     requires_entry: tuple[str, ...] = ()  # entry keys with no tested default
     maturity: str = "declared"         # one of MATURITY_TIERS; see § Maturity
     evidence: tuple[str, ...] = ()     # what proves the tier, relative to the repo root
+    self_discovering: bool = False     # lean lists the pins, no meta-tools
+    lean_recipe: str = ""              # text for the lean instructions; under 300 tokens
 ```
 
 | Field | Meaning |
@@ -344,6 +346,8 @@ class PluginSpec:
 | `search_aliases` | Extra search words per tool: what agents type that the backend's descriptions lack. See § Search vocabulary |
 | `requires_entry` | Registry-entry keys (`"probe"`, `"pinned"`) the entry **must** set, for a generic source with no tested default to fall back to. `validate_entry` refuses an entry without them, and `plugin-config` emits them |
 | `maturity` / `evidence` | The tier the plugin claims and the recorded catalogues and test ids that prove it. See § Maturity |
+| `self_discovering` | The backend does its own discovery (`office-mcp`'s `discover`/`invoke`). The lean profile (`?profile=lean`) then publishes the entry's pins and none of the gateway's meta-tools, so the entry must pin something. Full is unaffected |
+| `lean_recipe` | How to reach this plugin's tools through `search_tools` / `describe_tool` / `run_tool`, appended to the lean `instructions`. Keep it under **300 tokens** by `costing.estimate_tokens`; `test_lean_recipes` enforces it. Deployment names belong in the registry entry's `instructions` key, not here |
 
 ## `pinned` and `probe` are overrides, not required knowledge
 
