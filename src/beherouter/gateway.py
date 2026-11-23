@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from . import metrics
+from . import costing, metrics
 from .audit import audit_enabled
 from .auth import (
     AUTH_MODE_VAR,
@@ -23,7 +23,7 @@ from .auth import (
 from .envexpand import expand
 from .errors import Unavailable, UsageError
 from .registry import RegistryEntry, load_registry, validate_entry
-from .surface import build_surface
+from .surface import build_surface, lean_of
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +301,7 @@ async def _finish_attach(
         call_timeout_s=call_timeout_s(entry),
         gates=gates_from_entry(entry, limiters),
         stages=(stage,) if stage else (),
+        self_discovering=bool(plugin and plugin.spec.self_discovering),
     )
     try:
         surface.instructions = instructions_line(await surface_cost(surface, backend), name)
@@ -311,6 +312,22 @@ async def _finish_attach(
             name,
             exc_info=True,
         )
+    lean = lean_of(surface)
+    if lean is not None:
+        try:
+            lean.instructions = costing.lean_instructions(
+                await surface_cost(lean, backend),
+                name,
+                self_discovering=bool(plugin and plugin.spec.self_discovering),
+                recipe=plugin.spec.lean_recipe if plugin else "",
+                extra=entry.instructions,
+            )
+        except Exception:
+            logger.warning(
+                "lean instructions failed for surface %r; lean attaches without them",
+                name,
+                exc_info=True,
+            )
     return surface
 
 

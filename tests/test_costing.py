@@ -13,6 +13,7 @@ from beherouter.costing import (
     as_payload,
     estimate_tokens,
     instructions_line,
+    lean_instructions,
     naive_tokens,
     surface_cost,
     tool_tokens,
@@ -286,3 +287,24 @@ def test_instructions_line_does_not_claim_everything_is_published_after_drift():
     line = instructions_line(cost, "plane")
     assert "All 2 are published" not in line
     assert "no longer" in line
+
+
+def _lean_cost(meta, pinned_tokens, advertised=31, pinned=12):
+    return SurfaceCost(advertised=advertised, pinned=pinned, tokens_meta=meta,
+                       tokens_pinned=pinned_tokens, tokens_published=meta + pinned_tokens,
+                       tokens_naive=13762, tokens_saved=0, method="estimate/json-4.3")
+
+
+def test_lean_instructions_name_the_three_step_path():
+    text = lean_instructions(_lean_cost(300, 0), "plane", self_discovering=False,
+                             recipe="RECIPE", extra="Workspace: homelab.")
+    assert text.startswith("Surface 'plane' (lean profile): 31 tools, reached through")
+    assert "about 300 tokens" in text
+    assert text.endswith("RECIPE\n\nWorkspace: homelab.")
+
+
+def test_lean_instructions_for_a_self_discovering_surface():
+    text = lean_instructions(_lean_cost(0, 354, advertised=4, pinned=4), "office",
+                             self_discovering=True)
+    assert text == ("Surface 'office' (lean profile): 4 tools listed, costing about "
+                    "354 tokens (estimate/json-4.3). They are this backend's own discovery path.")

@@ -188,3 +188,30 @@ def instructions_line(cost: SurfaceCost, surface: str) -> str:
         f"Surface '{surface}': {cost.pinned} of {cost.advertised} tools published, "
         f"costing about {cost.tokens_published} tokens ({cost.method}).{tail}"
     )
+
+
+def lean_instructions(
+    cost: SurfaceCost,
+    surface: str,
+    *,
+    self_discovering: bool,
+    recipe: str = "",
+    extra: str | None = None,
+) -> str:
+    """The lean profile's `instructions`: its own cost, the path to the tools,
+    then the plugin's recipe and the deployment's text (spec 2026-11-22)."""
+    if self_discovering:
+        head = (
+            f"Surface '{surface}' (lean profile): {cost.pinned} tools listed, costing "
+            f"about {cost.tokens_published} tokens ({cost.method}). They are this "
+            f"backend's own discovery path."
+        )
+    else:
+        head = (
+            f"Surface '{surface}' (lean profile): {cost.advertised} tools, reached "
+            f"through search_tools -> describe_tool -> run_tool; this listing costs "
+            f"about {cost.tokens_published} tokens ({cost.method}). Arguments given "
+            f"in full below can go straight to run_tool without describe_tool."
+        )
+    parts = [head, recipe.strip(), (extra or "").strip()]
+    return "\n\n".join(p for p in parts if p)
