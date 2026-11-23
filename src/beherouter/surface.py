@@ -58,6 +58,28 @@ def _install_redaction() -> None:
 
 _install_redaction()
 
+# The lean profile's FastMCP hangs on the full one under this name, so every
+# existing caller of build_surface keeps receiving the full FastMCP unchanged.
+LEAN_ATTR = "beherouter_lean"
+
+SEARCH_TOOLS_DESC = (
+    "Search this surface's tools. Returns name + one-line brief; call "
+    "describe_tool for arguments before run_tool."
+)
+DESCRIBE_TOOL_DESC = "Return the argument schema + summary for a tool name."
+RUN_TOOL_DESC = "Invoke any tool on this surface by name with an args object."
+CONTEXT_COST_DESC = (
+    "Report what this surface costs a client's context: tokens for the "
+    "published tools, and what publishing the whole catalogue would "
+    "cost. Pass context_window to get both as a percentage of it."
+)
+
+
+def lean_of(mcp: FastMCP) -> FastMCP | None:
+    """The lean-profile FastMCP built beside `mcp`, or None (a surface not built
+    by build_surface, e.g. a test double)."""
+    return getattr(mcp, LEAN_ATTR, None)
+
 
 def _make_pinned_tool(descriptor: ToolDescriptor, backend: Backend, runner):
     """Build a callable with a REAL signature derived from the descriptor.
@@ -288,6 +310,7 @@ def build_surface(
     audit: AuditSink | None = None,
     gates: Gates | None = None,
     stages: Sequence[Stage] = (),
+    self_discovering: bool = False,
 ) -> FastMCP:
     """Build the MCP surface for one attached backend.
 
@@ -306,15 +329,16 @@ def build_surface(
     included (the kill switch, killswitch.stage_for).
     """
     mcp = FastMCP(backend.name, auth=auth)
+    lean = FastMCP(backend.name, auth=auth)
     # None unless identity is configured AND enabled; one name, so the closures
     # below narrow on it instead of re-deriving it from a bool.
     active = policy if policy is not None and policy.enabled else None
     hide_surface = active is not None and active.hides_listing
     hide_tools = gates is not None and gates.roles is not None and gates.hide
     if hide_surface or hide_tools:
-        mcp.add_middleware(
-            _GateListing(active if hide_surface else None, gates if hide_tools else None)
-        )
+        listing = _GateListing(active if hide_surface else None, gates if hide_tools else None)
+        mcp.add_middleware(listing)
+        lean.add_middleware(listing)
 
     # Every published tool -- pinned and meta alike -- goes through this one
     # pipeline. It gates WITHOUT materialising (`policy.guard()`, before any
@@ -387,8 +411,23 @@ def build_surface(
             suggestions=list(close),
         )
 
+    def lean_unknown_tool(name: str) -> AxiError:
+        # A pin is HIDDEN in lean, not forbidden: say how to reach it.
+        if name in published_names and not self_discovering:
+            return tag(
+                NotFound(
+                    f"tool '{name}' is not listed on this connection (lean profile); "
+                    f"call run_tool(name='{name}', args={{...}}) instead."
+                ),
+                "unknown_tool",
+                suggestions=[name],
+            )
+        return unknown_tool(name)
+
     for d in backend.pinned:
         register_pinned(mcp, d, backend, run_pinned)
+        if self_discovering:
+            register_pinned(lean, d, backend, run_pinned)
     mcp.add_middleware(
         _RecordRefusedCall(
             pipeline,
@@ -396,13 +435,10 @@ def build_surface(
             unknown_tool,
         )
     )
-
-    @mcp.tool(
-        description=(
-            "Search this surface's tools. Returns name + one-line brief; call "
-            "describe_tool for arguments before run_tool."
-        )
+    lean.add_middleware(
+        _RecordRefusedCall(pipeline, published_names | META_TOOL_NAMES, lean_unknown_tool)
     )
+
     async def search_tools(query: str, limit: int = DEFAULT_LIMIT) -> list[dict]:
         # A negative limit means nothing; it used to slice from the END ([:-1]),
         # differently with and without a tool gate. Clamped here, not in the
@@ -424,7 +460,6 @@ def build_surface(
 
         return await pipeline.run("search_tools", work)
 
-    @mcp.tool(description="Return the argument schema + summary for a tool name.")
     async def describe_tool(name: str) -> dict:
         async def work(scope):
             await catalogue.ensure_fresh()
@@ -451,7 +486,6 @@ def build_surface(
 
         return await pipeline.run("describe_tool", work)
 
-    @mcp.tool(description="Invoke any tool on this surface by name with an args object.")
     async def run_tool(name: str, args: dict | None = None) -> dict:
         async def work(scope):
             await catalogue.ensure_fresh()
@@ -464,14 +498,6 @@ def build_surface(
 
         return await pipeline.run("run_tool", work)
 
-    @mcp.tool(
-        description=(
-            "Report what this surface costs a client's context: tokens for the "
-            "published tools, and what publishing the whole catalogue would "
-            "cost. Pass context_window to get both as a percentage of it."
-        ),
-        annotations={"readOnlyHint": True},
-    )
     async def context_cost(context_window: int | None = None) -> dict:
         # Computed lazily rather than at build time: build_surface is sync and
         # FastMCP.list_tools() is not, and a lazily-computed figure stays
@@ -500,6 +526,12 @@ def build_surface(
             # record: health.check_entry attaches fresh in a separate process with
             # no baseline, so it cannot observe drift or staleness at all.
             payload["catalogue"] = catalogue.status
+            payload["profiles"] = {
+                "full": cost.tokens_published,
+                "lean": (
+                    await surface_cost(lean, backend, descriptors=catalogue.descriptors)
+                ).tokens_published,
+            }
             if catalogue.drift.changed:
                 payload["catalogue_drift"] = {
                     "added": list(catalogue.drift.added),
@@ -510,4 +542,16 @@ def build_surface(
 
         return await pipeline.run("context_cost", work)
 
+    # Registration order on `mcp` is today's (pins, then these four), so the
+    # full listing is byte-identical; test_full_listing_golden holds that.
+    mcp.tool(description=SEARCH_TOOLS_DESC)(search_tools)
+    mcp.tool(description=DESCRIBE_TOOL_DESC)(describe_tool)
+    mcp.tool(description=RUN_TOOL_DESC)(run_tool)
+    mcp.tool(description=CONTEXT_COST_DESC, annotations={"readOnlyHint": True})(context_cost)
+    if not self_discovering:
+        # context_cost is an operator tool: full only (spec 2026-11-22).
+        lean.tool(description=SEARCH_TOOLS_DESC)(search_tools)
+        lean.tool(description=DESCRIBE_TOOL_DESC)(describe_tool)
+        lean.tool(description=RUN_TOOL_DESC)(run_tool)
+    setattr(mcp, LEAN_ATTR, lean)
     return mcp
