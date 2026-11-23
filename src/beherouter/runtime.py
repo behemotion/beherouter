@@ -170,8 +170,8 @@ class SurfaceTable:
         return sorted(n for n, s in self.slots.items() if s.app is not None)
 
 
-def _track_sessions(name: str, app) -> None:
-    if not metrics.track_sessions(name, app):
+def _track_sessions(name: str, *apps) -> None:
+    if not metrics.track_sessions(name, *apps):
         logger.warning(
             "beherouter_active_sessions omitted for surface %r: this FastMCP "
             "does not expose its session table",
@@ -192,7 +192,8 @@ class Supervisor:
         self.stateless = stateless
         self.task: asyncio.Task | None = None
         self._stop = asyncio.Event()
-        self._app = None  # the raw http app, once its lifespan is serving
+        self._app = None  # the raw full http app, once its lifespan is serving
+        self._apps: list = []  # every raw http app served (full, and lean if any)
         # Set by the install: called once if the app dies after it was serving.
         self.on_failed: Callable[[], None] | None = None
 
@@ -232,7 +233,7 @@ class Supervisor:
                 self.name,
             )
         elif self._app is not None:
-            _track_sessions(self.name, self._app)
+            _track_sessions(self.name, *self._apps)
 
     def stop(self) -> None:
         """Stop taking requests is the caller's job (swap the slot first); this
@@ -241,12 +242,26 @@ class Supervisor:
 
     async def _run(self, ready: asyncio.Future) -> None:
         try:
+            from .profiles import ProfileDispatcher
+            from .surface import lean_of
+
             app = self.surface.http_app(path="/mcp", stateless_http=self.stateless)
-            async with app.router.lifespan_context(app):
+            lean = lean_of(self.surface)
+            async with contextlib.AsyncExitStack() as stack:
+                # Both lifespans entered and exited in THIS task (module note).
+                await stack.enter_async_context(app.router.lifespan_context(app))
+                apps = [app]
+                served = app
+                if lean is not None:
+                    lean_app = lean.http_app(path="/mcp", stateless_http=self.stateless)
+                    await stack.enter_async_context(lean_app.router.lifespan_context(lean_app))
+                    apps.append(lean_app)
+                    served = ProfileDispatcher(app, lean_app)
                 if ready.done():  # start()'s caller gave up while we entered
                     return
-                counted = _Counted(app)
+                counted = _Counted(served)
                 self._app = app
+                self._apps = apps
                 ready.set_result(counted)
                 await self._stop.wait()
                 await counted.drained(self.drain_s)

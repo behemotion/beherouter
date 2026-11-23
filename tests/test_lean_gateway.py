@@ -1,6 +1,7 @@
 """Lean instructions are set at attach (spec 2026-11-22)."""
 
 import pytest
+from reload_harness import running, write
 
 from beherouter.gateway import build_surfaces
 from beherouter.models import Backend, ToolDescriptor
@@ -72,3 +73,66 @@ async def test_surface_without_a_lean_twin_attaches(plugin, monkeypatch):
     name = plugin("t-nolean")
     full = (await build_surfaces({"s": RegistryEntry(name="s", plugin=name)}))["s"]
     assert full.instructions
+
+
+TOKEN = {"Authorization": "Bearer s3cret", "Accept": "application/json, text/event-stream"}
+INIT = {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                   "clientInfo": {"name": "test", "version": "0"}}}
+LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+
+@pytest.fixture
+def _env(monkeypatch):
+    monkeypatch.setenv("BEHEROUTER_GATEWAY_TOKEN", "s3cret")
+    monkeypatch.setenv("BEHEROUTER_RELOAD_DRAIN_S", "0")
+
+
+async def _list(c, url, drop_query_after_init=False):
+    init = await c.post(url, json=INIT, headers=TOKEN)
+    assert init.status_code == 200, init.text
+    h = {**TOKEN}
+    if "mcp-session-id" in init.headers:
+        h["mcp-session-id"] = init.headers["mcp-session-id"]
+    later = url.split("?")[0] if drop_query_after_init else url
+    await c.post(later, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=h)
+    return init, await c.post(later, json=LIST, headers=h)
+
+
+async def test_http_lean_lists_meta_tools_only(tmp_path, plugin, _env):
+    name = plugin("t-http", lean_recipe="R")
+    reg = tmp_path / "r.toml"
+    write(reg, f'[a]\nplugin = "{name}"\n')
+    async with running(reg) as (_rt, c):
+        init, listed = await _list(c, "/a/mcp?profile=lean")
+        assert "(lean profile)" in init.text
+        assert '"run_tool"' in listed.text and '"ping"' not in listed.text
+        _, full = await _list(c, "/a/mcp")
+        assert '"ping"' in full.text and '"context_cost"' in full.text
+
+
+async def test_http_lean_session_survives_a_dropped_query(tmp_path, plugin, _env):
+    name = plugin("t-drop")
+    reg = tmp_path / "r.toml"
+    write(reg, f'[a]\nplugin = "{name}"\n')
+    async with running(reg) as (_rt, c):
+        _, listed = await _list(c, "/a/mcp?profile=lean", drop_query_after_init=True)
+        assert '"ping"' not in listed.text and '"run_tool"' in listed.text
+
+
+async def test_http_unknown_profile_is_400(tmp_path, plugin, _env):
+    name = plugin("t-400")
+    reg = tmp_path / "r.toml"
+    write(reg, f'[a]\nplugin = "{name}"\n')
+    async with running(reg) as (_rt, c):
+        r = await c.post("/a/mcp?profile=tiny", json=INIT, headers=TOKEN)
+        assert r.status_code == 400
+
+
+async def test_stateless_surface_serves_lean(tmp_path, plugin, _env):
+    name = plugin("t-sl")
+    reg = tmp_path / "r.toml"
+    write(reg, f'[a]\nplugin = "{name}"\nstateless = true\n')
+    async with running(reg) as (_rt, c):
+        _, listed = await _list(c, "/a/mcp?profile=lean")
+        assert listed.status_code == 200 and '"ping"' not in listed.text

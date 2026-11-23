@@ -130,9 +130,10 @@ def _session_holder(app: object) -> object | None:
     return None
 
 
-def track_sessions(surface: str, app: object) -> bool:
-    """Count `app`'s open sessions at scrape time. False, and no series, when
-    this FastMCP does not expose its session table.
+def track_sessions(surface: str, *apps: object) -> bool:
+    """Count the open sessions of `apps` (a surface's full and lean apps) at
+    scrape time. False, and no series, when none of them exposes its session
+    table.
 
     ⚠️ Reads a PRIVATE attribute (`_server_instances` of the MCP SDK's
     StreamableHTTPSessionManager). FastMCP's `http_app()` creates that manager
@@ -141,16 +142,22 @@ def track_sessions(surface: str, app: object) -> bool:
     so it is looked up at scrape time, never captured. There is no public
     count; test_metrics holds this against the pinned version.
     """
-    holder = _session_holder(app)
-    if holder is None:
+    holders = [h for h in (_session_holder(a) for a in apps) if h is not None]
+    if not holders:
         return False
 
     def count() -> float:
-        instances = getattr(getattr(holder, "session_manager", None), "_server_instances", None)
-        if not isinstance(instances, dict):
-            return 0.0
-        # A DELETE-terminated transport stays in the table, flagged.
-        return float(sum(1 for t in instances.values() if not getattr(t, "is_terminated", False)))
+        total = 0
+        for holder in holders:
+            instances = getattr(
+                getattr(holder, "session_manager", None), "_server_instances", None
+            )
+            if isinstance(instances, dict):
+                # A DELETE-terminated transport stays in the table, flagged.
+                total += sum(
+                    1 for t in instances.values() if not getattr(t, "is_terminated", False)
+                )
+        return float(total)
 
     ACTIVE_SESSIONS.labels(surface=surface).set_function(count)
     return True

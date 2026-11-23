@@ -131,3 +131,11 @@ async def test_the_gateway_exposes_surface_up_for_attached_and_failed(monkeypatc
     ):
         text = (await c.get("/metrics")).text
     assert 'beherouter_surface_up{surface="deadsurf"} 0.0' in text
+
+
+async def test_sessions_are_summed_across_apps():
+    from fastmcp import FastMCP
+
+    a = FastMCP("a").http_app(path="/mcp")
+    b = FastMCP("b").http_app(path="/mcp")
+    assert metrics.track_sessions("s-sum", a, object(), b) is True
