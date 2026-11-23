@@ -8,7 +8,17 @@ released is the body of its GitHub Release (`release.yml` extracts it, and the
 auto-generated contributor appendix is appended below it). Releases before
 0.2.0 were not tagged; their history is the git log.
 
-## [0.2.7] - 2026-11-23
+## [0.2.8] - 2026-11-23
+
+0.2.7 was never tagged; its changes ship in 0.2.8.
+
+### Fixed
+
+- An empty `?profile=` now answers 400 `application/problem+json` (it silently
+  served full); the caller's value is never echoed.
+- A `DELETE` forgets its session only after the issuing app answers 2xx, so a
+  refused DELETE no longer drops the session's profile.
+- `context_cost` costs the frozen lean listing once and reuses it.
 
 ### Added
 
@@ -18,7 +28,7 @@ auto-generated contributor appendix is appended below it). Releases before
   `tools/call` of its name answers `unknown_tool` naming the `run_tool` call.
   Measured on the recorded catalogues (`context_cost` estimate): `plane` 5,317 →
   289 tokens, `office-mcp` 763 → 354. A session keeps the profile it was opened
-  with, and any other `profile` value answers 400. One attach serves both
+  with, and any other `profile` value answers 400 `application/problem+json`, never echoing it. One attach serves both
   profiles. See `docs/architecture.md` § Profiles.
 - ⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every `<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing (on a self-discovering surface such as office, `search_tools`, `describe_tool` and `run_tool` too). Agents whose stored `tools` allowlists name those tools lose them silently: rewrite the allowlists in the same change.
 - **`PluginSpec.self_discovering` and `lean_recipe`.** A self-discovering plugin
