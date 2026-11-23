@@ -303,6 +303,12 @@ def test_lean_instructions_name_the_three_step_path():
     assert text.endswith("RECIPE\n\nWorkspace: homelab.")
 
 
+def test_lean_instructions_without_recipe_or_extra_end_after_the_cost():
+    text = lean_instructions(_lean_cost(300, 0), "plane", self_discovering=False)
+    assert "Arguments given" not in text
+    assert text.endswith("(estimate/json-4.3)."), text
+
+
 def test_lean_instructions_for_a_self_discovering_surface():
     text = lean_instructions(_lean_cost(0, 354, advertised=4, pinned=4), "office",
                              self_discovering=True)

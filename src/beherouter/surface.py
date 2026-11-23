@@ -413,7 +413,8 @@ def build_surface(
 
     def lean_unknown_tool(name: str) -> AxiError:
         # A pin is HIDDEN in lean, not forbidden: say how to reach it.
-        if name in published_names and not self_discovering:
+        visible = gates is None or gates.visible(name)
+        if name in published_names and not self_discovering and visible:
             return tag(
                 NotFound(
                     f"tool '{name}' is not listed on this connection (lean profile); "

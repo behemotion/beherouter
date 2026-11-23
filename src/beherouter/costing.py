@@ -210,8 +210,13 @@ def lean_instructions(
         head = (
             f"Surface '{surface}' (lean profile): {cost.advertised} tools, reached "
             f"through search_tools -> describe_tool -> run_tool; this listing costs "
-            f"about {cost.tokens_published} tokens ({cost.method}). Arguments given "
-            f"in full below can go straight to run_tool without describe_tool."
+            f"about {cost.tokens_published} tokens ({cost.method})."
         )
-    parts = [head, recipe.strip(), (extra or "").strip()]
+    parts = [recipe.strip(), (extra or "").strip()]
+    if not self_discovering and any(parts):
+        head += (
+            " Arguments given in full below can go straight to run_tool "
+            "without describe_tool."
+        )
+    parts = [head, *parts]
     return "\n\n".join(p for p in parts if p)

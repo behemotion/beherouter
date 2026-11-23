@@ -72,6 +72,15 @@ async def test_session_map_is_bounded():
     assert list(d.sessions) == ["b", "c"]
 
 
+async def test_a_used_session_survives_eviction():
+    d = ProfileDispatcher(_app("F"), _app("L"), max_sessions=2)
+    d._remember("a", "lean")
+    d._remember("b", "lean")
+    await _get(d, "/mcp", sid="a")  # touches a: b is now the oldest
+    d._remember("c", "lean")
+    assert list(d.sessions) == ["a", "c"]
+
+
 async def test_non_http_scope_goes_to_full():
     seen = []
 

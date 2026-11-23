@@ -347,6 +347,8 @@ first), and any other value is a 400. It is one attach: both apps share the back
 health record, rate limiter and pipeline. On the recorded catalogues `plane` drops from
 5,317 to 289 tokens and `office-mcp` from 763 to 354; `context_cost` reports both.
 
+⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every `<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing (on a self-discovering surface such as office, `search_tools`, `describe_tool` and `run_tool` too). Agents whose stored `tools` allowlists name those tools lose them silently: rewrite the allowlists in the same change.
+
 ### Pins: probe before pinning
 
 ⚠️ A backend's catalogue advertises the **commercial** surface, so "the tool

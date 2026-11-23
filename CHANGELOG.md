@@ -20,6 +20,7 @@ auto-generated contributor appendix is appended below it). Releases before
   289 tokens, `office-mcp` 763 → 354. A session keeps the profile it was opened
   with, and any other `profile` value answers 400. One attach serves both
   profiles. See `docs/architecture.md` § Profiles.
+- ⚠️ `client-config librechat` now asks for `?profile=lean`, which removes every `<pin>_mcp_<surface>` and `context_cost_mcp_*` tool from LibreChat's listing (on a self-discovering surface such as office, `search_tools`, `describe_tool` and `run_tool` too). Agents whose stored `tools` allowlists name those tools lose them silently: rewrite the allowlists in the same change.
 - **`PluginSpec.self_discovering` and `lean_recipe`.** A self-discovering plugin
   (`office-mcp`) publishes its pins and no meta-tools in lean; `lean_recipe` is
   the plugin's text for the lean `instructions` (under 300 tokens). `plane`

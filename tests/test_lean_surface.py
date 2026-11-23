@@ -70,6 +70,27 @@ async def test_direct_call_of_a_hidden_pin_names_run_tool():
             await c.call_tool("ping", {})
 
 
+async def test_a_hidden_pin_the_caller_may_not_see_gets_no_run_tool_hint(monkeypatch):
+    import beherouter.identity as identity_mod
+    from beherouter.gates import gates_from_entry
+    from beherouter.identity import RequestIdentity
+    from beherouter.registry import RegistryEntry
+
+    monkeypatch.setenv("BEHEROUTER_OIDC_ROLES_CLAIM", "roles")
+    req = RequestIdentity(shared=False, subject="alice",
+                          claims={"sub": "alice", "roles": []}, raw_token="t")
+    monkeypatch.setattr(identity_mod, "request_identity", lambda wanted=(): req)
+    gates = gates_from_entry(RegistryEntry(
+        name="demo", plugin="office-mcp",
+        authz={"tools": {"ping": {"require_roles": ["admin"]}}}))
+    lean = lean_of(build_surface(_backend(), gates=gates))
+    async with Client(lean) as c:
+        with pytest.raises(ToolError) as err:
+            await c.call_tool("ping", {})
+    assert "run_tool(name=" not in str(err.value)
+    assert "unknown tool 'ping'" in str(err.value)
+
+
 async def test_direct_call_of_a_truly_unknown_tool_on_lean_is_unknown():
     lean = lean_of(build_surface(_backend()))
     async with Client(lean) as c:

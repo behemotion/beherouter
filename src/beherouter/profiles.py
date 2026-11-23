@@ -60,6 +60,8 @@ class ProfileDispatcher:
             return
         sid = _header(scope.get("headers", []), _SID)
         profile = (self.sessions.get(sid) if sid else None) or requested or "full"
+        if sid and sid in self.sessions:
+            self.sessions.move_to_end(sid)  # LRU: a used session is not evicted first
         if sid and scope.get("method") == "DELETE":
             self.sessions.pop(sid, None)
         app = self.apps[profile]
