@@ -1,0 +1,334 @@
+{
+  "cli_gateway": {
+    "instructions": "Surface 'faketool': 1 of 2 tools published, costing about 458 tokens (estimate/json-4.3). The other 1 are reachable through search_tools; publishing all 2 would cost about 116 tokens.",
+    "tools": [
+      {
+        "description": "search things",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "faketool_search"
+      },
+      {
+        "description": "Search this surface's tools. Returns name + one-line brief; call describe_tool for arguments before run_tool.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "default": 5,
+              "type": "integer"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "search_tools",
+        "outputSchema": {
+          "properties": {
+            "result": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object",
+          "x-fastmcp-wrap-result": true
+        }
+      },
+      {
+        "description": "Return the argument schema + summary for a tool name.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "describe_tool",
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      {
+        "description": "Invoke any tool on this surface by name with an args object.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "run_tool",
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      {
+        "annotations": {
+          "readOnlyHint": true
+        },
+        "description": "Report what this surface costs a client's context: tokens for the published tools, and what publishing the whole catalogue would cost. Pass context_window to get both as a percentage of it.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "context_window": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "context_cost",
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      }
+    ]
+  },
+  "mcp_like": {
+    "instructions": null,
+    "tools": [
+      {
+        "annotations": {
+          "readOnlyHint": true
+        },
+        "description": "Ping it.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "n": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "ping"
+      },
+      {
+        "description": "Search this surface's tools. Returns name + one-line brief; call describe_tool for arguments before run_tool.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "default": 5,
+              "type": "integer"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "search_tools",
+        "outputSchema": {
+          "properties": {
+            "result": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object",
+          "x-fastmcp-wrap-result": true
+        }
+      },
+      {
+        "description": "Return the argument schema + summary for a tool name.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "describe_tool",
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      {
+        "description": "Invoke any tool on this surface by name with an args object.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "run_tool",
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      {
+        "annotations": {
+          "readOnlyHint": true
+        },
+        "description": "Report what this surface costs a client's context: tokens for the published tools, and what publishing the whole catalogue would cost. Pass context_window to get both as a percentage of it.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "context_window": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "type": "object"
+        },
+        "meta": {
+          "fastmcp": {
+            "tags": []
+          }
+        },
+        "name": "context_cost",
+        "outputSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      }
+    ]
+  }
+}
